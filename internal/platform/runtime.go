@@ -152,11 +152,23 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		proxies = proxy.NewPool(o.tunnels.Service.Open)
 	}
 
+	// kubeconfig 生成配置：平台 CA（可选嵌入）与 exec 插件参数
+	var caData []byte
+	if caFile := os.Getenv("AM_KUBECONFIG_CA_FILE"); caFile != "" {
+		caData, err = os.ReadFile(caFile)
+		if err != nil {
+			return nil, fmt.Errorf("platform -> read kubeconfig ca: %w", err)
+		}
+	}
+
 	h := handler.NewHandler(svc, handler.Deps{
-		Auth:    authSvc,
-		OIDC:    oidcClient,
-		Tunnels: tunnelsService(o.tunnels),
-		Proxies: proxies,
+		Auth:         authSvc,
+		OIDC:         oidcClient,
+		Tunnels:      tunnelsService(o.tunnels),
+		Proxies:      proxies,
+		CAData:       caData,
+		OIDCIssuer:   os.Getenv("OIDC_ISSUER"),
+		OIDCClientID: os.Getenv("OIDC_CLIENT_ID"),
 	})
 	h.SetPolicy(envDefault("AM_ADMIN_GROUP", "am:admin"), os.Getenv("AM_DEV_ISSUE_TOKEN") == "1")
 

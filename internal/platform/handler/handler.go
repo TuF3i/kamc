@@ -22,10 +22,13 @@ import (
 
 // Deps Handler 的可空依赖（nil 即功能降级：对应端点返回 503/501）
 type Deps struct {
-	Auth    *auth.Service   // JWT 签发/校验（nil = 认证未装配）
-	OIDC    *oidc.Client    // OIDC 登录（nil = 未配置 → /auth/login 503）
-	Tunnels *tunnel.Service // 隧道模块（nil = 未启用 → /tunnel 返回 503）
-	Proxies *proxy.Pool     // API 代理池（nil = 未装配 → /proxy 返回 501）
+	Auth         *auth.Service   // JWT 签发/校验（nil = 认证未装配）
+	OIDC         *oidc.Client    // OIDC 登录（nil = 未配置 → /auth/login 503）
+	Tunnels      *tunnel.Service // 隧道模块（nil = 未启用 → /tunnel 返回 503）
+	Proxies      *proxy.Pool     // API 代理池（nil = 未装配 → /proxy 返回 501）
+	CAData       []byte          // kubeconfig 嵌入的平台 CA（AM_KUBECONFIG_CA_FILE，可选）
+	OIDCIssuer   string          // exec 插件参数（kubeconfig 生成用）
+	OIDCClientID string          // exec 插件参数
 }
 
 // Handler 平台 HTTP 处理器（业务下沉 Service；依赖可空，对应降级行为）
@@ -36,13 +39,20 @@ type Handler struct {
 	tunnels *tunnel.Service
 	proxies *proxy.Pool
 
+	caData       []byte // kubeconfig 嵌入的平台 CA
+	oidcIssuer   string // exec 插件参数
+	oidcClientID string // exec 插件参数
+
 	adminGroup      string // 管理面用户组（AM_ADMIN_GROUP）
 	devTokenEnabled bool   // 开发用直签 Token 开关（AM_DEV_ISSUE_TOKEN）
 }
 
 // NewHandler 构造 Handler
 func NewHandler(svc *service.Service, deps Deps) *Handler {
-	return &Handler{svc: svc, auth: deps.Auth, oidc: deps.OIDC, tunnels: deps.Tunnels, proxies: deps.Proxies}
+	return &Handler{
+		svc: svc, auth: deps.Auth, oidc: deps.OIDC, tunnels: deps.Tunnels, proxies: deps.Proxies,
+		caData: deps.CAData, oidcIssuer: deps.OIDCIssuer, oidcClientID: deps.OIDCClientID,
+	}
 }
 
 // SetPolicy 设置运行策略（装配层调用）
@@ -78,6 +88,12 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Route("/api/v1", func(api chi.Router) {
 		// Agent 注册交换：注册 Token 即凭证，不入 JWT 保护组
 		api.Post("/agent/register", h.AgentRegister)
+
+		// 自服务：仅需 JWT（产物只含调用者自己的身份）
+		api.Group(func(user chi.Router) {
+			user.Use(mw.RequireJWT(h.auth))
+			user.Get("/clusters/{id}/kubeconfig", h.GetKubeconfig)
+		})
 
 		// 管理面：JWT + 管理员组（最小授权；数据面资源级鉴权由 Casbin 承担）
 		api.Group(func(admin chi.Router) {
