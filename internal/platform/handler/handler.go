@@ -61,9 +61,11 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/tunnel", h.TunnelWS) // Agent 隧道入口（WS 升级 + Token 认证）
 	r.Get("/.well-known/jwks.json", h.JWKS)
 
-	// 认证流程：login/callback 匿名（OIDC 流程自身防 CSRF）；me 需 JWT
+	// 认证流程：login/callback 匿名（OIDC 流程自身防 CSRF）；me 需 JWT；
+	// token-exchange 匿名（凭证即 ID Token 本身）
 	r.Get("/auth/login", h.AuthLogin)
 	r.Get("/auth/callback", h.AuthCallback)
+	r.Post("/auth/token-exchange", h.AuthTokenExchange)
 	r.Post("/auth/dev-token", h.AuthDevToken)
 	r.With(mw.RequireJWT(h.auth)).Get("/auth/me", h.AuthMe)
 

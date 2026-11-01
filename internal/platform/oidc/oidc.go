@@ -111,7 +111,16 @@ func (c *Client) Exchange(ctx context.Context, code, state string) (*User, error
 	return user, nil
 }
 
-// verifyIDToken 校验签名/iss/aud/exp 并提取 sub/email/groups
+// VerifyIDToken 校验外部 OIDC Provider 签发的 ID Token（exec plugin 的
+// /auth/token-exchange 兑换用，§4.4）：签名/iss/aud/exp 全检后提取身份。
+func (c *Client) VerifyIDToken(ctx context.Context, rawIDToken string) (*User, error) {
+	if _, err := c.ensure(ctx); err != nil {
+		return nil, err
+	}
+	return c.verifyIDToken(ctx, rawIDToken)
+}
+
+// verifyIDToken 校验签名/iss/aud/exp 并提取 sub/email/groups（须先 ensure）
 func (c *Client) verifyIDToken(ctx context.Context, rawID string) (*User, error) {
 	c.mu.Lock()
 	verifier := c.provider.Verifier(&oidc.Config{ClientID: c.cfg.ClientID})

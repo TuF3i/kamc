@@ -69,6 +69,30 @@ func (h *Handler) AuthDevToken(w http.ResponseWriter, r *http.Request) {
 	h.issueAndRespond(w, req.Sub, req.Email, req.Groups)
 }
 
+// AuthTokenExchange POST /auth/token-exchange —— OIDC ID Token 兑换平台 JWT
+// （k8s-am-login exec plugin 用，§4.4）：ID Token 经 Provider JWKS 验签后，
+// 按 sub/groups 签发平台 JWT。失败一律 401 不区分原因（防枚举）。
+func (h *Handler) AuthTokenExchange(w http.ResponseWriter, r *http.Request) {
+	if h.oidc == nil || h.auth == nil {
+		http.Error(w, "oidc not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var req struct {
+		IDToken string `json:"id_token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.IDToken == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	user, err := h.oidc.VerifyIDToken(r.Context(), req.IDToken)
+	if err != nil {
+		log.Printf("[platform] token-exchange verify: %v", err)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	h.issueAndRespond(w, user.Sub, user.Email, user.Groups)
+}
+
 // JWKS GET /.well-known/jwks.json —— 平台 JWT 公钥集（§4.3）
 func (h *Handler) JWKS(w http.ResponseWriter, _ *http.Request) {
 	if h.auth == nil {

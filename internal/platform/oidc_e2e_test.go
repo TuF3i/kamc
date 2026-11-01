@@ -64,31 +64,36 @@ func newFakeIDP(t *testing.T) *fakeIDP {
 	})
 	mux.HandleFunc("/token", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json") // oauth2 按此选择 JSON 解析分支
-		now := time.Now()
-		claims := jwt.MapClaims{
-			"iss":    idp.srv.URL,
-			"sub":    idp.User.Sub,
-			"aud":    "kamc-test",
-			"exp":    now.Add(time.Hour).Unix(),
-			"iat":    now.Unix(),
-			"email":  idp.User.Email,
-			"groups": idp.User.Groups,
-		}
-		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-		tok.Header["kid"] = "idp-key"
-		signed, err := tok.SignedString(key)
+		idToken, err := idp.MintIDToken()
 		if err != nil {
 			http.Error(w, "sign: "+err.Error(), 500)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"access_token": "at-xxx", "id_token": signed, "token_type": "Bearer",
+			"access_token": "at-xxx", "id_token": idToken, "token_type": "Bearer",
 		})
 	})
 
 	idp.srv = httptest.NewServer(mux)
 	t.Cleanup(idp.srv.Close)
 	return idp
+}
+
+// MintIDToken 铸一枚 ID Token（token 端点与 token-exchange 测试共用）
+func (idp *fakeIDP) MintIDToken() (string, error) {
+	now := time.Now()
+	claims := jwt.MapClaims{
+		"iss":    idp.srv.URL,
+		"sub":    idp.User.Sub,
+		"aud":    "kamc-test",
+		"exp":    now.Add(time.Hour).Unix(),
+		"iat":    now.Unix(),
+		"email":  idp.User.Email,
+		"groups": idp.User.Groups,
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tok.Header["kid"] = "idp-key"
+	return tok.SignedString(idp.key)
 }
 
 // TestOIDCLoginFlowE2E 完整授权码流程：/auth/login 302（带 state）→
@@ -157,5 +162,47 @@ func TestOIDCLoginFlowE2E(t *testing.T) {
 	// 5. 该身份可访问管理面（含 am:admin 组）
 	if meResp := callRaw(t, rt, http.MethodGet, "/api/v1/clusters", issued.Token); meResp.StatusCode != http.StatusOK {
 		t.Fatalf("admin access with idp-admin identity: %d", meResp.StatusCode)
+	}
+}
+
+// TestTokenExchangeE2E exec plugin 的兑换端点：ID Token 验签 → 平台 JWT →
+// /auth/me 验身份；篡改/异端签发一律 401。
+func TestTokenExchangeE2E(t *testing.T) {
+	idp := newFakeIDP(t)
+	t.Setenv("OIDC_ISSUER", idp.srv.URL)
+	t.Setenv("OIDC_CLIENT_ID", "kamc-test")
+	t.Setenv("OIDC_CLIENT_SECRET", "s3cret")
+	t.Setenv("OIDC_REDIRECT_URL", "http://localhost:8080/auth/callback")
+	rt := newTestRuntime(t)
+
+	idToken, err := idp.MintIDToken()
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	resp, ar := call(t, rt, http.MethodPost, "/auth/token-exchange",
+		map[string]string{"id_token": idToken})
+	if resp.StatusCode != http.StatusOK || ar.Status != errcode.CodeSuccess {
+		t.Fatalf("exchange: http=%d body=%+v", resp.StatusCode, ar)
+	}
+	var issued struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(ar.Data, &issued); err != nil || issued.Token == "" {
+		t.Fatalf("decode issued: %v data=%s", err, ar.Data)
+	}
+
+	// 兑换所得 JWT 身份正确
+	_, ar = call(t, rt, http.MethodGet, "/auth/me", nil, issued.Token)
+	if ar.Status != errcode.CodeSuccess {
+		t.Fatalf("me: %+v", ar)
+	}
+	if raw := string(ar.Data); !strings.Contains(raw, idp.User.Sub) {
+		t.Fatalf("me claims: %s", raw)
+	}
+
+	// 篡改 → 401
+	if bad := callRaw(t, rt, http.MethodPost, "/auth/token-exchange",
+		"bad-token"); bad.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("tampered: want 401, got %d", bad.StatusCode)
 	}
 }
