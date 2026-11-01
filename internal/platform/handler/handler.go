@@ -38,6 +38,9 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/tunnel", h.TunnelWS) // Agent 隧道入口（WS 升级 + Token 认证）
 
 	r.Route("/api/v1", func(api chi.Router) {
+		// Agent 注册交换：注册 Token 即凭证，不入 JWT 保护组（后续里程碑）
+		api.Post("/agent/register", h.AgentRegister)
+
 		api.Post("/clusters", h.CreateCluster)
 		api.Get("/clusters", h.ListClusters)
 		api.Get("/clusters/{id}", h.GetCluster)

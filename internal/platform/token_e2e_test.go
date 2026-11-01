@@ -127,3 +127,51 @@ func TestRegisterTokenExpiry(t *testing.T) {
 		t.Fatalf("fresh register token should be valid: %v", err)
 	}
 }
+
+// TestRegisterTokenExchangeE2E 注册 Token 一次性交换（§6.1）：
+// 换取成功 → 长期 Token 可用 → 注册 Token 立即失效（一次性）→
+// 长期 Token 不能再次交换（类型不对）。
+func TestRegisterTokenExchangeE2E(t *testing.T) {
+	rt := newTestRuntime(t)
+	id := "it-exchange-cluster"
+	_, ar := call(t, rt, http.MethodPost, "/api/v1/clusters",
+		map[string]string{"id": id, "name": "exchange"})
+	if ar.Status != errcode.CodeSuccess {
+		t.Fatalf("setup: %+v", ar)
+	}
+	t.Cleanup(func() { _, _ = call(t, rt, http.MethodDelete, "/api/v1/clusters/"+id, nil) })
+
+	_, ar = call(t, rt, http.MethodPost, "/api/v1/clusters/"+id+"/tokens",
+		map[string]string{"kind": "register"})
+	if ar.Status != errcode.CodeSuccess {
+		t.Fatalf("issue register: %+v", ar)
+	}
+	var reg struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(ar.Data, &reg); err != nil {
+		t.Fatalf("decode register: %v", err)
+	}
+
+	// 交换
+	issued, err := rt.Service.ExchangeRegisterToken(t.Context(), reg.Token)
+	if err != nil {
+		t.Fatalf("exchange: %v", err)
+	}
+	if issued.Kind != modules.TokenKindLongterm || issued.Token == "" {
+		t.Fatalf("unexpected issued: %+v", issued)
+	}
+
+	// 长期 Token 生效、注册 Token 已一次性删除
+	if cluster, kind, err := rt.Service.LookupToken(t.Context(), issued.Token); err != nil || cluster != id || kind != modules.TokenKindLongterm {
+		t.Fatalf("longterm lookup: cluster=%q kind=%q err=%v", cluster, kind, err)
+	}
+	if _, _, err := rt.Service.LookupToken(t.Context(), reg.Token); err == nil {
+		t.Fatal("register token should be deleted after exchange (one-time)")
+	}
+
+	// 长期 Token 不能走注册交换
+	if _, err := rt.Service.ExchangeRegisterToken(t.Context(), issued.Token); err == nil {
+		t.Fatal("longterm token must not be exchangeable")
+	}
+}

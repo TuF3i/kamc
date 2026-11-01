@@ -10,6 +10,24 @@ import (
 	"github.com/TuF3i/kamc/internal/platform/modules"
 )
 
+// AgentRegister POST /api/v1/agent/register —— Agent 首次注册：
+// 携带注册 Token（Bearer）换长期 Token。一次性语义由 service 层保证；
+// 与管理 API 分离，后续 JWT 中间件不覆盖本端点（注册 Token 即凭证）。
+func (h *Handler) AgentRegister(w http.ResponseWriter, r *http.Request) {
+	token := bearerToken(r)
+	if token == "" {
+		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
+		return
+	}
+	issued, err := h.svc.ExchangeRegisterToken(r.Context(), token)
+	if err != nil {
+		// 不区分失效原因，防枚举
+		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
+		return
+	}
+	errcode.GenFinalResponse(w, issued, nil)
+}
+
 // IssueToken POST /api/v1/clusters/{id}/tokens
 func (h *Handler) IssueToken(w http.ResponseWriter, r *http.Request) {
 	clusterID := chi.URLParam(r, "id")

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"gorm.io/gorm"
@@ -35,38 +36,79 @@ func (s *Service) IssueToken(ctx context.Context, clusterID string, req *modules
 		return nil, rsp
 	}
 
-	plain, hash, err := newTokenPlain(req.Kind)
+	switch req.Kind {
+	case modules.TokenKindLongterm:
+		return s.issueLongterm(ctx, clusterID)
+	default:
+		return s.issueRegister(ctx, clusterID)
+	}
+}
+
+// issueLongterm 签发/轮换长期 Token（内部复用：签发 API 与注册交换共用）
+func (s *Service) issueLongterm(ctx context.Context, clusterID string) (*modules.IssuedToken, *errcode.Response) {
+	plain, hash, err := newTokenPlain(modules.TokenKindLongterm)
 	if err != nil {
 		return nil, errcode.ServerInternal(err)
 	}
 
-	t := &modules.ClusterToken{
-		ClusterID:   clusterID,
-		Kind:        string(req.Kind),
-		CurrentHash: hash,
-	}
-	issued := &modules.IssuedToken{Token: plain, Kind: req.Kind}
+	t := &modules.ClusterToken{ClusterID: clusterID, Kind: string(modules.TokenKindLongterm), CurrentHash: hash}
+	issued := &modules.IssuedToken{Token: plain, Kind: modules.TokenKindLongterm}
 
-	if req.Kind == modules.TokenKindLongterm {
-		// 轮换：旧 Token 降级进宽限期；首次签发则无 Previous
-		existing, err := s.d.GetToken(ctx, clusterID, req.Kind)
-		switch {
-		case err == nil:
-			t.PreviousHash = existing.CurrentHash
-			grace := time.Now().Add(tokenGracePeriod)
-			t.GraceEndsAt = grace
-			issued.GraceEndsAt = &grace
-		case errors.Is(err, gorm.ErrRecordNotFound):
-			// 首次签发
-		default:
-			return nil, errcode.ServerInternal(err)
-		}
-	} else {
-		t.ExpiresAt = time.Now().Add(registerTokenTTL)
+	// 轮换：旧 Token 降级进宽限期；首次签发则无 Previous
+	existing, err := s.d.GetToken(ctx, clusterID, modules.TokenKindLongterm)
+	switch {
+	case err == nil:
+		t.PreviousHash = existing.CurrentHash
+		grace := time.Now().Add(tokenGracePeriod)
+		t.GraceEndsAt = grace
+		issued.GraceEndsAt = &grace
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		// 首次签发
+	default:
+		return nil, errcode.ServerInternal(err)
 	}
 
 	if err := s.d.UpsertToken(ctx, t); err != nil {
 		return nil, errcode.ServerInternal(err)
+	}
+	return issued, nil
+}
+
+// issueRegister 签发注册 Token（1h 有效）
+func (s *Service) issueRegister(ctx context.Context, clusterID string) (*modules.IssuedToken, *errcode.Response) {
+	plain, hash, err := newTokenPlain(modules.TokenKindRegister)
+	if err != nil {
+		return nil, errcode.ServerInternal(err)
+	}
+	t := &modules.ClusterToken{
+		ClusterID:   clusterID,
+		Kind:        string(modules.TokenKindRegister),
+		CurrentHash: hash,
+		ExpiresAt:   time.Now().Add(registerTokenTTL),
+	}
+	if err := s.d.UpsertToken(ctx, t); err != nil {
+		return nil, errcode.ServerInternal(err)
+	}
+	return &modules.IssuedToken{Token: plain, Kind: modules.TokenKindRegister}, nil
+}
+
+// ExchangeRegisterToken Agent 首次注册：注册 Token 换长期 Token（设计文档 §6.1）。
+// 一次性语义：交换成功后立即删除注册 Token；类型不对或已失效一律 ErrTokenInvalid
+// （调用方统一 401，防枚举）。
+func (s *Service) ExchangeRegisterToken(ctx context.Context, registerToken string) (*modules.IssuedToken, error) {
+	clusterID, kind, err := s.LookupToken(ctx, registerToken)
+	if err != nil || kind != modules.TokenKindRegister {
+		return nil, ErrTokenInvalid
+	}
+
+	issued, rsp := s.issueLongterm(ctx, clusterID)
+	if rsp != nil {
+		return nil, fmt.Errorf("service -> issue longterm on exchange: %s", rsp)
+	}
+	// 一次性：删除注册 Token（删除失败不回滚签发——注册 Token 已宽限语义外，
+	// 下轮轮换/吊销收敛，此处仅记录）
+	if _, err := s.d.DeleteToken(ctx, clusterID, modules.TokenKindRegister); err != nil {
+		log.Printf("[platform] exchange: delete register token %s: %v", clusterID, err)
 	}
 	return issued, nil
 }
