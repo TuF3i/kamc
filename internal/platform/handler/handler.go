@@ -61,9 +61,9 @@ func (h *Handler) Readyz(w http.ResponseWriter, r *http.Request) {
 // Version 构建版本信息
 func (h *Handler) Version(w http.ResponseWriter, _ *http.Request) {
 	errcode.GenFinalResponse(w, map[string]string{
-		"version":    version.Version,
-		"commit":     version.Commit,
-		"component":  "platform",
+		"version":   version.Version,
+		"commit":    version.Commit,
+		"component": "platform",
 	}, nil)
 }
 
