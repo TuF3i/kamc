@@ -93,7 +93,10 @@ make vet
       SPDY/3.1+portforward.k8s.io → TunnelingHandler；旧版 SPDY 经 ReverseProxy 直通。
       注意：UpgradeAwareHandler 必须开 UseRequestLocation（否则路径被 location 替换）
 - [ ] 跨 Pod peer 转发：peer yamux 会话 + RELAY 拼接（§7.2.4）
-- [ ] kubeconfig 生成与 k8s-am-login exec plugin（§4.4）
+- [x] kubeconfig 生成与 k8s-am-login exec plugin（§4.4）：/auth/token-exchange
+      （ID Token 验签兑换）、GET /api/v1/clusters/{id}/kubeconfig（static/exec 两模式，
+      自服务 JWT 组）、cmd/k8s-am-login（RFC 8628 设备流程 + 本地缓存）。
+      注意：client-go 对明文连接不加载凭证——生产平台必须 https
 - [ ] 多副本策略同步：casbin Redis watcher（§7.6）；OIDC state 外置 Redis
 - [ ] Agent 收到 401 后停止重试等管理员的重新注册流程（§6.5）
 - [ ] HA 收尾：审计异步落库与本地暂存（§12.2）、注册表驱动的跨副本集群状态收敛、
