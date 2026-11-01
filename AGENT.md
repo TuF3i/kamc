@@ -72,11 +72,18 @@ make vet
 ## 路线图（对应设计文档章节）
 
 - [x] 基础框架：目录结构、装配层、健康检查、集群注册 CRUD、wsconn 适配器、隧道管理器、Agent 连接循环
-- [ ] 隧道数据面：Agent `handleStream` → SA transport 反代（§6.2）；平台侧 Dialer transport（§6.2）
-- [ ] 平台 `/tunnel` WS 升级入口 + Agent Token 校验（哈希比对 + 宽限期，§6）
-- [ ] JWT 认证中间件 + Authentik OIDC 登录（§4）
+- [x] Agent Token 管理：签发/列表/吊销、SHA256 哈希、轮换宽限期、注册 Token 1h TTL
+- [x] 隧道全链路：/tunnel 入口（Token 校验+WS 升级+Attach）→ Agent 数据面
+      （ReverseProxy 反代 apiserver，101 升级标准库处理）→ /proxy/{clusterID} 代理
+      （strip 前缀 FIX-6、剥离 Impersonate-*/Authorization FIX-7）
+- [ ] Agent Token 认证收尾：注册 Token 换长期 Token 的一次性交换端点（§6.1）；
+      401 后停止重试等管理员的重新注册流程（§6.5）
+- [ ] JWT 认证中间件 + Authentik OIDC 登录（§4）：/api/v1 与 /proxy 挂鉴权，
+      移除 AM_ENABLE_UNAUTH_PROXY 开关；Impersonation 注入（§8.1 第 5 步）
 - [ ] Casbin RequestInfo 鉴权（§5，注意 act 锚定 FIX-8）
-- [ ] exec/port-forward 流式：官方 StreamTranslatorHandler / TunnelingHandler（§9）
-- [ ] 跨 Pod peer 转发：peer yamux 会话 + RELAY 拼接（§7.2）
+- [ ] exec/port-forward 流式入口：官方 StreamTranslatorHandler / TunnelingHandler
+      接入 /proxy 路由（§9；Agent 侧 101 反代已就绪，平台侧待接）
+- [ ] 跨 Pod peer 转发：peer yamux 会话 + RELAY 拼接（§7.2.4）
 - [ ] kubeconfig 生成与 k8s-am-login exec plugin（§4.4）
-- [ ] HA 收尾：优雅下线全流程、审计异步落库与本地暂存（§7.5/§12.2）
+- [ ] HA 收尾：审计异步落库与本地暂存（§12.2）、注册表驱动的跨副本集群状态收敛、
+      平台侧隧道读超时看门狗（当前依赖 Agent 侧 ping 判死）
