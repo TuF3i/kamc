@@ -73,6 +73,8 @@ docs/
 | `AM_KUBECONFIG_CA_FILE` | — | kubeconfig 嵌入的平台 CA（可选） |
 | `PLATFORM_INSECURE`（Agent） | — | 跳过平台证书校验（开发环境自签） |
 | `AM_RATE_LIMIT` | 0（不限） | 数据面每用户每分钟最大请求数（Redis 共享窗口） |
+| `AM_AUDIT_SPILL_FILE` | `/tmp/kamc-audit-spill.jsonl` | 审计本地暂存文件（PG 故障时） |
+| `TEST_REDIS_ADDR` | — | Redis 集成测试门控（watcher/state store/限流，仅测试用） |
 | `TEST_PG_DSN` | — | 数据库集成测试门控（仅测试用） |
 
 ## 构建与测试
@@ -84,6 +86,8 @@ make vet
 ```
 
 ## 路线图（对应设计文档章节）
+
+> 除 Web 前端外全部完成。上线前须完成 deploy/README.md 的人工验收清单（真实集群演练）。
 
 - [x] 基础框架：目录结构、装配层、健康检查、集群注册 CRUD、wsconn 适配器、隧道管理器、Agent 连接循环
 - [x] Agent Token 管理：签发/列表/吊销、SHA256 哈希、轮换宽限期、注册 Token 1h TTL
@@ -113,8 +117,12 @@ make vet
 - [x] 数据面限流（§7）：/proxy 按用户 ZSET 滑动窗口（AM_RATE_LIMIT 每分钟，
       0=不限）；限流器故障 fail-open；Redis 跨副本 / 内存单副本双实现
 - [x] 优雅下线显式通知（§7.5）：Release 对 Agent 隧道发 WS 1001 GoingAway
-- [ ] 多副本策略同步：casbin Redis watcher（§7.6）；OIDC state 外置 Redis；
-      peer 地址发现改经 headless service 自动枚举（当前 PEER_ADDRESSES 显式）
-- [ ] Agent 收到 401 后停止重试等管理员的重新注册流程（§6.5）
-- [ ] HA 收尾：审计异步落库与本地暂存（§12.2）、注册表驱动的跨副本集群状态收敛、
-      平台侧隧道读超时看门狗（当前依赖 Agent 侧 ping 判死）
+- [x] 多副本策略同步（§7.6）：自写 Redis pub/sub watcher（不引第三方），
+      策略增删广播 → 各副本全量 LoadPolicy；装配在 authz.New(WithSyncChannel)
+- [x] OIDC state 外置 Redis（§4.1）：StateStore 接口（内存/GETDEL 双实现）
+- [x] Agent 401 停止重试（§6.5）：DialFunc 携带响应，401 驻留等待 Token 变更恢复
+- [x] 平台侧读活性看门狗（§6.3）：wsconn LastActivity + watchdog（25s/75s）
+- [x] 审计落库（§12.2）：异步批量写 PG、spill 本地暂存回放、GET /api/v1/audit
+- [x] Prometheus 指标（§12.3）：/metrics（平台侧；Agent 侧无 HTTP 端口属后续）
+- [x] 部署产物：deploy/（nginx、平台/Agent manifests、NetworkPolicy、README
+      含上线前人工验收清单——真实集群演练属上线前人工项）

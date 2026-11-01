@@ -22,6 +22,11 @@ export DATABASE_URL="host=127.0.0.1 port=5432 user=postgres password=postgres db
 curl http://127.0.0.1:8080/healthz
 ```
 
+## 部署
+
+见 [deploy/README.md](deploy/README.md)：Nginx 接入层、平台/Agent manifests、
+部署顺序、上线前人工验收清单。
+
 ## 许可
 
 GPL-3.0，见 [LICENSE](LICENSE)。
