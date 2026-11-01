@@ -13,9 +13,14 @@
 package tunnel
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -33,8 +38,18 @@ type Service = service.Manager
 type Runtime struct {
 	Service *service.Manager
 
-	cli    goredis.UniversalClient // 依赖的 Redis 客户端 (自建时 Release 负责关闭)
-	ownCLI bool                    // cli 是否为 CreateRuntime 自建 (决定 Release 是否关闭)
+	cli      goredis.UniversalClient // 依赖的 Redis 客户端 (自建时 Release 负责关闭)
+	ownCLI   bool                    // cli 是否为 CreateRuntime 自建 (决定 Release 是否关闭)
+	peerSrv  *http.Server            // 副本间 peer 内部服务 (PEER 配置存在时启动)
+	peerAddr net.Addr                // peer 实际监听地址
+}
+
+// PeerAddr peer 服务实际监听地址（未启用返回 nil）
+func (r *Runtime) PeerAddr() net.Addr {
+	if r == nil {
+		return nil
+	}
+	return r.peerAddr
 }
 
 // Option CreateRuntime 选项
@@ -46,6 +61,13 @@ type options struct {
 	podID    string
 	ttl      time.Duration
 	interval time.Duration
+	peers    service.PeerOptions // 副本间转发（WithPeers / 环境变量）
+	peersSet bool
+}
+
+// WithPeers 显式注入副本间转发配置（默认经 PeerConfigFromEnv 读环境变量）
+func WithPeers(cfg service.PeerOptions) Option {
+	return func(o *options) { o.peers, o.peersSet = cfg, true }
 }
 
 // WithRedis 注入已有 Redis 客户端 (不注入则使用 infrastructure 默认连接并自持)
@@ -110,8 +132,30 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	m.Start()
 
 	rt := &Runtime{Service: m, cli: cli, ownCLI: ownCLI}
+
+	// 副本间转发（§7.2.4）：配置存在时挂载 PeerRouter 并启动内部监听
+	if o.peersSet {
+		router := service.NewPeerRouter(m, reg, o.podID, o.peers)
+		if o.peers.ListenAddr != "" {
+			ln, err := net.Listen("tcp", o.peers.ListenAddr)
+			if err != nil {
+				router.Close()
+				_ = rt.ReleaseRuntime()
+				return nil, fmt.Errorf("tunnel -> peer listen %s: %w", o.peers.ListenAddr, err)
+			}
+			rt.peerSrv = &http.Server{Handler: router.Handler(), ReadHeaderTimeout: 5 * time.Second}
+			rt.peerAddr = ln.Addr()
+			go func() {
+				if err := rt.peerSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+					log.Printf("[tunnel] peer server: %v", err)
+				}
+			}()
+		}
+	}
+
 	defaultRuntime = rt
-	log.Printf("[tunnel] runtime created (pod=%s own_redis=%v)", o.podID, ownCLI)
+	log.Printf("[tunnel] runtime created (pod=%s own_redis=%v peers=%v)",
+		o.podID, ownCLI, o.peersSet)
 	return rt, nil
 }
 
@@ -121,6 +165,12 @@ func (r *Runtime) ReleaseRuntime() error {
 		return nil
 	}
 	r.Service.Release()
+
+	if r.peerSrv != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = r.peerSrv.Shutdown(ctx)
+	}
 
 	if r.ownCLI && r.cli != nil {
 		_ = r.cli.Close()
@@ -139,4 +189,31 @@ func ReleaseRuntime() error {
 		return nil
 	}
 	return defaultRuntime.ReleaseRuntime()
+}
+
+// PeerConfigFromEnv 从环境变量装载副本间转发配置：
+//
+//	PEER_ADDRESSES  逗号分隔的可拨副本（"podName=host:port" 或 "host:port"）
+//	PEER_TOKEN      peer 认证令牌（Secret 下发）
+//	AM_PEER_ADDR    本机 peer 监听地址（默认 :9090，仅集群内网可达）
+//
+// 未设置 PEER_ADDRESSES 返回 false（单副本形态，不启用跨副本转发）。
+func PeerConfigFromEnv() (service.PeerOptions, bool) {
+	addrs := os.Getenv("PEER_ADDRESSES")
+	if addrs == "" {
+		return service.PeerOptions{}, false
+	}
+	return service.PeerOptions{
+		Token:      os.Getenv("PEER_TOKEN"),
+		ListenAddr: envDefault("AM_PEER_ADDR", ":9090"),
+		Addresses:  service.ParsePeerAddresses(strings.Split(addrs, ",")),
+	}, true
+}
+
+// envDefault 读环境变量，空值取默认
+func envDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }
