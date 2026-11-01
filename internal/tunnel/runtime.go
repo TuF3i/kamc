@@ -79,10 +79,11 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		opt(o)
 	}
 
-	// Redis 连接: 注入优先, 否则自建 (自建的连接由 ReleaseRuntime 负责)
+	// Redis 连接: 注入优先, 否则自建 (自建的连接由 ReleaseRuntime 负责);
+	// 已注入 Registry 实现（测试路径）时无需 Redis。
 	cli := o.cli
 	ownCLI := false
-	if cli == nil {
+	if cli == nil && o.registry == nil {
 		var err error
 		cli, err = redis.NewRedisClient()
 		if err != nil {

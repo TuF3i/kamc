@@ -197,3 +197,87 @@ func TestReleaseClosesSessions(t *testing.T) {
 		return len(reg.dereg) == 1
 	}, "release should deregister all tunnels")
 }
+
+// TestAttachOpenAndDetach Attach 端到端：服务端会话建立 → Open 可与 Agent 侧
+// 互传字节 → 会话断开后自动注销并触发分离回调。
+func TestAttachOpenAndDetach(t *testing.T) {
+	reg := newFakeRegistry()
+	detached := make(chan string, 1)
+	m := NewManager(reg,
+		WithPodID("pod-test"),
+		WithHeartbeat(50*time.Millisecond, 20*time.Millisecond),
+		WithDetachHook(func(clusterID, agentID string) {
+			detached <- clusterID + "/" + agentID
+		}),
+	)
+	m.Start()
+	defer m.Release()
+
+	serverConn, clientConn := net.Pipe()
+	if err := m.Attach("cluster-a", "agent-1", serverConn); err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	client, err := yamux.Client(clientConn, nil)
+	if err != nil {
+		t.Fatalf("yamux client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	// 平台侧 Open → Agent 侧 Accept，双向可写
+	open, err := m.Open("cluster-a")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	accepted, err := client.Accept()
+	if err != nil {
+		t.Fatalf("agent accept: %v", err)
+	}
+	if _, err := open.Write([]byte("ping")); err != nil {
+		t.Fatalf("write over tunnel: %v", err)
+	}
+	buf := make([]byte, 4)
+	_ = accepted.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if _, err := accepted.Read(buf); err != nil || string(buf) != "ping" {
+		t.Fatalf("read over tunnel: %q err=%v", buf, err)
+	}
+
+	// 数据流关闭不影响会话；Agent 断开后才注销
+	_ = open.Close()
+	_ = accepted.Close()
+
+	// Agent 侧断开 → monitor 注销 → 分离回调
+	_ = client.Close()
+	select {
+	case got := <-detached:
+		if got != "cluster-a/agent-1" {
+			t.Fatalf("unexpected detach: %s", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("detach hook not fired after agent disconnect")
+	}
+	if _, err := m.Get("cluster-a"); !errors.Is(err, ErrClusterNotConnected) {
+		t.Fatalf("cluster should be removed after detach, got %v", err)
+	}
+}
+
+// TestAttachRegistersOwnership Attach 后注册表应收到归属上报。
+func TestAttachRegistersOwnership(t *testing.T) {
+	reg := newFakeRegistry()
+	m := newTestManager(reg)
+	m.Start()
+	defer m.Release()
+
+	serverConn, clientConn := net.Pipe()
+	if err := m.Attach("cluster-b", "agent-2", serverConn); err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	client, err := yamux.Client(clientConn, nil)
+	if err != nil {
+		t.Fatalf("yamux client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	waitFor(t, 2*time.Second, func() bool {
+		return reg.reportCount("cluster-b", "agent-2") >= 1
+	}, "attach should report ownership to registry")
+}

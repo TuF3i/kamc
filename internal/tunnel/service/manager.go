@@ -10,7 +10,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"sync"
 	"time"
 
@@ -35,9 +37,10 @@ type Tunnel struct {
 type Option func(*options)
 
 type options struct {
-	podID    string
-	ttl      time.Duration // 注册表 TTL（失联判定阈值）
-	interval time.Duration // 心跳上报间隔
+	podID      string
+	ttl        time.Duration // 注册表 TTL（失联判定阈值）
+	interval   time.Duration // 心跳上报间隔
+	detachHook func(clusterID, agentID string)
 }
 
 // WithPodID 本副本标识（默认 hostname；K8s 内即 Pod 名）
@@ -60,6 +63,9 @@ type Manager struct {
 	ttl      time.Duration
 	interval time.Duration
 
+	detachMu   sync.Mutex
+	detachHook func(clusterID, agentID string) // 隧道移除回调（平台据此标记集群 offline）
+
 	done    chan struct{}
 	wg      sync.WaitGroup
 	startMu sync.Mutex
@@ -76,12 +82,34 @@ func NewManager(reg registry.Registry, opts ...Option) *Manager {
 		o.podID = "unknown-pod"
 	}
 	return &Manager{
-		clusters: make(map[string][]*Tunnel),
-		registry: reg,
-		podID:    o.podID,
-		ttl:      o.ttl,
-		interval: o.interval,
-		done:     make(chan struct{}),
+		clusters:   make(map[string][]*Tunnel),
+		registry:   reg,
+		podID:      o.podID,
+		ttl:        o.ttl,
+		interval:   o.interval,
+		detachHook: o.detachHook,
+		done:       make(chan struct{}),
+	}
+}
+
+// WithDetachHook 隧道移除回调（每条隧道断开时调用一次）
+func WithDetachHook(fn func(clusterID, agentID string)) Option {
+	return func(o *options) { o.detachHook = fn }
+}
+
+// SetDetachHook 事后装配回调（模块间装配顺序晚于 NewManager 时使用；须在 Attach 之前）
+func (m *Manager) SetDetachHook(fn func(clusterID, agentID string)) {
+	m.detachMu.Lock()
+	defer m.detachMu.Unlock()
+	m.detachHook = fn
+}
+
+func (m *Manager) notifyDetach(clusterID, agentID string) {
+	m.detachMu.Lock()
+	fn := m.detachHook
+	m.detachMu.Unlock()
+	if fn != nil {
+		fn(clusterID, agentID)
 	}
 }
 
@@ -195,6 +223,52 @@ func (m *Manager) Remove(clusterID, agentID string) {
 	if err := m.registry.Deregister(ctx, clusterID, agentID); err != nil {
 		log.Printf("[tunnel] deregister %s/%s: %v", clusterID, agentID, err)
 	}
+	m.notifyDetach(clusterID, agentID)
+}
+
+// Attach 接管一条已升级的 Agent 连接：建立服务端 yamux 会话 → 登记 → 启动监控。
+// rwc 的所有权随之转移（由会话持有；错误路径下由本方法负责关闭）。
+// 数据面方向：平台经 Session.Open() 向 Agent 开流（Agent 侧为 Accept 方）。
+func (m *Manager) Attach(clusterID, agentID string, rwc io.ReadWriteCloser) error {
+	session, err := yamux.Server(rwc, nil)
+	if err != nil {
+		_ = rwc.Close()
+		return fmt.Errorf("tunnel -> yamux server: %w", err)
+	}
+
+	m.Register(clusterID, agentID, session)
+	m.wg.Add(1)
+	go m.monitorSession(clusterID, agentID, session)
+	return nil
+}
+
+// monitorSession 监控会话存活：Agent 不应向平台开流（数据面由平台发起），
+// 收到入流属异常，防御性关闭；Accept 出错即会话死亡 → 注销并触发分离回调。
+func (m *Manager) monitorSession(clusterID, agentID string, session *yamux.Session) {
+	defer m.wg.Done()
+	for {
+		stream, err := session.Accept()
+		if err != nil {
+			log.Printf("[tunnel] 会话关闭 %s/%s: %v", clusterID, agentID, err)
+			m.Remove(clusterID, agentID)
+			return
+		}
+		_ = stream.Close()
+	}
+}
+
+// Open 打开一条到目标集群 Agent 的数据流（net.Conn），供上层组装
+// http.Transport 的 DialContext（设计文档 §6.2 Dialer 模型）。
+func (m *Manager) Open(clusterID string) (net.Conn, error) {
+	t, err := m.Get(clusterID)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := t.Session.Open()
+	if err != nil {
+		return nil, fmt.Errorf("tunnel -> open stream %s: %w", clusterID, err)
+	}
+	return conn, nil
 }
 
 // reportOne 单条归属上报（2s 超时）
