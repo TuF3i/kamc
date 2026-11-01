@@ -1,0 +1,951 @@
+openapi: 3.0.3
+info:
+  title: kamc 平台 API
+  version: 2.0.0
+  description: |
+    Kubernetes Access Manager Center 平台 HTTP API（设计文档 docs/design.md v2.0）。
+
+    ## 响应约定（错误处理模式 B）
+
+    `/api/v1/**` 业务端点统一返回信封结构（HTTP 恒 200，业务码在 `status` 字段）：
+
+    ```json
+    {"status": 0, "message": "success", "data": {}}
+    ```
+
+    业务码分段：0 成功；1xxxx 通用；2xxxx 集群域；3xxxx Token 域；4xxxx 策略域；
+    ≥50000 系统错误（此时 HTTP 状态码为 500）。
+
+    中间件层错误（认证/鉴权/限流）为纯文本响应：401（未认证，含 WWW-Authenticate）、
+    403（管理员组不足或 Casbin 拒绝）、429（限流，含 Retry-After）、501/503（功能未装配/集群不可达）。
+
+    ## 鉴权方式
+
+    | 端点类别 | 凭证 | 说明 |
+    | --- | --- | --- |
+    | 管理面 `/api/v1/**`（除 agent/register） | 平台 JWT（Bearer） | 管理操作另需 `am:admin` 组（AM_ADMIN_GROUP） |
+    | 自服务（kubeconfig 生成、登出、/auth/me） | 平台 JWT（Bearer） | 仅需有效身份 |
+    | `/api/v1/agent/register` | 注册 Token（Bearer，`am-reg-` 前缀） | 一次性换取长期 Token |
+    | `/tunnel` | 长期 Agent Token（Bearer，`am-clu-` 前缀） | Agent 专用（WebSocket 升级） |
+    | `/proxy/{clusterID}/**` | 平台 JWT（Bearer） | 数据面，Casbin 资源级鉴权 + Impersonation 注入 |
+
+    平台 JWT 获取途径：OIDC 登录（/auth/login → /auth/callback）、
+    ID Token 兑换（/auth/token-exchange，exec plugin 用）。
+    开发环境可经 `/auth/dev-token` 直签（AM_DEV_ISSUE_TOKEN=1，生产默认 404）。
+servers:
+  - url: https://{domain}
+    variables:
+      domain:
+        default: access-manager.example.com
+        description: 平台对外域名
+tags:
+  - name: 运维
+    description: 健康检查与构建信息
+  - name: 认证
+    description: OIDC 登录、平台 JWT 签发与吊销
+  - name: 集群管理
+    description: 目标集群注册与管理（管理面）
+  - name: Agent Token
+    description: Agent Token 签发/轮换/吊销/注册交换
+  - name: kubeconfig
+    description: 用户 kubeconfig 生成（自服务）
+  - name: 策略与绑定
+    description: Casbin 策略与用户-角色绑定管理（管理面）
+  - name: 审计
+    description: 审计事件查询（管理面）
+  - name: 数据面
+    description: kubectl 请求代理（JWT + Casbin + Impersonation）
+  - name: Agent
+    description: Agent 反向隧道入口
+
+paths:
+  /healthz:
+    get:
+      tags: [运维]
+      summary: 存活探针
+      description: 进程存活即 200，不检查任何依赖。
+      security: []
+      responses:
+        '200':
+          description: ok（text/plain）
+
+  /readyz:
+    get:
+      tags: [运维]
+      summary: 就绪探针
+      description: 数据库不可达返回 503——LB/编排据此摘流（优雅下线第一步，§7.5）。
+      security: []
+      responses:
+        '200': {description: ready（text/plain）}
+        '503': {description: not ready（text/plain）}
+
+  /version:
+    get:
+      tags: [运维]
+      summary: 构建版本信息
+      security: []
+      responses:
+        '200':
+          description: 版本信息
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          version: {type: string, example: dev}
+                          commit: {type: string, example: 8d5c683}
+                          component: {type: string, example: platform}
+
+  /metrics:
+    get:
+      tags: [运维]
+      summary: Prometheus 指标
+      description: |
+        promhttp 暴露（kamc_ 前缀）。集群内网约定端点，鉴权属部署层
+        （NetworkPolicy/内网隔离）。指标清单见设计文档 §12.3。
+      security: []
+      responses:
+        '200':
+          description: Prometheus 文本格式
+          content:
+            text/plain:
+              schema: {type: string}
+
+  /auth/login:
+    get:
+      tags: [认证]
+      summary: 发起 OIDC 登录
+      description: 302 跳转到 Authentik 授权端点（携带一次性 state 防 CSRF，10 分钟有效）。
+      security: []
+      responses:
+        '302':
+          description: 重定向到授权端点（Location 含 state）
+        '503':
+          description: OIDC 未配置（OIDC_ISSUER 为空）
+        '502':
+          description: Provider discovery 不可达
+
+  /auth/callback:
+    get:
+      tags: [认证]
+      summary: OIDC 回调兑换
+      description: 校验一次性 state → 授权码换 ID Token → 验签 → 签发平台 JWT。
+      security: []
+      parameters:
+        - {name: code, in: query, required: true, schema: {type: string}}
+        - {name: state, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: 平台 JWT
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/IssuedCredential'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+
+  /auth/token-exchange:
+    post:
+      tags: [认证]
+      summary: OIDC ID Token 兑换平台 JWT
+      description: |
+        k8s-am-login exec credential plugin 的身份入口：ID Token 经 Provider
+        JWKS 验签（iss/aud/exp/签名）后按 sub/groups 签发平台 JWT。
+        失败一律 401（不区分原因，防枚举）。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id_token]
+              properties:
+                id_token: {type: string}
+      responses:
+        '200':
+          description: 平台 JWT
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/IssuedCredential'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '503': {description: OIDC 未配置}
+
+  /auth/dev-token:
+    post:
+      tags: [认证]
+      summary: 开发直签 Token（仅开发环境）
+      description: |
+        AM_DEV_ISSUE_TOKEN=1 时可用；生产环境返回 404，不存在绕过 SSO 的通道。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sub]
+              properties:
+                sub: {type: string}
+                email: {type: string}
+                groups: {type: array, items: {type: string}}
+      responses:
+        '200':
+          description: 平台 JWT
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/IssuedCredential'}
+        '404': {description: 未开启开发开关}
+
+  /auth/me:
+    get:
+      tags: [认证]
+      summary: 当前身份
+      description: 回显 Bearer Token 的 claims（调试与客户端自检）。
+      security:
+        - platformJWT: []
+      responses:
+        '200':
+          description: claims
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/Claims'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+
+  /auth/logout:
+    post:
+      tags: [认证]
+      summary: 登出
+      description: 当前 Token 的 jti 进入黑名单（TTL=剩余有效期），立即失效；同用户其他 Token 不受影响。
+      security:
+        - platformJWT: []
+      responses:
+        '200':
+          description: 已登出
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+
+  /.well-known/jwks.json:
+    get:
+      tags: [认证]
+      summary: 平台 JWT 公钥集（JWKS）
+      description: 全部 kid 的 RSA 公钥（§4.3 轮换期间多 kid 并存）。
+      security: []
+      responses:
+        '200':
+          description: JWKS
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/JWKS'}
+
+  /api/v1/agent/register:
+    post:
+      tags: [Agent Token]
+      summary: 注册交换（一次性）
+      description: |
+        Agent 首次注册：携带注册 Token（Bearer，`am-reg-` 前缀，1h 有效）
+        换取长期 Token（`am-clu-` 前缀）。交换成功即删除注册 Token（一次性）；
+        长期 Token 不可再次交换。失败一律 10001（HTTP 200，防枚举）。
+      security:
+        - registerToken: []
+      responses:
+        '200':
+          description: 长期 Token（明文仅此一次）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/IssuedToken'}
+
+  /api/v1/clusters:
+    get:
+      tags: [集群管理]
+      summary: 集群列表
+      security:
+        - platformJWT: []
+      responses:
+        '200':
+          description: 集群列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: {$ref: '#/components/schemas/Cluster'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+    post:
+      tags: [集群管理]
+      summary: 注册集群
+      security:
+        - platformJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateClusterRequest'}
+      responses:
+        '200':
+          description: >-
+            信封响应（HTTP 恒 200，业务码在 status 字段）：0=成功（data 为集群）；
+            10001 参数非法；20002 集群已存在；50000 系统错误（HTTP 500）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/Cluster'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+
+  /api/v1/clusters/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ClusterID'
+    get:
+      tags: [集群管理]
+      summary: 查询集群
+      security:
+        - platformJWT: []
+      responses:
+        '200':
+          description: 集群信息（20002=不存在）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/Cluster'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+    delete:
+      tags: [集群管理]
+      summary: 注销集群
+      security:
+        - platformJWT: []
+      responses:
+        '200':
+          description: 删除成功（20001=不存在）
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Envelope'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+
+  /api/v1/clusters/{id}/tokens:
+    parameters:
+      - $ref: '#/components/parameters/ClusterID'
+    get:
+      tags: [Agent Token]
+      summary: Token 元数据列表
+      description: 不含哈希与明文。status：active / rotating（旧 Token 在宽限期内）。
+      security:
+        - platformJWT: []
+      responses:
+        '200':
+          description: Token 元数据
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: {$ref: '#/components/schemas/TokenDTO'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+    post:
+      tags: [Agent Token]
+      summary: 签发 Token
+      description: |
+        kind=longterm：轮换语义——现有 Token 进 24h 宽限期（PreviousHash）；
+        kind=register：1h 有效。明文仅在本次响应返回，平台只存 SHA256 哈希。
+      security:
+        - platformJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind]
+              properties:
+                kind:
+                  type: string
+                  enum: [register, longterm]
+      responses:
+        '200':
+          description: 明文 Token（仅此一次）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/IssuedToken'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+
+  /api/v1/clusters/{id}/tokens/{kind}:
+    delete:
+      tags: [Agent Token]
+      summary: 吊销 Token
+      description: 立即失效，无宽限期（30001=不存在）。
+      security:
+        - platformJWT: []
+      parameters:
+        - $ref: '#/components/parameters/ClusterID'
+        - name: kind
+          in: path
+          required: true
+          schema: {type: string, enum: [register, longterm]}
+      responses:
+        '200':
+          description: 已吊销
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Envelope'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+
+  /api/v1/clusters/{id}/kubeconfig:
+    get:
+      tags: [kubeconfig]
+      summary: 生成 kubeconfig（自服务）
+      description: |
+        产物只承载调用者自己的身份，数据面授权仍由请求时 Casbin 决定。
+        mode=static 嵌入调用者当前平台 JWT（过期需重新下载）；
+        mode=exec 写 k8s-am-login 命令行（推荐）。
+        server 指向 {external}/proxy/{clusterID}；平台 CA 经
+        AM_KUBECONFIG_CA_FILE 可选嵌入（certificate-authority-data）。
+      security:
+        - platformJWT: []
+      parameters:
+        - $ref: '#/components/parameters/ClusterID'
+        - name: mode
+          in: query
+          schema: {type: string, enum: [static, exec], default: exec}
+      responses:
+        '200':
+          description: kubeconfig YAML（下载）
+          content:
+            application/yaml:
+              schema: {type: string}
+        '400':
+          description: 参数非法 / 集群不存在（纯文本）
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+
+  /api/v1/auth/revoke:
+    post:
+      tags: [认证]
+      summary: 踢出用户（管理面）
+      description: |
+        用户 epoch 递增：该时刻之前签发的该用户全部 Token 立即失效
+        （本地即时 + Redis 跨副本同步，一致性窗口 5s）。
+        同一秒内重新登录可获得携带新 epoch 的 Token，不受影响。
+      security:
+        - platformJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sub]
+              properties:
+                sub: {type: string}
+      responses:
+        '200':
+          description: 已踢出
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+
+  /api/v1/audit:
+    get:
+      tags: [审计]
+      summary: 审计查询（管理面）
+      security:
+        - platformJWT: []
+      parameters:
+        - {name: user, in: query, schema: {type: string}}
+        - {name: cluster, in: query, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, default: 100, maximum: 1000}}
+      responses:
+        '200':
+          description: 事件列表（时间倒序）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: {$ref: '#/components/schemas/AuditEvent'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+
+  /api/v1/policies:
+    get:
+      tags: [策略与绑定]
+      summary: 策略列表
+      description: 每行 [sub, dom, obj, act]；act 为正则片段（匹配时锚定，FIX-8）。
+      security:
+        - platformJWT: []
+      responses:
+        '200':
+          description: 策略行
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: {$ref: '#/components/schemas/PolicyRow'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+    post:
+      tags: [策略与绑定]
+      summary: 增加策略
+      description: |
+        obj 语法：`{ns}/{resource}[/{subresource}]`、`cluster/{resource}`、
+        `nonresource{path}`；`*` 通配。act 为 K8s verb 正则片段
+        （如 `get|list|watch`），匹配时锚定——`delete` 不会匹配 `deletecollection`（FIX-8）。
+        变更经 Redis pub/sub 广播，其他副本 1s 内重载（未配置 Redis 时仅本副本即时生效）。
+      security:
+        - platformJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AddPolicyRequest'}
+      responses:
+        '200':
+          description: 已增加
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Envelope'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+    delete:
+      tags: [策略与绑定]
+      summary: 删除策略
+      security:
+        - platformJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AddPolicyRequest'}
+      responses:
+        '200':
+          description: 已删除（40001=不存在）
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Envelope'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+
+  /api/v1/bindings:
+    get:
+      tags: [策略与绑定]
+      summary: 绑定列表
+      description: 每行 [user, role, dom]。
+      security:
+        - platformJWT: []
+      responses:
+        '200':
+          description: 绑定行
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: {$ref: '#/components/schemas/BindingRow'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+    post:
+      tags: [策略与绑定]
+      summary: 增加绑定
+      security:
+        - platformJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AddBindingRequest'}
+      responses:
+        '200':
+          description: 已增加
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Envelope'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+    delete:
+      tags: [策略与绑定]
+      summary: 删除绑定
+      security:
+        - platformJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AddBindingRequest'}
+      responses:
+        '200':
+          description: 已删除（40001=不存在）
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Envelope'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+
+  /proxy/{clusterID}:
+    get:
+      tags: [数据面]
+      summary: Kubernetes API 代理（根路径；全部 HTTP 方法同语义，此处以 GET 代表）
+      description: |
+        kubectl 经 kubeconfig（server={platform}/proxy/{clusterID}）访问目标集群的入口。
+        完整 §8.1 顺序：JWT 校验 → 剥离用户 Impersonate-* 头（防伪造）→
+        Casbin 鉴权（RequestInfo 语义四元组，本地缓存零外部依赖）→
+        注入平台控制的 Impersonate-User/Group → 经隧道转发 →
+        API Server RBAC 第二道防线。
+
+        流式：WebSocket 升级按子协议分流——`v4/v5.channel.k8s.io`（exec/attach）
+        经 StreamTranslatorHandler 翻译为 SPDY；`SPDY/3.1+portforward.k8s.io`
+        （port-forward）经 TunnelingHandler 直通；旧版 SPDY 客户端原样透传。
+        限流：按用户滑动窗口（AM_RATE_LIMIT），超限 429 + Retry-After。
+      security:
+        - platformJWT: []
+      parameters:
+        - $ref: '#/components/parameters/ClusterID'
+      responses:
+        '200':
+          description: 上游响应原样透传（含流式/101 升级；任意内容类型）
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403':
+          description: Casbin 拒绝（fail-closed；鉴权组件故障同样 403）
+          content:
+            text/plain:
+              schema: {type: string}
+        '429':
+          description: 超出限流阈值
+          headers:
+            Retry-After: {schema: {type: integer}, description: 窗口秒数}
+        '501': {description: 隧道模块未启用}
+        '503':
+          description: 集群不可达（Agent 离线/重连中）
+    post:
+      tags: [数据面]
+      summary: Kubernetes API 代理（写语义；PUT/PATCH/DELETE 同构）
+      security:
+        - platformJWT: []
+      parameters:
+        - $ref: '#/components/parameters/ClusterID'
+      responses:
+        '200': {description: 上游响应透传}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {description: Casbin 拒绝}
+        '429': {description: 超出限流阈值}
+        '503': {description: 集群不可达}
+  /proxy/{clusterID}/{path}:
+    get:
+      tags: [数据面]
+      summary: Kubernetes API 代理（子路径；全部 HTTP 方法同语义，此处以 GET 代表）
+      description: 路径通配 `*`，apiserver 收到 strip 前缀后的干净路径（FIX-6）。
+      security:
+        - platformJWT: []
+      parameters:
+        - $ref: '#/components/parameters/ClusterID'
+        - name: path
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: 上游响应透传}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {description: Casbin 拒绝}
+        '429': {description: 超出限流阈值}
+        '503': {description: 集群不可达}
+    post:
+      tags: [数据面]
+      summary: Kubernetes API 代理（子路径，写语义）
+      security:
+        - platformJWT: []
+      parameters:
+        - $ref: '#/components/parameters/ClusterID'
+        - name: path
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: 上游响应透传}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {description: Casbin 拒绝}
+        '429': {description: 超出限流阈值}
+        '503': {description: 集群不可达}
+
+  /tunnel:
+    get:
+      tags: [Agent]
+      summary: Agent 反向隧道入口
+      description: |
+        Agent 专用（部署于目标集群）：Bearer 长期 Token（哈希比对 + 24h 轮换宽限）
+        → WebSocket 升级 → yamux 会话接管 → 集群转 online。
+        升级后的连接由平台监控：读活性看门狗（75s 无入站帧判死）、
+        优雅下线发送 1001 GoingAway（Agent 立即重连其他副本）。
+        Agent 不应向平台开流（数据面由平台发起）——入流防御性关闭。
+      security:
+        - agentToken: []
+      parameters:
+        - name: X-Cluster-ID
+          in: header
+          required: true
+          schema: {type: string}
+          description: 必须与 Token 归属集群一致（防跨集群误注册）
+        - name: X-Agent-ID
+          in: header
+          required: true
+          schema: {type: string}
+          description: Agent 实例标识（双副本须不同；默认 hostname）
+      responses:
+        '101':
+          description: WebSocket 协议切换成功（此后为 yamux 字节流）
+        '400': {description: 缺 X-Agent-ID}
+        '401': {description: Token 无效/过期/集群不匹配（防枚举，不区分原因）}
+        '503': {description: 隧道模块未启用}
+
+components:
+  securitySchemes:
+    platformJWT:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 平台 JWT（RS256，1h；OIDC 登录 / token-exchange / dev-token 签发）
+    agentToken:
+      type: http
+      scheme: bearer
+      description: 长期 Agent Token（am-clu- 前缀，24h 轮换宽限期）
+    registerToken:
+      type: http
+      scheme: bearer
+      description: 注册 Token（am-reg- 前缀，1h 有效，一次性）
+
+  parameters:
+    ClusterID:
+      name: id
+      in: path
+      required: true
+      schema: {type: string, maxLength: 64}
+      description: 集群 ID（Casbin dom）
+
+  responses:
+    PlainTextUnauthorized:
+      description: '未认证（WWW-Authenticate: Bearer；不区分过期/无效/吊销，防枚举）' 
+      content:
+        text/plain:
+          schema: {type: string}
+    PlainTextForbidden:
+      description: 禁止（管理员组不足）
+      content:
+        text/plain:
+          schema: {type: string}
+
+  schemas:
+    Envelope:
+      type: object
+      required: [status, message]
+      properties:
+        status:
+          type: integer
+          description: 业务码，0=成功；≥50000 系统错误（HTTP 500）
+          example: 0
+        message:
+          type: string
+          example: success
+        data:
+          description: 业务数据（错误响应缺省）
+
+    Cluster:
+      type: object
+      properties:
+        id: {type: string, description: 集群 ID（Casbin dom）}
+        name: {type: string}
+        desc: {type: string}
+        status:
+          type: string
+          enum: [pending, online, offline]
+          description: pending=已注册未接入；online=至少一条隧道在线
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    CreateClusterRequest:
+      type: object
+      required: [id, name]
+      properties:
+        id: {type: string, maxLength: 64}
+        name: {type: string}
+        desc: {type: string}
+
+    IssuedToken:
+      type: object
+      description: 签发的 Agent Token（明文仅此一次）
+      properties:
+        token:
+          type: string
+          description: am-clu- / am-reg- 前缀
+        kind:
+          type: string
+          enum: [register, longterm]
+        grace_ends_at:
+          type: string
+          format: date-time
+          description: 轮换时旧 Token 的宽限期截止（longterm 轮换时返回）
+
+    IssuedCredential:
+      type: object
+      description: 平台 JWT 签发结果
+      properties:
+        token: {type: string}
+        expires_at: {type: string, format: date-time}
+        token_type: {type: string, example: Bearer}
+
+    TokenDTO:
+      type: object
+      description: Token 元数据（永不包含哈希与明文）
+      properties:
+        cluster_id: {type: string}
+        kind: {type: string, enum: [register, longterm]}
+        status: {type: string, enum: [active, rotating]}
+        expires_at: {type: string, format: date-time, nullable: true}
+        created_at: {type: string, format: date-time}
+
+    PolicyRow:
+      type: array
+      items: {type: string}
+      description: '[sub, dom, obj, act]'
+
+    BindingRow:
+      type: array
+      items: {type: string}
+      description: '[user, role, dom]'
+
+    AddPolicyRequest:
+      type: object
+      required: [sub, dom, obj, act]
+      properties:
+        sub: {type: string, example: role:developer}
+        dom: {type: string, example: cluster-a, description: 集群 ID；策略支持 * 通配}
+        obj: {type: string, example: dev/*, description: 语义资源串（§5.1）}
+        act: {type: string, example: get|list|watch, description: K8s verb 正则片段（匹配时锚定）}
+
+    AddBindingRequest:
+      type: object
+      required: [user, role, dom]
+      properties:
+        user: {type: string, example: bob}
+        role: {type: string, example: role:developer}
+        dom: {type: string, example: cluster-a}
+
+    AuditEvent:
+      type: object
+      properties:
+        id: {type: integer}
+        timestamp: {type: string, format: date-time}
+        user: {type: string}
+        groups: {type: string, description: 逗号分隔}
+        cluster: {type: string}
+        method: {type: string}
+        path: {type: string, description: 语义资源串（Casbin obj）}
+        verb: {type: string, description: K8s verb}
+        allowed: {type: boolean}
+        reason:
+          type: string
+          enum: [allowed, denied-casbin, denied-casbin-error, tunnel-attached, user-revoked, login-success, login-failed]
+        source_ip: {type: string}
+        latency_ms: {type: integer}
+
+    Claims:
+      type: object
+      description: 平台 JWT 载荷（§4.2）
+      properties:
+        iss: {type: string}
+        sub: {type: string}
+        aud: {type: array, items: {type: string}}
+        exp: {type: integer}
+        iat: {type: integer}
+        jti: {type: string}
+        email: {type: string}
+        groups: {type: array, items: {type: string}}
+        am_ep:
+          type: integer
+          description: 签发时的用户吊销纪元（踢出语义，§4.2）
+
+    JWKS:
+      type: object
+      properties:
+        keys:
+          type: array
+          items:
+            type: object
+            properties:
+              kty: {type: string, example: RSA}
+              kid: {type: string, example: jwt-1}
+              use: {type: string, example: sig}
+              alg: {type: string, example: RS256}
+              n: {type: string}
+              e: {type: string}

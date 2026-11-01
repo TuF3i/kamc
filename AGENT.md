@@ -31,6 +31,9 @@ infrastructure/
   redis/             go-redis UniversalClient 统一构建（单机/哨兵/集群）
 docs/
   design.md          设计文档 v2.0（架构权威来源）
+api/
+  openapi.yaml       平台 HTTP API 的 OpenAPI 3.0 规范（与代码包分离）
+deploy/              部署产物（nginx/manifests/README，见其内部说明）
 ```
 
 ## 架构约定（摘要）
