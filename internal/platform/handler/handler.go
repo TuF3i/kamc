@@ -10,27 +10,32 @@ import (
 
 	"github.com/TuF3i/kamc/internal/platform/errcode"
 	"github.com/TuF3i/kamc/internal/platform/modules"
+	"github.com/TuF3i/kamc/internal/platform/proxy"
 	"github.com/TuF3i/kamc/internal/platform/service"
+	"github.com/TuF3i/kamc/internal/tunnel"
 	"github.com/TuF3i/kamc/internal/version"
 )
 
-// Handler 平台 HTTP 处理器（只持 Service，无其他状态）
+// Handler 平台 HTTP 处理器（业务下沉 Service；隧道/代理依赖可空，对应降级行为）
 type Handler struct {
-	svc *service.Service
+	svc     *service.Service
+	tunnels *tunnel.Service // 隧道模块（nil = 未启用 → /tunnel 返回 503）
+	proxies *proxy.Pool     // API 代理池（nil = 未装配 → /proxy 返回 501）
 }
 
 // NewHandler 构造 Handler
-func NewHandler(svc *service.Service) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc *service.Service, tunnels *tunnel.Service, proxies *proxy.Pool) *Handler {
+	return &Handler{svc: svc, tunnels: tunnels, proxies: proxies}
 }
 
-// RegisterRoutes 挂载全部路由（健康检查 + /api/v1 业务 API）。
+// RegisterRoutes 挂载全部路由（健康检查 + /api/v1 业务 API + /tunnel + /proxy）。
 // 认证/鉴权中间件（JWT、Casbin）按设计文档 §4/§5 属后续路线图，届时在
-// /api/v1 分组上挂载，健康检查端点保持无鉴权。
+// /api/v1 与 /proxy 分组上挂载；健康检查与 /tunnel（自带 Token 认证）保持现状。
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/healthz", h.Healthz) // 存活：不碰任何依赖
 	r.Get("/readyz", h.Readyz)   // 就绪：数据库连通（下线摘流依据）
 	r.Get("/version", h.Version)
+	r.Get("/tunnel", h.TunnelWS) // Agent 隧道入口（WS 升级 + Token 认证）
 
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Post("/clusters", h.CreateCluster)
@@ -41,6 +46,10 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 		api.Get("/clusters/{id}/tokens", h.ListTokens)
 		api.Delete("/clusters/{id}/tokens/{kind}", h.RevokeToken)
 	})
+
+	// /proxy/{clusterID}/... —— kubeconfig 的 server 路径前缀（FIX-6）
+	r.HandleFunc("/proxy/{clusterID}", h.Proxy)
+	r.HandleFunc("/proxy/{clusterID}/*", h.Proxy)
 }
 
 // Healthz 存活探针：进程活着即返回 200，不做依赖检查

@@ -25,8 +25,11 @@ import (
 
 	"github.com/TuF3i/kamc/infrastructure/postgres"
 	"github.com/TuF3i/kamc/internal/platform/dao"
+	"github.com/TuF3i/kamc/internal/platform/errcode"
 	"github.com/TuF3i/kamc/internal/platform/handler"
 	"github.com/TuF3i/kamc/internal/platform/middleware"
+	"github.com/TuF3i/kamc/internal/platform/modules"
+	"github.com/TuF3i/kamc/internal/platform/proxy"
 	"github.com/TuF3i/kamc/internal/platform/service"
 	"github.com/TuF3i/kamc/internal/tunnel"
 )
@@ -115,7 +118,28 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		return nil, fmt.Errorf("platform -> setup token table: %w", err)
 	}
 	svc := service.NewService(d)
-	h := handler.NewHandler(svc)
+
+	// API 代理池：依赖隧道模块；无鉴权代理仅显式开发开关可用（JWT 里程碑前）
+	var proxies *proxy.Pool
+	if o.tunnels != nil && os.Getenv("AM_ENABLE_UNAUTH_PROXY") == "1" {
+		proxies = proxy.NewPool(o.tunnels.Service.Open)
+		log.Printf("[platform] 未鉴权代理已启用（仅开发用途，AM_ENABLE_UNAUTH_PROXY=1）")
+	}
+	h := handler.NewHandler(svc, tunnelsService(o.tunnels), proxies)
+
+	// 隧道分离回调：该集群在本副本已无隧道时标记 offline。
+	// 跨副本收敛由注册表驱动（路线图），当前保守取本地视角。
+	if o.tunnels != nil {
+		o.tunnels.Service.SetDetachHook(func(clusterID, agentID string) {
+			if _, err := o.tunnels.Service.Get(clusterID); err != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				if _, rsp := svc.SetClusterStatus(ctx, clusterID, modules.ClusterStatusOffline); !errcode.IsSuccess(rsp) {
+					log.Printf("[platform] mark cluster %s offline: %s", clusterID, rsp)
+				}
+			}
+		})
+	}
 
 	// 路由与 HTTP 服务
 	engine := newEngine(h)
@@ -204,4 +228,12 @@ func envDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// tunnelsService 取隧道模块的 Service（未启用返回 nil，handler 据此降级）
+func tunnelsService(rt *tunnel.Runtime) *tunnel.Service {
+	if rt == nil {
+		return nil
+	}
+	return rt.Service
 }

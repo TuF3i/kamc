@@ -70,6 +70,19 @@ func (d *Dao) ListClusters(ctx context.Context) ([]modules.Cluster, error) {
 	return list, nil
 }
 
+// UpdateClusterStatus 更新集群接入状态（Agent 接入/离线回调）
+func (d *Dao) UpdateClusterStatus(ctx context.Context, id string, status modules.ClusterStatus) error {
+	res := d.db.WithContext(ctx).Model(&modules.Cluster{}).
+		Where("id = ?", id).Update("status", status)
+	if res.Error != nil {
+		return fmt.Errorf("dao -> update cluster status %s: %w", id, res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return fmt.Errorf("dao -> update cluster status %s: %w", id, gorm.ErrRecordNotFound)
+	}
+	return nil
+}
+
 // DeleteCluster 按 ID 删除，返回删除行数（0 即不存在）
 func (d *Dao) DeleteCluster(ctx context.Context, id string) (int64, error) {
 	res := d.db.WithContext(ctx).Delete(&modules.Cluster{}, "id = ?", id)

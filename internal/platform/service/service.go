@@ -80,6 +80,28 @@ func (s *Service) ListClusters(ctx context.Context) ([]*modules.ClusterDTO, *err
 	return dtos, nil
 }
 
+// SetClusterStatus 更新集群接入状态（隧道接入→online；全部离线→offline）。
+// 注：仅本进程视角——多副本下集群可能在其他副本有隧道，跨副本状态收敛
+// 由注册表驱动（路线图）；当前以本地隧道为准，保守判定避免误标。
+func (s *Service) SetClusterStatus(ctx context.Context, id string, status modules.ClusterStatus) (*modules.ClusterDTO, *errcode.Response) {
+	switch status {
+	case modules.ClusterStatusPending, modules.ClusterStatusOnline, modules.ClusterStatusOffline:
+	default:
+		return nil, errcode.ErrInvalidParam
+	}
+	if err := s.d.UpdateClusterStatus(ctx, id, status); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errcode.ErrClusterNotFound
+		}
+		return nil, errcode.ServerInternal(err)
+	}
+	c, rsp := s.getCluster(ctx, id)
+	if rsp != nil {
+		return nil, rsp
+	}
+	return c.ToDTO(), nil
+}
+
 // DeleteCluster 注销集群：不存在返回业务码，成功返回 nil rsp
 func (s *Service) DeleteCluster(ctx context.Context, id string) *errcode.Response {
 	rows, err := s.d.DeleteCluster(ctx, id)
