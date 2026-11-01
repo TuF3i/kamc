@@ -3,6 +3,8 @@ module github.com/TuF3i/kamc
 go 1.26.0
 
 require (
+	github.com/gorilla/websocket v1.5.3
+	github.com/hashicorp/yamux v0.1.2
 	github.com/redis/go-redis/v9 v9.23.0
 	gorm.io/driver/postgres v1.6.3
 	gorm.io/gorm v1.31.2
