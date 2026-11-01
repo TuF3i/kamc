@@ -17,6 +17,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -31,7 +32,7 @@ import (
 	"github.com/TuF3i/kamc/internal/platform/dao"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
 	"github.com/TuF3i/kamc/internal/platform/handler"
-	"github.com/TuF3i/kamc/internal/platform/middleware"
+	mw "github.com/TuF3i/kamc/internal/platform/middleware"
 	"github.com/TuF3i/kamc/internal/platform/modules"
 	"github.com/TuF3i/kamc/internal/platform/oidc"
 	"github.com/TuF3i/kamc/internal/platform/proxy"
@@ -178,6 +179,20 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		}
 	}
 
+	// 数据面限流（AM_RATE_LIMIT：每用户每分钟最大请求数，0=不限）。
+	// Redis 可用时跨副本共享窗口；否则进程内（单副本语义）。
+	var limiter mw.RateLimiter
+	rateLimitN := 0
+	if v, err := strconv.Atoi(os.Getenv("AM_RATE_LIMIT")); err == nil && v > 0 {
+		rateLimitN = v
+		if revCli != nil {
+			limiter = mw.NewRedisRateLimiter(revCli, time.Minute, rateLimitN)
+		} else {
+			limiter = mw.NewMemoryRateLimiter(time.Minute, rateLimitN)
+			log.Printf("[platform] 未配置 Redis，限流窗口为进程内（多副本各算各的）")
+		}
+	}
+
 	h := handler.NewHandler(svc, handler.Deps{
 		Auth:         authSvc,
 		OIDC:         oidcClient,
@@ -186,6 +201,8 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		CAData:       caData,
 		OIDCIssuer:   os.Getenv("OIDC_ISSUER"),
 		OIDCClientID: os.Getenv("OIDC_CLIENT_ID"),
+		RateLimiter:  limiter,
+		RateLimitN:   rateLimitN,
 	})
 	h.SetPolicy(envDefault("AM_ADMIN_GROUP", "am:admin"), os.Getenv("AM_DEV_ISSUE_TOKEN") == "1")
 
@@ -239,7 +256,7 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 func newEngine(h *handler.Handler) *chi.Mux {
 	engine := chi.NewRouter()
 	engine.Use(chimw.RequestID)
-	engine.Use(middleware.AccessLog)
+	engine.Use(mw.AccessLog)
 	engine.Use(chimw.Recoverer)
 	h.RegisterRoutes(engine)
 	return engine
