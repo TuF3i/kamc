@@ -111,6 +111,9 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	if err := d.SetupCluster(context.Background()); err != nil {
 		return nil, fmt.Errorf("platform -> setup cluster table: %w", err)
 	}
+	if err := d.SetupToken(context.Background()); err != nil {
+		return nil, fmt.Errorf("platform -> setup token table: %w", err)
+	}
 	svc := service.NewService(d)
 	h := handler.NewHandler(svc)
 

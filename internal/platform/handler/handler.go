@@ -37,6 +37,9 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 		api.Get("/clusters", h.ListClusters)
 		api.Get("/clusters/{id}", h.GetCluster)
 		api.Delete("/clusters/{id}", h.DeleteCluster)
+		api.Post("/clusters/{id}/tokens", h.IssueToken)
+		api.Get("/clusters/{id}/tokens", h.ListTokens)
+		api.Delete("/clusters/{id}/tokens/{kind}", h.RevokeToken)
 	})
 }
 

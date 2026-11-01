@@ -16,12 +16,13 @@ import (
 	"net/http"
 )
 
-// 业务码段规划：0 成功；1xxxx 通用；2xxxx 集群域；5xxxx 系统（≥50000 走 HTTP 500）
+// 业务码段规划：0 成功；1xxxx 通用；2xxxx 集群域；3xxxx Token 域；5xxxx 系统（≥50000 走 HTTP 500）
 const (
 	CodeSuccess         = 0
 	CodeInvalidParam    = 10001
 	CodeClusterNotFound = 20001
 	CodeClusterExists   = 20002
+	CodeTokenNotFound   = 30001
 	CodeServerInternal  = 50000
 )
 
@@ -42,6 +43,7 @@ var (
 	ErrInvalidParam    = &Response{Status: CodeInvalidParam, Message: "invalid parameter"}
 	ErrClusterNotFound = &Response{Status: CodeClusterNotFound, Message: "cluster not found"}
 	ErrClusterExists   = &Response{Status: CodeClusterExists, Message: "cluster already exists"}
+	ErrTokenNotFound   = &Response{Status: CodeTokenNotFound, Message: "token not found"}
 )
 
 // ServerInternal 系统内部错误：携带底层 err 详情，仅 handler 出口构造
