@@ -36,6 +36,7 @@ func (h *Handler) Proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	clusterID := chi.URLParam(r, "clusterID")
+	start := time.Now()
 
 	// 1. 身份（RequireJWT 中间件已注入）
 	claims, ok := middleware.ClaimsFromCtx(r.Context())
@@ -62,11 +63,13 @@ func (h *Handler) Proxy(w http.ResponseWriter, r *http.Request) {
 		// fail-closed：鉴权组件故障一律拒绝（§8 双重校验的第一层不能失效开放）
 		log.Printf("[platform] casbin enforce error %s@%s %s %s: %v",
 			claims.Subject, clusterID, obj, act, err)
+		h.auditDataPlane(r, clusterID, obj, act, false, "denied-casbin-error", start)
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	if !allowed {
 		log.Printf("[platform] casbin denied %s@%s %s %s", claims.Subject, clusterID, obj, act)
+		h.auditDataPlane(r, clusterID, obj, act, false, "denied-casbin", start)
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -90,6 +93,7 @@ func (h *Handler) Proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rp.ServeHTTP(w, r)
+	h.auditDataPlane(r, clusterID, obj, act, true, "allowed", start)
 }
 
 // serveStream 流式升级路径：Impersonation 走头部注入（Tunneling/UpgradeAware

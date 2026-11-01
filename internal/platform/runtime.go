@@ -28,6 +28,7 @@ import (
 	"github.com/TuF3i/kamc/infrastructure/postgres"
 	"github.com/TuF3i/kamc/infrastructure/redis"
 	"github.com/TuF3i/kamc/internal/auth"
+	"github.com/TuF3i/kamc/internal/platform/audit"
 	"github.com/TuF3i/kamc/internal/platform/authz"
 	"github.com/TuF3i/kamc/internal/platform/dao"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
@@ -62,12 +63,13 @@ type Runtime struct {
 
 	Tunnels *tunnel.Runtime // 隧道模块（可选注入；代理转发落地后使用，§6.2）
 
-	engine   *chi.Mux
-	srv      *http.Server
-	db       *gorm.DB                // 依赖的数据库连接 (自建时 Release 负责关闭)
-	ownDB    bool                    // db 是否为 CreateRuntime 自建 (决定 Release 是否关闭)
-	authzEn  *authz.Enforcer         // 鉴权组件（Release 释放 watcher）
-	redisCli goredis.UniversalClient // 共享 Redis 客户端 (自建时 Release 负责关闭)
+	engine      *chi.Mux
+	srv         *http.Server
+	db          *gorm.DB                // 依赖的数据库连接 (自建时 Release 负责关闭)
+	ownDB       bool                    // db 是否为 CreateRuntime 自建 (决定 Release 是否关闭)
+	authzEn     *authz.Enforcer         // 鉴权组件（Release 释放 watcher）
+	redisCli    goredis.UniversalClient // 共享 Redis 客户端 (自建时 Release 负责关闭)
+	auditWriter *audit.Writer           // 审计异步写出器
 }
 
 // Option CreateRuntime 选项
@@ -127,6 +129,9 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	}
 	if err := d.SetupPolicy(context.Background()); err != nil {
 		return nil, fmt.Errorf("platform -> setup policy table: %w", err)
+	}
+	if err := d.SetupAudit(context.Background()); err != nil {
+		return nil, fmt.Errorf("platform -> setup audit table: %w", err)
 	}
 	// Redis 客户端（配置存在时）：策略同步 watcher 与 Token 吊销共用；
 	// 归 Runtime 所有（Release 关闭）。未配置 = 单副本语义（无跨副本同步）。
@@ -208,6 +213,10 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		}
 	}
 
+	// 审计异步写出（§12.2）：缓冲投递 → 批量写 PG；PG 故障落本地文件回放
+	auditWriter := audit.NewWriter(d, envDefault("AM_AUDIT_SPILL_FILE", "/tmp/kamc-audit-spill.jsonl"))
+	auditWriter.Start()
+
 	h := handler.NewHandler(svc, handler.Deps{
 		Auth:         authSvc,
 		OIDC:         oidcClient,
@@ -218,6 +227,7 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		OIDCClientID: os.Getenv("OIDC_CLIENT_ID"),
 		RateLimiter:  limiter,
 		RateLimitN:   rateLimitN,
+		Audit:        auditWriter,
 	})
 	h.SetPolicy(envDefault("AM_ADMIN_GROUP", "am:admin"), os.Getenv("AM_DEV_ISSUE_TOKEN") == "1")
 
@@ -244,15 +254,16 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	}
 
 	rt := &Runtime{
-		Service:  svc,
-		Handler:  h,
-		Tunnels:  o.tunnels,
-		engine:   engine,
-		srv:      srv,
-		db:       db,
-		ownDB:    ownDB,
-		authzEn:  authzEn,
-		redisCli: sharedRedisCli,
+		Service:     svc,
+		Handler:     h,
+		Tunnels:     o.tunnels,
+		engine:      engine,
+		srv:         srv,
+		db:          db,
+		ownDB:       ownDB,
+		authzEn:     authzEn,
+		redisCli:    sharedRedisCli,
+		auditWriter: auditWriter,
 	}
 
 	// ErrServerClosed 不算错误：ReleaseRuntime 主动 Shutdown 的正常路径
@@ -304,6 +315,8 @@ func (r *Runtime) ReleaseRuntime() error {
 			_ = sqlDB.Close()
 		}
 	}
+
+	r.auditWriter.Release()
 
 	if r.authzEn != nil {
 		r.authzEn.Release()

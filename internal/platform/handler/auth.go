@@ -35,9 +35,11 @@ func (h *Handler) AuthCallback(w http.ResponseWriter, r *http.Request) {
 	user, err := h.oidc.Exchange(r.Context(), r.URL.Query().Get("code"), r.URL.Query().Get("state"))
 	if err != nil {
 		log.Printf("[platform] oidc exchange: %v", err)
+		h.auditSimple(r, "", "", "/auth/callback", "login-failed", false)
 		http.Error(w, "login failed", http.StatusUnauthorized)
 		return
 	}
+	h.auditSimple(r, user.Sub, "", "/auth/callback", "login-success", true)
 	h.issueAndRespond(w, user.Sub, user.Email, user.Groups)
 }
 
@@ -108,6 +110,7 @@ func (h *Handler) AuthRevokeUser(w http.ResponseWriter, r *http.Request) {
 		errcode.GenFinalResponse(w, nil, errcode.ServerInternal(err))
 		return
 	}
+	h.auditSimple(r, req.Sub, "", "/api/v1/auth/revoke", "user-revoked", true)
 	errcode.GenFinalResponse(w, map[string]string{"sub": req.Sub, "revoked": "before-now"}, nil)
 }
 

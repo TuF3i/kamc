@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/TuF3i/kamc/internal/platform/audit"
 	mw "github.com/TuF3i/kamc/internal/platform/middleware"
 
 	"github.com/TuF3i/kamc/internal/auth"
@@ -32,6 +33,7 @@ type Deps struct {
 	OIDCClientID string          // exec 插件参数
 	RateLimiter  mw.RateLimiter  // 数据面限流器（nil 或 RateLimit<=0 不启用）
 	RateLimitN   int             // 窗口内最大请求数
+	Audit        *audit.Writer   // 审计异步写出器（nil = 不审计）
 }
 
 // Handler 平台 HTTP 处理器（业务下沉 Service；依赖可空，对应降级行为）
@@ -48,6 +50,7 @@ type Handler struct {
 
 	rateLimiter mw.RateLimiter // 数据面限流器（nil 或 rateLimitN<=0 不启用）
 	rateLimitN  int            // 窗口内最大请求数
+	audit       *audit.Writer
 
 	adminGroup      string // 管理面用户组（AM_ADMIN_GROUP）
 	devTokenEnabled bool   // 开发用直签 Token 开关（AM_DEV_ISSUE_TOKEN）
@@ -58,7 +61,7 @@ func NewHandler(svc *service.Service, deps Deps) *Handler {
 	return &Handler{
 		svc: svc, auth: deps.Auth, oidc: deps.OIDC, tunnels: deps.Tunnels, proxies: deps.Proxies,
 		caData: deps.CAData, oidcIssuer: deps.OIDCIssuer, oidcClientID: deps.OIDCClientID,
-		rateLimiter: deps.RateLimiter, rateLimitN: deps.RateLimitN,
+		rateLimiter: deps.RateLimiter, rateLimitN: deps.RateLimitN, audit: deps.Audit,
 	}
 }
 
@@ -115,6 +118,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			admin.Get("/clusters/{id}/tokens", h.ListTokens)
 			admin.Delete("/clusters/{id}/tokens/{kind}", h.RevokeToken)
 			admin.Post("/auth/revoke", h.AuthRevokeUser)
+			admin.Get("/audit", h.ListAudit)
 			policiesRoutes(admin, h)
 		})
 	})
