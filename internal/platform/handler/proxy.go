@@ -2,9 +2,11 @@ package handler
 
 import (
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
@@ -13,7 +15,6 @@ import (
 
 	"github.com/TuF3i/kamc/internal/platform/authz"
 	"github.com/TuF3i/kamc/internal/platform/middleware"
-	"github.com/TuF3i/kamc/internal/platform/proxy"
 )
 
 // Proxy /proxy/{clusterID}/* —— API 代理（数据面，设计文档 §8.1 完整顺序）：
@@ -91,36 +92,66 @@ func (h *Handler) Proxy(w http.ResponseWriter, r *http.Request) {
 	rp.ServeHTTP(w, r)
 }
 
-// serveStream 流式升级路径：Impersonation 经 transport 注入（官方 handler 自建
-// 上游请求，头部注入不生效），上游地址 = 占位 host + 本次请求的路径与 query。
+// serveStream 流式升级路径：Impersonation 走头部注入（Tunneling/UpgradeAware
+// handler 都克隆转发入站请求头），上游地址 = 占位 host + 本次请求的路径与 query。
 func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request, clusterID, cleanPath, user string, groups []string) {
 	transport, err := h.proxies.Transport(clusterID)
 	if err != nil {
 		http.Error(w, "proxy init failed", http.StatusInternalServerError)
 		return
 	}
-	impersonated := proxy.NewImpersonationTransport(transport, user, groups)
 	base := h.proxies.Location(clusterID)
 	if base == nil {
 		http.Error(w, "proxy init failed", http.StatusInternalServerError)
 		return
 	}
-	// 上游地址携带本次请求的路径与 query（exec 的 command/stdin 等参数必须透传）
-	location := *base
-	location.Path = cleanPath
-	location.RawQuery = r.URL.RawQuery
+
+	// 注入平台控制的 Impersonation（§8.1 第 5 步；伪造头已在外层剥离）
+	r.Header.Set("Impersonate-User", user)
+	for _, g := range groups {
+		r.Header.Add("Impersonate-Group", g)
+	}
 
 	if hasSPDYTunnelSubprotocol(r) {
 		// port-forward：SPDY 帧经 WebSocket 直通上游（TunnelingHandler 包装
-		// UpgradeAwareHandler 完成上游 SPDY 升级拨号）
-		upgradeAware := utilproxy.NewUpgradeAwareHandler(&location, impersonated, false, true, errorResponder{})
-		upgradeAware.UpgradeRequired = true
+		// UpgradeAwareHandler 完成上游 SPDY 升级拨号；入站头部被克隆转发）。
+		// UseRequestLocation 保留请求路径（location 默认整体替换 URL → 路径丢失 404）。
+		upgradeAware := utilproxy.NewUpgradeAwareHandler(base, transport, false, true, errorResponder{})
+		upgradeAware.UseRequestLocation = true
 		apiproxy.NewTunnelingHandler(upgradeAware).ServeHTTP(w, r)
 		return
 	}
 
-	// exec/attach：WS（v4/v5.channel.k8s.io）翻译为 SPDY（兼容 1.23/1.25 仅 SPDY 集群）
-	streamHandler := apiproxy.NewStreamTranslatorHandler(&location, impersonated, 0, streamOptions(r))
+	// exec/attach：WS（v4/v5.channel.k8s.io）翻译为 SPDY（兼容 1.23/1.25 仅 SPDY 集群）。
+	//
+	// StreamTranslator 的 SPDY 客户端自建上游请求（dialerFor 只取拨号函数，
+	// 不透传任何头部），因此 Impersonation 无法经它传递——改用本地中继：
+	// translator 指向 127.0.0.1 中继监听，中继内 UpgradeAwareHandler 克隆
+	// 入站请求头（含上面注入的身份）后经隧道拨号真实上游。每次请求一个
+	// 临时监听，连接被 Hijack 后关闭监听不影响既有连接。
+	transportLocal := http.DefaultTransport // 中继在环回，无需隧道 dialer
+	relayLis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		http.Error(w, "relay listen failed", http.StatusInternalServerError)
+		return
+	}
+	defer relayLis.Close() // Hijack 后的连接不受影响
+
+	relaySrv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		// translator 自建的上游请求不含身份头，在此注入平台控制的 Impersonation
+		// （UpgradeAwareHandler 克隆转发；用户传入的伪造头已在外层剥离）
+		req.Header.Set("Impersonate-User", user)
+		for _, g := range groups {
+			req.Header.Add("Impersonate-Group", g)
+		}
+		ua := utilproxy.NewUpgradeAwareHandler(base, transport, false, true, errorResponder{})
+		ua.UseRequestLocation = true // 同上：保留 exec 路径与 query
+		ua.ServeHTTP(w, req)
+	}), ReadHeaderTimeout: 10 * time.Second}
+	go func() { _ = relaySrv.Serve(relayLis) }() // 随 listener 关闭退出，无需等待
+
+	location := url.URL{Scheme: "http", Host: relayLis.Addr().String(), Path: cleanPath, RawQuery: r.URL.RawQuery}
+	streamHandler := apiproxy.NewStreamTranslatorHandler(&location, transportLocal, 0, streamOptions(r))
 	streamHandler.ServeHTTP(w, r)
 }
 

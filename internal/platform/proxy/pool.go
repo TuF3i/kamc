@@ -6,8 +6,8 @@
 //     官方 StreamTranslatorHandler / TunnelingHandler，WS→SPDY 翻译后经隧道送达。
 //
 // 安全收敛（设计文档既定）：Director 剥离 Authorization（FIX-7）；
-// Impersonation 对流式路径经 ImpersonationTransport 注入（官方 handler 自建
-// 上游请求，头部注入不生效），普通路径由 handler 直写头部。
+// Impersonation 统一经 handler 直写请求头（UpgradeAware/Tunneling handler
+// 均克隆转发入站头部，三条路径一致；exec 的本地中继见 handler/proxy.go）。
 package proxy
 
 import (
@@ -125,27 +125,4 @@ func (p *Pool) item(clusterID string) (*poolItem, error) {
 	item := &poolItem{proxy: rp, transport: transport, location: location}
 	p.items[clusterID] = item
 	return item, nil
-}
-
-// ImpersonationTransport 在 transport 层注入平台控制的 Impersonation 头。
-// 流式 handler（StreamTranslatorHandler 等）自建上游请求、不透传入站头部，
-// 必须以此方式注入（§8.1 第 5 步的流式等价物）。
-type ImpersonationTransport struct {
-	base   http.RoundTripper
-	user   string
-	groups []string
-}
-
-// NewImpersonationTransport 包装基础 transport
-func NewImpersonationTransport(base http.RoundTripper, user string, groups []string) *ImpersonationTransport {
-	return &ImpersonationTransport{base: base, user: user, groups: groups}
-}
-
-func (t *ImpersonationTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	r2 := r.Clone(r.Context())
-	r2.Header.Set("Impersonate-User", t.user)
-	for _, g := range t.groups {
-		r2.Header.Add("Impersonate-Group", g)
-	}
-	return t.base.RoundTrip(r2)
 }
