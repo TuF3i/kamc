@@ -18,6 +18,7 @@ import (
 
 	"github.com/hashicorp/yamux"
 
+	"github.com/TuF3i/kamc/internal/metrics"
 	"github.com/TuF3i/kamc/internal/tunnel/registry"
 )
 
@@ -260,6 +261,8 @@ func (m *Manager) register(clusterID, agentID string, sess *yamux.Session, t *Tu
 	m.clusters[clusterID] = append(list, t)
 	m.mu.Unlock()
 
+	metrics.TunnelAttachedAgents.Set(float64(len(m.clustersAll())))
+	metrics.TunnelConnectedClusters.Set(float64(len(m.clusters)))
 	m.reportOne(clusterID, agentID)
 }
 
@@ -301,6 +304,8 @@ func (m *Manager) Remove(clusterID, agentID string) {
 	} else {
 		m.clusters[clusterID] = list
 	}
+	metrics.TunnelAttachedAgents.Set(float64(m.countTunnels()))
+	metrics.TunnelConnectedClusters.Set(float64(len(m.clusters)))
 	m.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -423,6 +428,26 @@ func (m *Manager) Release() {
 		}
 		delete(m.clusters, cid)
 	}
+	metrics.TunnelAttachedAgents.Set(0)
+	metrics.TunnelConnectedClusters.Set(0)
+}
+
+// clustersAll 汇总全部隧道（指标观测用；调用方须已持有 mu）
+func (m *Manager) clustersAll() []*Tunnel {
+	var all []*Tunnel
+	for _, list := range m.clusters {
+		all = append(all, list...)
+	}
+	return all
+}
+
+// countTunnels 隧道总数（调用方须已持有 mu）
+func (m *Manager) countTunnels() int {
+	n := 0
+	for _, list := range m.clusters {
+		n += len(list)
+	}
+	return n
 }
 
 // waitTimeout 带超时等待 wg（约定：一切等待必须带超时）

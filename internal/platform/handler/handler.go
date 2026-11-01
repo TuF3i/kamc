@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/TuF3i/kamc/internal/platform/audit"
 	mw "github.com/TuF3i/kamc/internal/platform/middleware"
@@ -78,7 +79,8 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/healthz", h.Healthz) // 存活：不碰任何依赖
 	r.Get("/readyz", h.Readyz)   // 就绪：数据库连通（下线摘流依据）
 	r.Get("/version", h.Version)
-	r.Get("/tunnel", h.TunnelWS) // Agent 隧道入口（WS 升级 + Token 认证）
+	r.Get("/metrics", promhttp.Handler().ServeHTTP) // 平台指标（集群内网约定，鉴权属部署层）
+	r.Get("/tunnel", h.TunnelWS)                    // Agent 隧道入口（WS 升级 + Token 认证）
 	r.Get("/.well-known/jwks.json", h.JWKS)
 
 	// 认证流程：login/callback 匿名（OIDC 流程自身防 CSRF）；me 需 JWT；

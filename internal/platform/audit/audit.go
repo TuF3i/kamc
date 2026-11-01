@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/TuF3i/kamc/internal/metrics"
 	"github.com/TuF3i/kamc/internal/platform/modules"
 )
 
@@ -74,7 +75,8 @@ func (w *Writer) Log(ev *modules.AuditEvent) {
 	select {
 	case w.buf <- ev:
 	default:
-		w.dropped.Add(1) // 缓冲满：丢弃（§12.3 指标观测）
+		w.dropped.Add(1)
+		metrics.AuditDroppedTotal.Inc() // 缓冲满：丢弃（§12.3 指标观测）
 	}
 }
 
@@ -156,6 +158,7 @@ func (w *Writer) spill(events []*modules.AuditEvent) {
 	f, err := os.OpenFile(w.spillPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		w.dropped.Add(int64(len(events)))
+		metrics.AuditDroppedTotal.Add(float64(len(events)))
 		fmt.Printf("[audit] spill open: %v\n", err)
 		return
 	}

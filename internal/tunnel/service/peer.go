@@ -19,6 +19,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/hashicorp/yamux"
 
+	"github.com/TuF3i/kamc/internal/metrics"
 	"github.com/TuF3i/kamc/internal/tunnel/registry"
 	"github.com/TuF3i/kamc/internal/wsconn"
 )
@@ -211,6 +212,7 @@ func (p *PeerRouter) DialCluster(ctx context.Context, clusterID string) (net.Con
 		}
 		conn, rerr := p.openRelay(ctx, o.Pod, clusterID)
 		if rerr == nil {
+			metrics.PeerRelayTotal.WithLabelValues(o.Pod).Inc()
 			return conn, nil
 		}
 		log.Printf("[tunnel] relay %s via %s: %v", clusterID, o.Pod, rerr)

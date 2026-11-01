@@ -5,14 +5,17 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/gorilla/websocket"
 	utilproxy "k8s.io/apimachinery/pkg/util/proxy"
 	apiproxy "k8s.io/apiserver/pkg/util/proxy"
 
+	"github.com/TuF3i/kamc/internal/metrics"
 	"github.com/TuF3i/kamc/internal/platform/authz"
 	"github.com/TuF3i/kamc/internal/platform/middleware"
 )
@@ -31,10 +34,12 @@ import (
 //
 // 失败语义：无权限 403；集群无隧道（Agent 离线/重连中）由池 ErrorHandler 转 503。
 func (h *Handler) Proxy(w http.ResponseWriter, r *http.Request) {
+	// 计数/耗时基于状态包装器（流式响应的 Status 为 0，按 200 语义另计）
 	if h.proxies == nil {
 		http.Error(w, "proxy requires tunnels enabled", http.StatusNotImplemented)
 		return
 	}
+	ww := chimw.NewWrapResponseWriter(w, r.ProtoMajor)
 	clusterID := chi.URLParam(r, "clusterID")
 	start := time.Now()
 
@@ -63,12 +68,14 @@ func (h *Handler) Proxy(w http.ResponseWriter, r *http.Request) {
 		// fail-closed：鉴权组件故障一律拒绝（§8 双重校验的第一层不能失效开放）
 		log.Printf("[platform] casbin enforce error %s@%s %s %s: %v",
 			claims.Subject, clusterID, obj, act, err)
+		metrics.CasbinDenialsTotal.WithLabelValues(clusterID).Inc()
 		h.auditDataPlane(r, clusterID, obj, act, false, "denied-casbin-error", start)
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	if !allowed {
 		log.Printf("[platform] casbin denied %s@%s %s %s", claims.Subject, clusterID, obj, act)
+		metrics.CasbinDenialsTotal.WithLabelValues(clusterID).Inc()
 		h.auditDataPlane(r, clusterID, obj, act, false, "denied-casbin", start)
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
@@ -92,7 +99,9 @@ func (h *Handler) Proxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "proxy init failed", http.StatusInternalServerError)
 		return
 	}
-	rp.ServeHTTP(w, r)
+	rp.ServeHTTP(ww, r)
+	metrics.RequestsTotal.WithLabelValues(clusterID, act, strconv.Itoa(ww.Status())).Inc()
+	metrics.ProxyDurationSeconds.WithLabelValues(clusterID).Observe(time.Since(start).Seconds())
 	h.auditDataPlane(r, clusterID, obj, act, true, "allowed", start)
 }
 

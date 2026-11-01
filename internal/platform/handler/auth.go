@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TuF3i/kamc/internal/metrics"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
 	"github.com/TuF3i/kamc/internal/platform/middleware"
 )
@@ -111,6 +112,7 @@ func (h *Handler) AuthRevokeUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.auditSimple(r, req.Sub, "", "/api/v1/auth/revoke", "user-revoked", true)
+	metrics.RevocationsTotal.WithLabelValues("user").Inc()
 	errcode.GenFinalResponse(w, map[string]string{"sub": req.Sub, "revoked": "before-now"}, nil)
 }
 
@@ -129,6 +131,7 @@ func (h *Handler) AuthLogout(w http.ResponseWriter, r *http.Request) {
 		errcode.GenFinalResponse(w, nil, errcode.ServerInternal(err))
 		return
 	}
+	metrics.RevocationsTotal.WithLabelValues("token").Inc()
 	errcode.GenFinalResponse(w, map[string]bool{"logout": true}, nil)
 }
 

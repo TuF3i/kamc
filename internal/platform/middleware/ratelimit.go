@@ -17,6 +17,8 @@ import (
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
+
+	"github.com/TuF3i/kamc/internal/metrics"
 )
 
 // RateLimiter 限流判定接口（滑动窗口；Redis / 内存双实现）
@@ -130,6 +132,7 @@ func RateLimit(limiter RateLimiter, limit int, window time.Duration) func(http.H
 				return
 			}
 			if !allowed {
+				metrics.RateLimitedTotal.Inc()
 				w.Header().Set("Retry-After", strconv.Itoa(int(window.Seconds())))
 				http.Error(w, "rate limited", http.StatusTooManyRequests)
 				return
