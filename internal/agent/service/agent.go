@@ -43,17 +43,18 @@ const tokenPollInterval = 30 * time.Second
 
 // Config Agent 运行配置（环境变量装载，定义在本包避免反向依赖模块层）
 type Config struct {
-	PlatformURL  string        // 平台隧道入口 wss://...
-	ClusterID    string        // 本集群 ID
-	AgentID      string        // 本实例标识（双副本须不同）
-	TokenFile    string        // Token 文件路径（Secret 挂载）
-	PingInterval time.Duration // WS 心跳 ping 间隔
-	BackoffBase  time.Duration // 重连退避基数
-	BackoffMax   time.Duration // 重连退避上限
-	APIServerURL string        // 上游 kube-apiserver（显式覆盖；未设置时探测 in-cluster）
-	SACAFile     string        // 上游 CA 文件（默认探测 in-cluster ca.crt）
-	SATokenFile  string        // 上游 SA Token 文件（默认探测 in-cluster token）
-	InsecureTLS  bool          // 跳过平台证书校验（开发环境自签证书）
+	PlatformURL       string        // 平台隧道入口 wss://...
+	ClusterID         string        // 本集群 ID
+	AgentID           string        // 本实例标识（双副本须不同）
+	TokenFile         string        // Token 文件路径（Secret 挂载）
+	PingInterval      time.Duration // WS 心跳 ping 间隔
+	BackoffBase       time.Duration // 重连退避基数
+	BackoffMax        time.Duration // 重连退避上限
+	TokenPollInterval time.Duration // Token 文件轮询间隔（默认 30s，测试注入短值）
+	APIServerURL      string        // 上游 kube-apiserver（显式覆盖；未设置时探测 in-cluster）
+	SACAFile          string        // 上游 CA 文件（默认探测 in-cluster ca.crt）
+	SATokenFile       string        // 上游 SA Token 文件（默认探测 in-cluster token）
+	InsecureTLS       bool          // 跳过平台证书校验（开发环境自签证书）
 }
 
 // Validate 必填项校验
@@ -71,8 +72,9 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// DialFunc 拨出函数签名（测试注入点；默认走真实 WebSocket 拨号）
-type DialFunc func(ctx context.Context, cfg Config, token string) (*websocket.Conn, error)
+// DialFunc 拨出函数签名（测试注入点；默认走真实 WebSocket 拨号）。
+// 握手失败时 resp 非空（含 HTTP 状态码，供 401 停止重试判定，§6.5）。
+type DialFunc func(ctx context.Context, cfg Config, token string) (*websocket.Conn, *http.Response, error)
 
 // Service Agent 连接服务
 type Service struct {
@@ -88,18 +90,24 @@ type Service struct {
 	upstreamTransport http.RoundTripper
 	proxy             *httputil.ReverseProxy
 
-	dialFn   DialFunc
-	done     chan struct{}
-	wg       sync.WaitGroup
-	startMu  sync.Mutex
-	started  bool
-	rel      sync.Once
-	lastPong atomic.Int64 // 最近 pong 时间（UnixNano），pingLoop 看门狗用
+	dialFn       DialFunc
+	done         chan struct{}
+	tokenChanged chan struct{} // Token 文件变更信号（401 驻留态的恢复条件，§6.5）
+	wg           sync.WaitGroup
+	startMu      sync.Mutex
+	started      bool
+	rel          sync.Once
+	lastPong     atomic.Int64 // 最近 pong 时间（UnixNano），pingLoop 看门狗用
 }
 
 // NewService 构造 Service（Start 由模块装配层显式调用）
 func NewService(cfg Config) *Service {
-	return &Service{cfg: cfg, dialFn: defaultDial, done: make(chan struct{})}
+	return &Service{
+		cfg:          cfg,
+		dialFn:       defaultDial,
+		done:         make(chan struct{}),
+		tokenChanged: make(chan struct{}, 1),
+	}
 }
 
 // SetDialFunc 替换拨出函数（测试注入；须在 Start 之前调用）
@@ -116,7 +124,7 @@ func (s *Service) SetUpstream(u *url.URL, tr http.RoundTripper) {
 
 // defaultDial 真实拨出：Bearer Token + 集群/实例标识头；TLS 信任系统根证书，
 // 平台证书为私有 CA 时经 TOKEN_CA_FILE 扩展（路线图：Token 认证入口）。
-func defaultDial(ctx context.Context, cfg Config, token string) (*websocket.Conn, error) {
+func defaultDial(ctx context.Context, cfg Config, token string) (*websocket.Conn, *http.Response, error) {
 	d := websocket.Dialer{HandshakeTimeout: 10 * time.Second}
 	if cfg.InsecureTLS {
 		d.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // 开发环境显式开关（--insecure 语义）
@@ -126,11 +134,11 @@ func defaultDial(ctx context.Context, cfg Config, token string) (*websocket.Conn
 		"X-Cluster-ID":  []string{cfg.ClusterID},
 		"X-Agent-ID":    []string{cfg.AgentID},
 	}
-	conn, _, err := d.DialContext(ctx, cfg.PlatformURL, header)
+	conn, resp, err := d.DialContext(ctx, cfg.PlatformURL, header)
 	if err != nil {
-		return nil, fmt.Errorf("agent -> dial platform: %w", err)
+		return nil, resp, fmt.Errorf("agent -> dial platform: %w", err)
 	}
-	return conn, nil
+	return conn, resp, nil
 }
 
 // Start 启动连接循环与 Token 轮询（幂等）。
@@ -180,8 +188,18 @@ func (s *Service) connectLoop() {
 		}
 
 		// 拨号自带 HandshakeTimeout，不依赖 ctx 取消；done 在拨号返回后立即生效
-		conn, err := s.dialFn(context.Background(), s.cfg, token)
+		conn, resp, err := s.dialFn(context.Background(), s.cfg, token)
 		if err != nil {
+			// 401：Token 被平台彻底拒绝（过期/吊销）——按 §6.5 停止重试，
+			// 等管理员重新签发；Token 文件变更后自动恢复
+			if resp != nil && resp.StatusCode == http.StatusUnauthorized {
+				log.Printf("[agent] 平台拒绝 Token（401），停止重试；更新 Token 文件后自动恢复")
+				if !s.waitTokenChange() {
+					return
+				}
+				log.Printf("[agent] 检测到新 Token，恢复连接")
+				continue
+			}
 			log.Printf("[agent] 连接平台失败，退避 %s: %v", backoff, err)
 			if !s.sleepBackoff(&backoff) {
 				return
@@ -298,7 +316,11 @@ func (s *Service) watchdogTimeout() time.Duration {
 // tokenWatch 轮询 Token 文件哈希；变更即断开当前会话，connectLoop 会用新 Token 重连。
 func (s *Service) tokenWatch() {
 	defer s.wg.Done()
-	ticker := time.NewTicker(tokenPollInterval)
+	interval := s.cfg.TokenPollInterval
+	if interval <= 0 {
+		interval = tokenPollInterval
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -314,10 +336,15 @@ func (s *Service) tokenWatch() {
 
 			s.mu.Lock()
 			changed := s.lastTokenHash != "" && hash != s.lastTokenHash
+			s.lastTokenHash = hash // 记录本轮哈希（首次仅基线，不触发重连）
 			s.mu.Unlock()
 			if changed {
 				log.Printf("[agent] 检测到 Token 变更，断开重连")
 				s.closeSession() // 仅断会话，connectLoop 循环存活
+				select {
+				case s.tokenChanged <- struct{}{}: // 唤醒 401 驻留态（§6.5）
+				default:
+				}
 			}
 		}
 	}
@@ -347,6 +374,16 @@ func (s *Service) closeSession() {
 	if s.conn != nil {
 		_ = s.conn.Close()
 		s.conn = nil
+	}
+}
+
+// waitTokenChange 驻留等待 Token 变更（401 停止重试态，§6.5）；done 关闭返回 false
+func (s *Service) waitTokenChange() bool {
+	select {
+	case <-s.done:
+		return false
+	case <-s.tokenChanged:
+		return true
 	}
 }
 

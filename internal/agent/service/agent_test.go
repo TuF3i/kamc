@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -92,12 +93,12 @@ func TestConnectLoopReconnectsAndReleases(t *testing.T) {
 
 	var attempts atomic.Int64
 	s := NewService(cfg)
-	s.SetDialFunc(func(_ context.Context, _ Config, token string) (*websocket.Conn, error) {
+	s.SetDialFunc(func(_ context.Context, _ Config, token string) (*websocket.Conn, *http.Response, error) {
 		if token != "am-clu-test-token" {
 			t.Errorf("dial got token %q, want file content", token)
 		}
 		attempts.Add(1)
-		return nil, websocket.ErrBadHandshake // 始终失败 → 循环退避重试
+		return nil, nil, websocket.ErrBadHandshake // 始终失败 → 循环退避重试
 	})
 
 	if err := s.Start(); err != nil {
@@ -125,9 +126,9 @@ func TestStartIdempotent(t *testing.T) {
 	}
 	var attempts atomic.Int64
 	s := NewService(cfg)
-	s.SetDialFunc(func(_ context.Context, _ Config, _ string) (*websocket.Conn, error) {
+	s.SetDialFunc(func(_ context.Context, _ Config, _ string) (*websocket.Conn, *http.Response, error) {
 		attempts.Add(1)
-		return nil, websocket.ErrBadHandshake
+		return nil, nil, websocket.ErrBadHandshake
 	})
 
 	if err := s.Start(); err != nil {
@@ -152,8 +153,8 @@ func TestReleaseIdempotent(t *testing.T) {
 		t.Fatalf("write token: %v", err)
 	}
 	s := NewService(cfg)
-	s.SetDialFunc(func(_ context.Context, _ Config, _ string) (*websocket.Conn, error) {
-		return nil, http.ErrAbortHandler
+	s.SetDialFunc(func(_ context.Context, _ Config, _ string) (*websocket.Conn, *http.Response, error) {
+		return nil, nil, http.ErrAbortHandler
 	})
 	_ = s.Start()
 
@@ -182,4 +183,56 @@ func TestBackoffProgression(t *testing.T) {
 	if cur != s.cfg.BackoffMax {
 		t.Fatalf("backoff should cap at max %s, got %s", s.cfg.BackoffMax, cur)
 	}
+}
+
+// TestConnectLoopParksOn401 401 停止重试（§6.5）：拨号被拒后驻留，
+// Token 文件变更后自动恢复。
+func TestConnectLoopParksOn401(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.TokenPollInterval = 10 * time.Millisecond
+	if err := os.WriteFile(cfg.TokenFile, []byte("tok-v1\n"), 0o600); err != nil {
+		t.Fatalf("write token: %v", err)
+	}
+
+	var attempts atomic.Int64
+	var lastToken atomic.Value
+	s := NewService(cfg)
+	s.SetDialFunc(func(_ context.Context, _ Config, token string) (*websocket.Conn, *http.Response, error) {
+		attempts.Add(1)
+		lastToken.Store(token)
+		if token == "tok-v1" {
+			return nil, &http.Response{StatusCode: http.StatusUnauthorized}, errors.New("unauthorized")
+		}
+		return nil, nil, websocket.ErrBadHandshake // 新 Token：改为普通失败（退避重试）
+	})
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && attempts.Load() < 1 {
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	// 驻留：500ms 内不再尝试
+	n := attempts.Load()
+	time.Sleep(500 * time.Millisecond)
+	if got := attempts.Load(); got != n {
+		t.Fatalf("401 should park the loop: attempts %d -> %d", n, got)
+	}
+
+	// Token 文件变更 → 恢复
+	if err := os.WriteFile(cfg.TokenFile, []byte("tok-v2\n"), 0o600); err != nil {
+		t.Fatalf("renew token: %v", err)
+	}
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if v, _ := lastToken.Load().(string); v == "tok-v2" {
+			s.Release()
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	s.Release()
+	t.Fatal("loop should resume dialing with renewed token")
 }
