@@ -62,6 +62,7 @@ type Manager struct {
 	podID    string
 	ttl      time.Duration
 	interval time.Duration
+	peer     *PeerRouter // 跨副本转发路由（NewPeerRouter 挂载；nil = 单副本形态）
 
 	detachMu   sync.Mutex
 	detachHook func(clusterID, agentID string) // 隧道移除回调（平台据此标记集群 offline）
@@ -257,9 +258,23 @@ func (m *Manager) monitorSession(clusterID, agentID string, session *yamux.Sessi
 	}
 }
 
-// Open 打开一条到目标集群 Agent 的数据流（net.Conn），供上层组装
-// http.Transport 的 DialContext（设计文档 §6.2 Dialer 模型）。
+// Open 取集群的数据流连接（设计文档 §6.2 Dialer 模型的拨号入口）：
+// 本地有隧道直接开流；否则经 PeerRouter 跨副本 RELAY（§7.2.4）。
 func (m *Manager) Open(clusterID string) (net.Conn, error) {
+	if conn, err := m.openLocal(clusterID); err == nil {
+		return conn, nil
+	}
+	if m.peer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return m.peer.DialCluster(ctx, clusterID)
+	}
+	return nil, fmt.Errorf("cluster %s: %w", clusterID, ErrClusterNotConnected)
+}
+
+// openLocal 仅本机隧道开流（PeerRouter 的中继出口必须用它，
+// 避免递归触发跨副本转发）
+func (m *Manager) openLocal(clusterID string) (net.Conn, error) {
 	t, err := m.Get(clusterID)
 	if err != nil {
 		return nil, err
@@ -281,7 +296,7 @@ func (m *Manager) reportOne(clusterID, agentID string) {
 }
 
 // Release 停止心跳、下线全部归属并关闭全部会话（幂等）。
-// 顺序：close(done) 停心跳 → 等循环退出 → 清理会话与注册。
+// 顺序：close(done) 停心跳 → 等循环退出 → 关 peer 路由 → 清理会话与注册。
 func (m *Manager) Release() {
 	m.startMu.Lock()
 	select {
@@ -295,6 +310,10 @@ func (m *Manager) Release() {
 
 	if started {
 		waitTimeout(&m.wg, 3*time.Second)
+	}
+	if m.peer != nil {
+		m.peer.Close()
+		m.peer.waitExit()
 	}
 
 	m.mu.Lock()
