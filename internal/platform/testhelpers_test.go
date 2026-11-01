@@ -1,6 +1,7 @@
 package platform_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,8 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/TuF3i/kamc/internal/tunnel/registry"
 
 	"github.com/TuF3i/kamc/infrastructure/postgres"
 	"github.com/TuF3i/kamc/internal/agent"
@@ -20,6 +24,49 @@ import (
 
 // 本文件是隧道类 e2e 的共享脚手架：平台+隧道+假监听的装配、
 // 集群与策略种子、Agent 接入。（tunnel/exec 两个 e2e 复用。）
+
+// sharedRegistry 多副本共享的内存注册表（跨 Pod e2e 用，替代 Redis）
+type sharedRegistry struct {
+	mu     sync.Mutex
+	owners map[string][]registry.Owner
+}
+
+func newSharedRegistry() *sharedRegistry {
+	return &sharedRegistry{owners: make(map[string][]registry.Owner)}
+}
+
+func (r *sharedRegistry) Report(_ context.Context, clusterID, agentID, pod string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	list := r.owners[clusterID]
+	for i, o := range list {
+		if o.AgentID == agentID {
+			list[i].Pod, list[i].Since = pod, time.Now()
+			return nil
+		}
+	}
+	r.owners[clusterID] = append(list, registry.Owner{ClusterID: clusterID, AgentID: agentID, Pod: pod, Since: time.Now()})
+	return nil
+}
+
+func (r *sharedRegistry) Deregister(_ context.Context, clusterID, agentID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	list := r.owners[clusterID]
+	for i, o := range list {
+		if o.AgentID == agentID {
+			r.owners[clusterID] = append(list[:i], list[i+1:]...)
+			return nil
+		}
+	}
+	return nil
+}
+
+func (r *sharedRegistry) Lookup(_ context.Context, clusterID string) ([]registry.Owner, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]registry.Owner(nil), r.owners[clusterID]...), nil
+}
 
 // getenvOrSkip 数据库门控：未设置 TEST_PG_DSN 则跳过（数据库不进普通单测）
 func getenvOrSkip(t *testing.T) string {
