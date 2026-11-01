@@ -12,6 +12,7 @@ v1.0 缺陷修复记录 BUG-1~8、高可用设计与故障模式分析）。
 ## 技术栈
 
 Go 1.24+ / chi v5 / gorm(PostgreSQL) / go-redis v9 / gorilla/websocket / hashicorp/yamux
+golang-jwt v5 + go-oidc v3（认证） / casbin v2 + k8s.io/apiserver（RequestInfo 鉴权）
 
 ## 目录结构
 
@@ -59,6 +60,12 @@ docs/
 | `AGENT_ID` | hostname | Agent 实例标识（双副本时须不同） |
 | `TOKEN_FILE` | `/etc/k8s-am/token/token` | Agent Token 文件（Secret 挂载） |
 | `HEARTBEAT_PING_INTERVAL` | `20s` | WS 心跳 ping 间隔 |
+| `JWT_KEYRING_DIR` | 临时密钥 | JWT 签名密钥环目录（Secret 挂载，*.pem 文件名即 kid；未配置用临时密钥并告警） |
+| `AM_JWT_ISSUER` / `AM_JWT_AUD` | `https://kamc.local` / `kamc` | 平台 JWT iss/aud |
+| `AM_ADMIN_GROUP` | `am:admin` | 管理面用户组（JWT groups 内） |
+| `AM_DEV_ISSUE_TOKEN` | — | 开发直签 Token 开关（`/auth/dev-token`，生产勿开） |
+| `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_REDIRECT_URL` | — | Authentik OIDC（未配置则 /auth/login 503） |
+| `APISERVER_URL`（Agent） | in-cluster 探测 | 上游 kube-apiserver 显式覆盖（开发/测试） |
 | `TEST_PG_DSN` | — | 数据库集成测试门控（仅测试用） |
 
 ## 构建与测试
@@ -76,14 +83,16 @@ make vet
 - [x] 隧道全链路：/tunnel 入口（Token 校验+WS 升级+Attach）→ Agent 数据面
       （ReverseProxy 反代 apiserver，101 升级标准库处理）→ /proxy/{clusterID} 代理
       （strip 前缀 FIX-6、剥离 Impersonate-*/Authorization FIX-7）
-- [ ] Agent Token 认证收尾：注册 Token 换长期 Token 的一次性交换端点（§6.1）；
-      401 后停止重试等管理员的重新注册流程（§6.5）
-- [ ] JWT 认证中间件 + Authentik OIDC 登录（§4）：/api/v1 与 /proxy 挂鉴权，
-      移除 AM_ENABLE_UNAUTH_PROXY 开关；Impersonation 注入（§8.1 第 5 步）
-- [ ] Casbin RequestInfo 鉴权（§5，注意 act 锚定 FIX-8）
+- [x] Agent Token 认证收尾：注册 Token 换长期 Token 一次性交换端点（§6.1）
+- [x] JWT 认证：auth 模块（RS256 密钥环/kid 零停机轮换/JWKS）+ OIDC 登录
+      （/auth/login、/auth/callback）+ RequireJWT/RequireAdmin 中间件
+- [x] Casbin RequestInfo 鉴权（§5，act 锚定 FIX-8）+ /proxy Impersonation 注入
+      （§8.1 完整顺序，无鉴权开关已移除）
 - [ ] exec/port-forward 流式入口：官方 StreamTranslatorHandler / TunnelingHandler
       接入 /proxy 路由（§9；Agent 侧 101 反代已就绪，平台侧待接）
 - [ ] 跨 Pod peer 转发：peer yamux 会话 + RELAY 拼接（§7.2.4）
 - [ ] kubeconfig 生成与 k8s-am-login exec plugin（§4.4）
+- [ ] 多副本策略同步：casbin Redis watcher（§7.6）；OIDC state 外置 Redis
+- [ ] Agent 收到 401 后停止重试等管理员的重新注册流程（§6.5）
 - [ ] HA 收尾：审计异步落库与本地暂存（§12.2）、注册表驱动的跨副本集群状态收敛、
       平台侧隧道读超时看门狗（当前依赖 Agent 侧 ping 判死）
