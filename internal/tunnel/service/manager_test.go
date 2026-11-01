@@ -281,3 +281,47 @@ func TestAttachRegistersOwnership(t *testing.T) {
 		return reg.reportCount("cluster-b", "agent-2") >= 1
 	}, "attach should report ownership to registry")
 }
+
+// gracefulConn Attach 用的连接桩：记录优雅关闭码
+type gracefulConn struct {
+	net.Conn
+	mu   sync.Mutex
+	code int
+}
+
+func (g *gracefulConn) CloseWithCode(code int, _ string) error {
+	g.mu.Lock()
+	g.code = code
+	g.mu.Unlock()
+	return g.Conn.Close()
+}
+
+func (g *gracefulConn) closeCode() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.code
+}
+
+// TestReleaseSendsGoingAway 优雅下线（§7.5）：Release 对每条 Agent 隧道
+// 发送 1001 GoingAway（语义化通知，与异常断链区分）。
+func TestReleaseSendsGoingAway(t *testing.T) {
+	reg := newFakeRegistry()
+	m := newTestManager(reg)
+	m.Start()
+
+	p1, p2 := net.Pipe()
+	gc := &gracefulConn{Conn: p1}
+	if err := m.Attach("cluster-a", "agent-1", gc); err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	client, err := yamux.Client(p2, nil)
+	if err != nil {
+		t.Fatalf("yamux client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	m.Release()
+	if code := gc.closeCode(); code != 1001 {
+		t.Fatalf("release close code: got %d, want 1001", code)
+	}
+}

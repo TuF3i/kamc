@@ -25,12 +25,20 @@ import (
 // 跨 Pod 场景下调用方应再走注册表路由（设计文档 §7.2.4），而非直接报错给用户。
 var ErrClusterNotConnected = errors.New("cluster not connected")
 
+// gracefulCloser 支持"带关闭码的优雅关闭"的连接（*wsconn.Conn 满足）。
+// 平台优雅下线经此发送 1001 GoingAway，Agent 语义化感知并立即重连。
+type gracefulCloser interface {
+	CloseWithCode(code int, reason string) error
+}
+
 // Tunnel 一条在线的 Agent 反向隧道
 type Tunnel struct {
 	ClusterID string
 	AgentID   string
 	Session   *yamux.Session // Open() 得到 yamux.Stream（net.Conn），即数据面
 	Since     time.Time
+
+	closeWith gracefulCloser // 底层 WS 连接（Attach 时类型断言；peer 连接为 nil）
 }
 
 // Option Manager 选项
@@ -171,21 +179,35 @@ func (m *Manager) reportAll() {
 // 登记即上报一次归属；失败不回滚——心跳会在下一轮补报（"先落库再动内存"不适用此场景，
 // 注册表是可再生的派生状态）。
 func (m *Manager) Register(clusterID, agentID string, sess *yamux.Session) {
+	m.register(clusterID, agentID, sess, &Tunnel{ClusterID: clusterID, AgentID: agentID, Session: sess, Since: time.Now()})
+}
+
+// register 登记的具体实现（Attach 与 Register 共用）
+func (m *Manager) register(clusterID, agentID string, sess *yamux.Session, t *Tunnel) {
 	m.mu.Lock()
 	list := m.clusters[clusterID]
-	for i, t := range list {
-		if t.AgentID == agentID {
-			_ = t.Session.Close()
-			list[i] = &Tunnel{ClusterID: clusterID, AgentID: agentID, Session: sess, Since: time.Now()}
+	for i, old := range list {
+		if old.AgentID == agentID {
+			m.closeTunnel(old)
+			list[i] = t
 			m.mu.Unlock()
 			m.reportOne(clusterID, agentID)
 			return
 		}
 	}
-	m.clusters[clusterID] = append(list, &Tunnel{ClusterID: clusterID, AgentID: agentID, Session: sess, Since: time.Now()})
+	m.clusters[clusterID] = append(list, t)
 	m.mu.Unlock()
 
 	m.reportOne(clusterID, agentID)
+}
+
+// closeTunnel 关闭单条隧道：优雅下线路径先发 1001（§7.5），
+// 语义化告知 Agent"服务端计划下线，立即重连其他副本"。
+func (m *Manager) closeTunnel(t *Tunnel) {
+	if t.closeWith != nil {
+		_ = t.closeWith.CloseWithCode(1001, "going away")
+	}
+	_ = t.Session.Close()
 }
 
 // Get 取集群的可用隧道：返回最先注册的一条。
@@ -237,7 +259,11 @@ func (m *Manager) Attach(clusterID, agentID string, rwc io.ReadWriteCloser) erro
 		return fmt.Errorf("tunnel -> yamux server: %w", err)
 	}
 
-	m.Register(clusterID, agentID, session)
+	t := &Tunnel{ClusterID: clusterID, AgentID: agentID, Session: session, Since: time.Now()}
+	if gc, ok := rwc.(gracefulCloser); ok {
+		t.closeWith = gc
+	}
+	m.register(clusterID, agentID, session, t)
 	m.wg.Add(1)
 	go m.monitorSession(clusterID, agentID, session)
 	return nil
@@ -325,7 +351,7 @@ func (m *Manager) Release() {
 	defer cancel()
 	for cid, list := range m.clusters {
 		for _, t := range list {
-			_ = t.Session.Close()
+			m.closeTunnel(t)
 			if err := m.registry.Deregister(ctx, cid, t.AgentID); err != nil {
 				log.Printf("[tunnel] release deregister %s/%s: %v", cid, t.AgentID, err)
 			}

@@ -103,3 +103,43 @@ func TestCloseIdempotent(t *testing.T) {
 		t.Fatalf("second close: %v", err)
 	}
 }
+
+// TestCloseWithCode 优雅下线（§7.5）：1001 GoingAway 关闭码必须透传到对端。
+func TestCloseWithCode(t *testing.T) {
+	gotCode := make(chan int, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		up := websocket.Upgrader{}
+		c, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		for {
+			if _, _, err := c.ReadMessage(); err != nil {
+				if ce, ok := err.(*websocket.CloseError); ok {
+					gotCode <- ce.Code
+				} else {
+					gotCode <- -1
+				}
+				return
+			}
+		}
+	}))
+	defer srv.Close()
+
+	c := dialEcho(t, srv)
+	if _, err := c.Write([]byte("x")); err != nil { // 先有数据交换
+		t.Fatalf("write: %v", err)
+	}
+	if err := c.CloseWithCode(1001, "going away"); err != nil {
+		t.Fatalf("close with code: %v", err)
+	}
+	select {
+	case code := <-gotCode:
+		if code != 1001 {
+			t.Fatalf("close code: got %d, want 1001", code)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("server did not observe close frame")
+	}
+}

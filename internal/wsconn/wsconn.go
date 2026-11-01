@@ -84,14 +84,23 @@ func (c *Conn) Ping() error {
 	)
 }
 
-// Close 先发 Close 控制帧（1s 超时，尽力而为），再关闭底层连接。
-// 幂等：gorilla 底层 Close 重复调用会报 use of closed connection，用 Once 收敛。
+// Close 以正常关闭码（1000）关闭（幂等，见 CloseWithCode）
 func (c *Conn) Close() error {
+	return c.CloseWithCode(websocket.CloseNormalClosure, "")
+}
+
+// CloseWithCode 发送指定关闭码的 Close 控制帧（1s 超时，尽力而为）后关闭
+// 底层连接。幂等：gorilla 底层 Close 重复调用会报 use of closed connection，
+// 用 Once 收敛；首次调用的关闭码生效。
+//
+// 优雅下线（§7.5）用 1001 GoingAway 显式告知 Agent"服务端计划下线"，
+// Agent 据此立即重连其他副本（与异常断链区分语义）。
+func (c *Conn) CloseWithCode(code int, reason string) error {
 	c.closeOnce.Do(func() {
 		c.wmu.Lock()
 		_ = c.conn.WriteControl(
 			websocket.CloseMessage,
-			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+			websocket.FormatCloseMessage(code, reason),
 			time.Now().Add(time.Second),
 		)
 		c.closeErr = c.conn.Close()
