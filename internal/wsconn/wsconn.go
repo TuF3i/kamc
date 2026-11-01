@@ -72,6 +72,18 @@ func (c *Conn) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 
+// Ping 发送 WS ping 控制帧（心跳用）。必须经本方法而非外部 WriteControl：
+// 控制帧与数据帧共用 wmu 串行化，绕过锁会破坏 gorilla 单写者约束。
+func (c *Conn) Ping() error {
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
+	return c.conn.WriteControl(
+		websocket.PingMessage,
+		nil,
+		time.Now().Add(10*time.Second),
+	)
+}
+
 // Close 先发 Close 控制帧（1s 超时，尽力而为），再关闭底层连接。
 // 幂等：gorilla 底层 Close 重复调用会报 use of closed connection，用 Once 收敛。
 func (c *Conn) Close() error {

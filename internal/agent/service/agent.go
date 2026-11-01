@@ -1,10 +1,11 @@
 // Package service Agent 连接服务：Token 读取与轮询、指数退避拨出、
-// yamux 会话建立与流处理。
+// yamux 会话建立、隧道上的 HTTP 反向代理与 WS 心跳。
 //
 // 并发模型（约定 done-channel + wg）：
 //   - connectLoop：拨出主循环，会话断开后按 full-jitter 退避重连；
 //   - tokenWatch：轮询 Token 文件哈希，变更即断开重连（设计文档 §6.3 热更新）；
-//   - acceptLoop：每条会话一个，逐流分发给 handleStream；
+//   - serveLoop：每条会话一个，把 yamux 流作为 HTTP 连接交给 ReverseProxy；
+//   - pingLoop：每条连接一个，WS ping/pong 看门狗（§6.3）；
 //   - Release 顺序：close(done) → 关连接/会话 → 带超时 wg.Wait（幂等）。
 package service
 
@@ -17,11 +18,13 @@ import (
 	"fmt"
 	"log"
 	"math/big"
-	"net"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -46,6 +49,9 @@ type Config struct {
 	PingInterval time.Duration // WS 心跳 ping 间隔
 	BackoffBase  time.Duration // 重连退避基数
 	BackoffMax   time.Duration // 重连退避上限
+	APIServerURL string        // 上游 kube-apiserver（显式覆盖；未设置时探测 in-cluster）
+	SACAFile     string        // 上游 CA 文件（默认探测 in-cluster ca.crt）
+	SATokenFile  string        // 上游 SA Token 文件（默认探测 in-cluster token）
 }
 
 // Validate 必填项校验
@@ -75,12 +81,18 @@ type Service struct {
 	session       *yamux.Session
 	lastTokenHash string
 
-	dialFn  DialFunc
-	done    chan struct{}
-	wg      sync.WaitGroup
-	startMu sync.Mutex
-	started bool      // Start 幂等标记
-	rel     sync.Once // Release 幂等（close(done) 只执行一次）
+	// 上游（kube-apiserver）转发：注入优先，否则 Start 时按配置自建；均未配置则仅保活隧道
+	upstreamURL       *url.URL
+	upstreamTransport http.RoundTripper
+	proxy             *httputil.ReverseProxy
+
+	dialFn   DialFunc
+	done     chan struct{}
+	wg       sync.WaitGroup
+	startMu  sync.Mutex
+	started  bool
+	rel      sync.Once
+	lastPong atomic.Int64 // 最近 pong 时间（UnixNano），pingLoop 看门狗用
 }
 
 // NewService 构造 Service（Start 由模块装配层显式调用）
@@ -91,6 +103,13 @@ func NewService(cfg Config) *Service {
 // SetDialFunc 替换拨出函数（测试注入；须在 Start 之前调用）
 func (s *Service) SetDialFunc(fn DialFunc) {
 	s.dialFn = fn
+}
+
+// SetUpstream 注入上游 kube-apiserver 地址与 transport（须在 Start 之前调用；
+// 装配层在 BuildUpstream 成功后注入，测试直接注入 httptest 地址）
+func (s *Service) SetUpstream(u *url.URL, tr http.RoundTripper) {
+	s.upstreamURL = u
+	s.upstreamTransport = tr
 }
 
 // defaultDial 真实拨出：Bearer Token + 集群/实例标识头；TLS 信任系统根证书，
@@ -115,6 +134,12 @@ func (s *Service) Start() error {
 	if _, err := s.readToken(); err != nil {
 		log.Printf("[agent] token 不可用，将按退避重试: %v", err)
 	}
+	if s.upstreamURL != nil && s.upstreamTransport != nil {
+		s.proxy = newUpstreamProxy(s.upstreamURL, s.upstreamTransport)
+	} else {
+		log.Printf("[agent] 上游 kube-apiserver 未配置，数据面未启用（隧道仅保活）")
+	}
+
 	s.startMu.Lock()
 	defer s.startMu.Unlock()
 	if s.started {
@@ -180,11 +205,22 @@ func (s *Service) connectLoop() {
 	}
 }
 
-// setupSession 包装 WS → yamux 会话并启动 acceptLoop，返回会话结束信号。
-// conn 的所有权随之转移：成功时由会话/acceptLoop 管理，失败时调用方负责关闭。
+// setupSession 包装 WS → yamux 会话并启动数据面服务与心跳，返回会话结束信号。
+// conn 的所有权随之转移：成功时由会话/服务循环管理，失败时由本方法关闭。
 func (s *Service) setupSession(conn *websocket.Conn) (<-chan struct{}, error) {
-	session, err := yamux.Client(wsconn.New(conn), nil)
+	ws := wsconn.New(conn)
+
+	// pong 处理器必须在任何读取开始前设置（yamux 构造即启动读循环）
+	raw := conn
+	raw.SetPongHandler(func(string) error {
+		s.lastPong.Store(time.Now().UnixNano())
+		return nil
+	})
+	s.lastPong.Store(time.Now().UnixNano())
+
+	session, err := yamux.Client(ws, nil)
 	if err != nil {
+		_ = ws.Close()
 		return nil, fmt.Errorf("agent -> yamux client: %w", err)
 	}
 
@@ -194,32 +230,64 @@ func (s *Service) setupSession(conn *websocket.Conn) (<-chan struct{}, error) {
 	s.session = session
 	s.mu.Unlock()
 
-	s.wg.Add(1)
-	go s.acceptLoop(session, ch)
+	s.wg.Add(2)
+	go s.serveLoop(session, ch)
+	go s.pingLoop(conn, ws)
 	return ch, nil
 }
 
-// acceptLoop 逐流分发；会话关闭（主动 Release/Token 轮询重连/网络断开）时自然退出
-func (s *Service) acceptLoop(session *yamux.Session, doneCh chan<- struct{}) {
+// serveLoop 隧道上的 HTTP 服务：每条 yamux 流即一条 HTTP 连接，
+// 全部交由 ReverseProxy 转发（普通请求与 101 升级双向拷贝均由标准库处理）。
+// 上游未配置时退化为排空循环：立即关闭入流，让平台侧快速失败。
+func (s *Service) serveLoop(session *yamux.Session, doneCh chan<- struct{}) {
 	defer s.wg.Done()
 	defer close(doneCh)
-	for {
-		stream, err := session.Accept()
-		if err != nil {
-			// Release/重连路径的关闭也走这里，一次会话一条日志即可
-			log.Printf("[agent] 隧道会话关闭: %v", err)
-			return
+
+	if s.proxy == nil {
+		for {
+			stream, err := session.Accept()
+			if err != nil {
+				return
+			}
+			_ = stream.Close()
 		}
-		go s.handleStream(stream)
+	}
+
+	srv := &http.Server{Handler: s.proxy, ReadHeaderTimeout: 10 * time.Second}
+	if err := srv.Serve(&yamuxListener{session: session}); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Printf("[agent] 隧道 HTTP 服务退出: %v", err)
 	}
 }
 
-// handleStream 处理平台经隧道发来的单条连接（yamux v0.1.2 的 Accept 直接给 net.Conn）。
-// TODO(路线图·数据面)：按设计文档 §6.2 实现——读取 HTTP 请求后经
-// rest.TransportFor(saConfig) 反向代理到 kube-apiserver（含 101 升级双向拷贝）。
-// 基础框架阶段直接关闭，避免悬挂半开流。
-func (s *Service) handleStream(stream net.Conn) {
-	_ = stream.Close()
+// pingLoop WS 心跳：每 PingInterval 发 ping；错过 2 个周期未收到 pong 即判死
+// （设计文档 §6.3：客户端 ping 20s，超时判死）。连接死亡 → 会话与数据面服务
+// 自然退出 → connectLoop 按退避重连。
+func (s *Service) pingLoop(raw *websocket.Conn, ws *wsconn.Conn) {
+	defer s.wg.Done()
+	ticker := time.NewTicker(s.cfg.PingInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-ticker.C:
+		}
+		if last := time.Unix(0, s.lastPong.Load()); time.Since(last) > s.watchdogTimeout() {
+			log.Printf("[agent] WS pong 超时（> %s），判定连接死亡", s.watchdogTimeout())
+			_ = raw.Close()
+			return
+		}
+		if err := ws.Ping(); err != nil {
+			log.Printf("[agent] WS ping 失败: %v", err)
+			_ = raw.Close()
+			return
+		}
+	}
+}
+
+// watchdogTimeout pong 看门狗阈值：2×心跳周期 + 10s 容忍单次网络抖动
+func (s *Service) watchdogTimeout() time.Duration {
+	return 2*s.cfg.PingInterval + 10*time.Second
 }
 
 // tokenWatch 轮询 Token 文件哈希；变更即断开当前会话，connectLoop 会用新 Token 重连。

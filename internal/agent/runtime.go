@@ -13,6 +13,8 @@ package agent
 import (
 	"fmt"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -34,7 +36,9 @@ type Runtime struct {
 type Option func(*options)
 
 type options struct {
-	cfg Config
+	cfg           Config
+	upstreamURL   *url.URL
+	upstreamTrans http.RoundTripper
 }
 
 // WithConfig 显式注入配置（不注入则 LoadConfig 读环境变量）
@@ -42,10 +46,15 @@ func WithConfig(cfg Config) Option {
 	return func(o *options) { o.cfg = cfg }
 }
 
+// WithUpstream 显式注入上游 kube-apiserver（测试用；默认经 BuildUpstream 解析）
+func WithUpstream(u *url.URL, tr http.RoundTripper) Option {
+	return func(o *options) { o.upstreamURL, o.upstreamTrans = u, tr }
+}
+
 // defaultRuntime 包级默认运行时 (CreateRuntime 记录, ReleaseRuntime 消费)
 var defaultRuntime *Runtime
 
-// CreateRuntime 装配模块：配置 → 校验 → 连接服务启动。
+// CreateRuntime 装配模块：配置 → 上游解析 → 校验 → 连接服务启动。
 func CreateRuntime(opts ...Option) (*Runtime, error) {
 	o := &options{cfg: LoadConfig()}
 	for _, opt := range opts {
@@ -57,6 +66,19 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	}
 
 	svc := service.NewService(o.cfg)
+	if o.upstreamURL != nil && o.upstreamTrans != nil {
+		svc.SetUpstream(o.upstreamURL, o.upstreamTrans)
+	} else {
+		// 上游解析失败不阻塞隧道保活（仅数据面不可用）
+		u, tr, err := service.BuildUpstream(o.cfg)
+		switch {
+		case err != nil:
+			log.Printf("[agent] 上游解析失败，数据面未启用: %v", err)
+		case u != nil:
+			svc.SetUpstream(u, tr)
+		}
+	}
+
 	if err := svc.Start(); err != nil {
 		return nil, fmt.Errorf("agent -> start service: %w", err)
 	}
@@ -96,6 +118,9 @@ func LoadConfig() Config {
 		PingInterval: envDuration("HEARTBEAT_PING_INTERVAL", 20*time.Second),
 		BackoffBase:  envDuration("BACKOFF_BASE", 1*time.Second),
 		BackoffMax:   envDuration("BACKOFF_MAX", 30*time.Second),
+		APIServerURL: os.Getenv("APISERVER_URL"), // 显式覆盖；空则探测 in-cluster SA
+		SACAFile:     os.Getenv("SA_CA_FILE"),
+		SATokenFile:  os.Getenv("SA_TOKEN_FILE"),
 	}
 }
 
