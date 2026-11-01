@@ -38,17 +38,25 @@ type Tunnel struct {
 	Session   *yamux.Session // Open() 得到 yamux.Stream（net.Conn），即数据面
 	Since     time.Time
 
-	closeWith gracefulCloser // 底层 WS 连接（Attach 时类型断言；peer 连接为 nil）
+	closeWith gracefulCloser  // 底层 WS 连接（Attach 时类型断言；peer 连接为 nil）
+	activity  activityTracker // 读活性追踪（Attach 时类型断言；无则看门狗跳过）
 }
 
 // Option Manager 选项
 type Option func(*options)
 
 type options struct {
-	podID      string
-	ttl        time.Duration // 注册表 TTL（失联判定阈值）
-	interval   time.Duration // 心跳上报间隔
-	detachHook func(clusterID, agentID string)
+	podID            string
+	ttl              time.Duration // 注册表 TTL（失联判定阈值）
+	interval         time.Duration // 心跳上报间隔
+	detachHook       func(clusterID, agentID string)
+	watchdogInterval time.Duration // 读活性检查周期（0 = 默认 25s）
+	watchdogTimeout  time.Duration // 无入站帧判定死亡阈值（0 = 默认 75s）
+}
+
+// WithWatchdog 覆盖读活性看门狗参数（§6.3：默认检查 25s / 超时 75s = 3×Agent ping + 余量）
+func WithWatchdog(interval, timeout time.Duration) Option {
+	return func(o *options) { o.watchdogInterval, o.watchdogTimeout = interval, timeout }
 }
 
 // WithPodID 本副本标识（默认 hostname；K8s 内即 Pod 名）
@@ -72,6 +80,9 @@ type Manager struct {
 	interval time.Duration
 	peer     *PeerRouter // 跨副本转发路由（NewPeerRouter 挂载；nil = 单副本形态）
 
+	watchdogIntvl   time.Duration
+	watchdogTimeout time.Duration
+
 	detachMu   sync.Mutex
 	detachHook func(clusterID, agentID string) // 隧道移除回调（平台据此标记集群 offline）
 
@@ -90,14 +101,23 @@ func NewManager(reg registry.Registry, opts ...Option) *Manager {
 	if o.podID == "" {
 		o.podID = "unknown-pod"
 	}
+	wi, wt := o.watchdogInterval, o.watchdogTimeout
+	if wi <= 0 {
+		wi = 25 * time.Second
+	}
+	if wt <= 0 {
+		wt = 75 * time.Second
+	}
 	return &Manager{
-		clusters:   make(map[string][]*Tunnel),
-		registry:   reg,
-		podID:      o.podID,
-		ttl:        o.ttl,
-		interval:   o.interval,
-		detachHook: o.detachHook,
-		done:       make(chan struct{}),
+		clusters:        make(map[string][]*Tunnel),
+		registry:        reg,
+		podID:           o.podID,
+		ttl:             o.ttl,
+		interval:        o.interval,
+		detachHook:      o.detachHook,
+		watchdogIntvl:   wi,
+		watchdogTimeout: wt,
+		done:            make(chan struct{}),
 	}
 }
 
@@ -130,8 +150,50 @@ func (m *Manager) Start() {
 		return
 	}
 	m.started = true
-	m.wg.Add(1)
+	m.wg.Add(2)
 	go m.heartbeatLoop()
+	go m.watchdogLoop()
+}
+
+// watchdogLoop 读活性看门狗（§6.3）：Agent 半开死亡（网络静默断）时入站帧
+// 停止，超时即判定死亡并关闭——经既有 monitorSession→Remove→分离钩子链路
+// 触发注销。仅检查实现 activityTracker 的连接（wsconn 满足），无追踪器跳过。
+func (m *Manager) watchdogLoop() {
+	defer m.wg.Done()
+	ticker := time.NewTicker(m.watchdogIntvl)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-m.done:
+			return
+		case <-ticker.C:
+			m.reapIdleTunnels()
+		}
+	}
+}
+
+func (m *Manager) reapIdleTunnels() {
+	deadline := time.Now().Add(-m.watchdogTimeout)
+	m.mu.RLock()
+	var idle []*Tunnel
+	for _, list := range m.clusters {
+		for _, t := range list {
+			if tr, ok := any(t.activity).(activityTracker); ok && tr.LastActivity().Before(deadline) {
+				idle = append(idle, t)
+			}
+		}
+	}
+	m.mu.RUnlock()
+	for _, t := range idle {
+		log.Printf("[tunnel] 看门狗：隧道 %s/%s 超过 %s 无入站帧，判定死亡",
+			t.ClusterID, t.AgentID, m.watchdogTimeout)
+		m.closeTunnel(t)
+	}
+}
+
+// activityTracker 读活性追踪（*wsconn.Conn 满足）
+type activityTracker interface {
+	LastActivity() time.Time
 }
 
 // heartbeatLoop 周期性续报全部隧道归属；单循环串行上报，
@@ -262,6 +324,9 @@ func (m *Manager) Attach(clusterID, agentID string, rwc io.ReadWriteCloser) erro
 	t := &Tunnel{ClusterID: clusterID, AgentID: agentID, Session: session, Since: time.Now()}
 	if gc, ok := rwc.(gracefulCloser); ok {
 		t.closeWith = gc
+	}
+	if at, ok := rwc.(activityTracker); ok {
+		t.activity = at
 	}
 	m.register(clusterID, agentID, session, t)
 	m.wg.Add(1)

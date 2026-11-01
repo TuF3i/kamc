@@ -15,6 +15,7 @@ package wsconn
 import (
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -31,18 +32,40 @@ type Conn struct {
 	rmu  sync.Mutex
 	rbuf []byte
 
+	// lastRead 最近一次入站帧时刻（数据帧在 Read 刷新、ping 帧在
+	// PingHandler 刷新）——平台侧读活性看门狗的依据（§6.3）
+	lastRead atomic.Int64
+
 	closeOnce sync.Once // gorilla 底层 Close 不幂等，在此收敛为幂等
 	closeErr  error
 }
 
 // New 包装一条已升级/已拨号的 WebSocket 连接。
+// PingHandler 在此设置（必须先于任何读取）：收到 ping 即刷新活性并回 pong
+// （写侧经 wmu 串行化，复刻 gorilla 默认 pong 行为）。
 func New(c *websocket.Conn) *Conn {
-	return &Conn{conn: c}
+	conn := &Conn{conn: c}
+	conn.lastRead.Store(time.Now().UnixNano())
+	c.SetPingHandler(func(appData string) error {
+		conn.lastRead.Store(time.Now().UnixNano())
+		conn.wmu.Lock()
+		err := conn.conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(time.Second))
+		conn.wmu.Unlock()
+		return err
+	})
+	return conn
+}
+
+// LastActivity 最近一次入站帧时刻（活性看门狗用）
+func (c *Conn) LastActivity() time.Time {
+	return time.Unix(0, c.lastRead.Load())
 }
 
 // Read 按 net.Conn 语义读字节：先消费残留，再取下一条 binary frame。
 // 非 binary 的消息（ping/pong 由库内部处理、text 帧不属于数据面）跳过不入流。
+// 每次调用刷新活性时间戳（有数据流量的连接不会被看门狗误杀）。
 func (c *Conn) Read(b []byte) (int, error) {
+	c.lastRead.Store(time.Now().UnixNano())
 	c.rmu.Lock()
 	defer c.rmu.Unlock()
 	for {

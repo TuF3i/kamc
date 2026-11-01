@@ -325,3 +325,91 @@ func TestReleaseSendsGoingAway(t *testing.T) {
 		t.Fatalf("release close code: got %d, want 1001", code)
 	}
 }
+
+// activityConn 带（可注入的）活性追踪的连接桩（原子保护，watchdog 并发读）
+type activityConn struct {
+	*gracefulConn
+	mu       sync.Mutex
+	activity func() time.Time
+}
+
+func (a *activityConn) setActivity(fn func() time.Time) {
+	a.mu.Lock()
+	a.activity = fn
+	a.mu.Unlock()
+}
+
+func (a *activityConn) LastActivity() time.Time {
+	a.mu.Lock()
+	fn := a.activity
+	a.mu.Unlock()
+	if fn == nil {
+		return time.Now()
+	}
+	return fn()
+}
+
+// TestWatchdogReapsIdleTunnel 看门狗：无入站帧超时 → 隧道被回收。
+func TestWatchdogReapsIdleTunnel(t *testing.T) {
+	reg := newFakeRegistry()
+	m := NewManager(reg,
+		WithPodID("pod-test"),
+		WithHeartbeat(time.Hour, time.Hour),
+		WithWatchdog(10*time.Millisecond, 50*time.Millisecond),
+	)
+	m.Start()
+	defer m.Release()
+
+	p1, p2 := net.Pipe()
+	stale := time.Now().Add(-time.Hour)
+	ac := &activityConn{gracefulConn: &gracefulConn{Conn: p1}, activity: func() time.Time { return stale }}
+	if err := m.Attach("cluster-a", "agent-idle", ac); err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	client, err := yamux.Client(p2, nil)
+	if err != nil {
+		t.Fatalf("yamux client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	waitFor(t, 2*time.Second, func() bool {
+		_, err := m.Get("cluster-a")
+		return err != nil
+	}, "idle tunnel should be reaped by watchdog")
+}
+
+// TestWatchdogSparesActiveTunnel 活跃连接（活性实时刷新）不被误杀。
+func TestWatchdogSparesActiveTunnel(t *testing.T) {
+	reg := newFakeRegistry()
+	m := NewManager(reg,
+		WithPodID("pod-test"),
+		WithHeartbeat(time.Hour, time.Hour),
+		WithWatchdog(10*time.Millisecond, 50*time.Millisecond),
+	)
+	m.Start()
+	defer m.Release()
+
+	p1, p2 := net.Pipe()
+	ac := &activityConn{gracefulConn: &gracefulConn{Conn: p1}, activity: time.Now}
+	if err := m.Attach("cluster-a", "agent-active", ac); err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	client, err := yamux.Client(p2, nil)
+	if err != nil {
+		t.Fatalf("yamux client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	// 远超超时阈值的观察窗口：活性持续刷新 → 存活
+	time.Sleep(300 * time.Millisecond)
+	if _, err := m.Get("cluster-a"); err != nil {
+		t.Fatalf("active tunnel must not be reaped: %v", err)
+	}
+
+	// 活性停止 → 被回收
+	ac.setActivity(func() time.Time { return time.Now().Add(-time.Hour) })
+	waitFor(t, 2*time.Second, func() bool {
+		_, err := m.Get("cluster-a")
+		return err != nil
+	}, "tunnel should be reaped after activity stops")
+}
