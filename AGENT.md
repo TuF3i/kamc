@@ -66,6 +66,12 @@ docs/
 | `AM_DEV_ISSUE_TOKEN` | — | 开发直签 Token 开关（`/auth/dev-token`，生产勿开） |
 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_REDIRECT_URL` | — | Authentik OIDC（未配置则 /auth/login 503） |
 | `APISERVER_URL`（Agent） | in-cluster 探测 | 上游 kube-apiserver 显式覆盖（开发/测试） |
+| `PEER_ADDRESSES` | — | 可拨副本列表，逗号分隔（`pod=host:port` 或 `host:port`）；未配置=单副本形态 |
+| `PEER_TOKEN` | — | 副本间转发认证令牌（Secret 下发） |
+| `AM_PEER_ADDR` | `:9090` | peer 内部监听地址（仅集群内网可达，NetworkPolicy 限平台 Pod） |
+| `AM_EXTERNAL_URL` | X-Forwarded-Proto 推导 | 平台对外地址（kubeconfig 生成用） |
+| `AM_KUBECONFIG_CA_FILE` | — | kubeconfig 嵌入的平台 CA（可选） |
+| `PLATFORM_INSECURE`（Agent） | — | 跳过平台证书校验（开发环境自签） |
 | `TEST_PG_DSN` | — | 数据库集成测试门控（仅测试用） |
 
 ## 构建与测试
@@ -92,12 +98,16 @@ make vet
       StreamTranslatorHandler（WS→SPDY，本地中继注入 Impersonation）；
       SPDY/3.1+portforward.k8s.io → TunnelingHandler；旧版 SPDY 经 ReverseProxy 直通。
       注意：UpgradeAwareHandler 必须开 UseRequestLocation（否则路径被 location 替换）
-- [ ] 跨 Pod peer 转发：peer yamux 会话 + RELAY 拼接（§7.2.4）
+- [x] 跨 Pod peer 转发（§7.2.4）：PeerRouter（RELAY 协议：头+回执+字节拼接；
+      注册表择优/失败剔除）+ Manager.Open fallback + 内部监听（AM_PEER_ADDR，
+      默认 :9090）。多副本部署需配置：PEER_ADDRESSES、PEER_TOKEN（Secret）、
+      headless service（§11.2 manifest 属部署里程碑）
 - [x] kubeconfig 生成与 k8s-am-login exec plugin（§4.4）：/auth/token-exchange
       （ID Token 验签兑换）、GET /api/v1/clusters/{id}/kubeconfig（static/exec 两模式，
       自服务 JWT 组）、cmd/k8s-am-login（RFC 8628 设备流程 + 本地缓存）。
       注意：client-go 对明文连接不加载凭证——生产平台必须 https
-- [ ] 多副本策略同步：casbin Redis watcher（§7.6）；OIDC state 外置 Redis
+- [ ] 多副本策略同步：casbin Redis watcher（§7.6）；OIDC state 外置 Redis；
+      peer 地址发现改经 headless service 自动枚举（当前 PEER_ADDRESSES 显式）
 - [ ] Agent 收到 401 后停止重试等管理员的重新注册流程（§6.5）
 - [ ] HA 收尾：审计异步落库与本地暂存（§12.2）、注册表驱动的跨副本集群状态收敛、
       平台侧隧道读超时看门狗（当前依赖 Agent 侧 ping 判死）
