@@ -1,0 +1,98 @@
+# kamc Agent 部署清单（目标集群内，设计文档 §11.3 + §6.2）
+#
+# 占位符：
+#   __IMAGE__         Agent 镜像（your-registry/k8s-am-agent:vX.Y.Z）
+#   __PLATFORM_URL__  平台隧道入口（wss://access-manager.example.com/tunnel）
+#   __AGENT_TOKEN__   长期 Agent Token（平台管理面签发，或注册 Token 经
+#                     POST /api/v1/agent/register 交换；am-clu- 前缀）
+#   __CLUSTER_ID__    本集群 ID（平台注册时的 dom）
+#
+# 说明：replicas=2（§7.4 双隧道 HA），podAntiAffinity 打散节点；
+#       平台证书为自签时打开 PLATFORM_INSECURE（仅开发/POC）。
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: k8s-am-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8s-am-agent
+  namespace: k8s-am-system
+---
+# Agent 用 SA Token 访问 kube-apiserver（Impersonation + RBAC 第二道防线，§8）
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8s-am-agent
+subjects:
+- kind: ServiceAccount
+  name: k8s-am-agent
+  namespace: k8s-am-system
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: k8s-am-agent-token
+  namespace: k8s-am-system
+type: Opaque
+stringData:
+  token: "__AGENT_TOKEN__"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8s-am-agent
+  namespace: k8s-am-system
+  labels: {app: k8s-am-agent}
+spec:
+  replicas: 2                              # 双隧道 HA（§7.4）
+  strategy:
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  selector:
+    matchLabels: {app: k8s-am-agent}
+  template:
+    metadata:
+      labels: {app: k8s-am-agent}
+    spec:
+      serviceAccountName: k8s-am-agent
+      terminationGracePeriodSeconds: 30
+      affinity:
+        podAntiAffinity:                    # 双副本打散节点
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels: {app: k8s-am-agent}
+      containers:
+      - name: agent
+        image: __IMAGE__
+        env:
+        - {name: PLATFORM_URL, value: "__PLATFORM_URL__"}
+        - {name: CLUSTER_ID, value: "__CLUSTER_ID__"}
+        - {name: AGENT_ID, valueFrom: {fieldRef: {fieldPath: metadata.name}}}  # 双副本须不同
+        - {name: TOKEN_FILE, value: "/etc/k8s-am/token/token"}
+        - {name: HEARTBEAT_PING_INTERVAL, value: "20s"}   # §6.3：Nginx /tunnel 读超时须 > 此值
+        - {name: BACKOFF_BASE, value: "1s"}
+        - {name: BACKOFF_MAX, value: "30s"}
+        # - {name: PLATFORM_INSECURE, value: "1"}         # 仅开发/自签证书
+        # - {name: APISERVER_URL, value: "https://..."}   # 显式覆盖 in-cluster 探测
+        volumeMounts:
+        - {name: token, mountPath: /etc/k8s-am/token, readOnly: true}
+        resources:
+          requests: {cpu: 100m, memory: 128Mi}
+          limits: {cpu: 500m, memory: 512Mi}
+        securityContext:
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: [ALL]}
+      volumes:
+      - name: token
+        secret: {secretName: k8s-am-agent-token}

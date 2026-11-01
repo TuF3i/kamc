@@ -1,0 +1,180 @@
+# kamc 平台部署清单（设计文档 §11.2，HA 形态）
+#
+# 占位符（部署前替换）：
+#   __IMAGE__                    平台镜像（your-registry/k8s-am-platform:vX.Y.Z）
+#   __PG_DSN__                   PostgreSQL 连接串
+#   __OIDC_ISSUEER_URL__ 等       Authentik 相关（见 deploy/README.md）
+#   __DOMAIN__                   平台对外域名
+#
+# 说明：
+#   - PEER_ADDRESSES 用 headless service 的 per-pod DNS（StatefulSet 序号命名），
+#     部署为 StatefulSet 时改为 serviceName 引用；此处 Deployment + 手工枚举
+#     三副本地址（极简可靠），自动发现属路线图。
+#   - 9090（peer）仅平台 Pod 互访，由 NetworkPolicy 收敛。
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: k8s-am-system
+---
+# ── Secrets（生产用外部密管/SealedSecrets 生成，此处为占位模板）────────
+apiVersion: v1
+kind: Secret
+metadata:
+  name: platform-db
+  namespace: k8s-am-system
+stringData:
+  url: "__PG_DSN__"          # host=... port=5432 user=... password=... dbname=kamc sslmode=require
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: oidc
+  namespace: k8s-am-system
+stringData:
+  client-id: "__OIDC_CLIENT_ID__"
+  client-secret: "__OIDC_CLIENT_SECRET__"
+---
+# JWT 签名密钥环：*.pem 文件名即 kid（多 kid 并存实现零停机轮换，§4.3）
+# 生成：openssl genrsa -out jwt-1.pem 2048
+apiVersion: v1
+kind: Secret
+metadata:
+  name: jwt-keyring
+  namespace: k8s-am-system
+data:
+  jwt-1.pem: "__JWT1_PEM_BASE64__"
+---
+# 副本间转发认证令牌（PEER_TOKEN）：openssl rand -hex 32
+apiVersion: v1
+kind: Secret
+metadata:
+  name: peer-token
+  namespace: k8s-am-system
+stringData:
+  token: "__PEER_TOKEN__"
+---
+# ── 平台 Deployment ─────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8s-am-platform
+  namespace: k8s-am-system
+  labels: {app: k8s-am-platform}
+spec:
+  replicas: 3
+  strategy:
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}   # §7.5
+  selector:
+    matchLabels: {app: k8s-am-platform}
+  template:
+    metadata:
+      labels: {app: k8s-am-platform}
+    spec:
+      terminationGracePeriodSeconds: 60
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels: {app: k8s-am-platform}
+      containers:
+      - name: platform
+        image: __IMAGE__
+        env:
+        - {name: DATABASE_URL, valueFrom: {secretKeyRef: {name: platform-db, key: url}}}
+        - {name: REDIS_ADDR, value: "__REDIS_ADDR__"}          # 哨兵/集群用 REDIS_ADDRESSES
+        - {name: OIDC_ISSUER, value: "__OIDC_ISSUER__"}
+        - {name: OIDC_CLIENT_ID, valueFrom: {secretKeyRef: {name: oidc, key: client-id}}}
+        - {name: OIDC_CLIENT_SECRET, valueFrom: {secretKeyRef: {name: oidc, key: client-secret}}}
+        - {name: OIDC_REDIRECT_URL, value: "https://__DOMAIN__/auth/callback"}
+        - {name: JWT_KEYRING_DIR, value: "/etc/k8s-am/jwt"}
+        - {name: AM_JWT_ISSUER, value: "https://__DOMAIN__"}
+        - {name: AM_ADMIN_GROUP, value: "am:admin"}
+        - {name: AM_EXTERNAL_URL, value: "https://__DOMAIN__"}
+        - {name: AM_PEER_ADDR, value: ":9090"}
+        - {name: PEER_ADDRESSES, value: "__PEER_ADDRESSES__"}   # am-platform-0=...:9090,am-platform-1=...:9090,am-platform-2=...:9090
+        - {name: PEER_TOKEN, valueFrom: {secretKeyRef: {name: peer-token, key: token}}}
+        - {name: AM_RATE_LIMIT, value: "600"}                   # 每用户每分钟，0=不限
+        - {name: AM_AUDIT_SPILL_FILE, value: "/var/lib/kamc/audit-spill.jsonl"}
+        - {name: AM_KUBECONFIG_CA_FILE, value: "/etc/k8s-am/ca/tls.crt"}   # 可选：平台 CA
+        ports:
+        - {name: http, containerPort: 8080}
+        - {name: peer, containerPort: 9090}
+        lifecycle:
+          preStop:
+            exec: {command: ["sleep", "5"]}     # 等 LB 摘流生效（§7.5）
+        readinessProbe:
+          httpGet: {path: /readyz, port: http}
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        livenessProbe:
+          httpGet: {path: /healthz, port: http}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        volumeMounts:
+        - {name: jwt-keyring, mountPath: /etc/k8s-am/jwt, readOnly: true}
+        - {name: audit-spill, mountPath: /var/lib/kamc}
+        - {name: platform-ca, mountPath: /etc/k8s-am/ca, readOnly: true}
+        resources:
+          requests: {cpu: 200m, memory: 256Mi}
+          limits: {cpu: "1", memory: 512Mi}
+      volumes:
+      - name: jwt-keyring
+        secret: {secretName: jwt-keyring}
+      - name: audit-spill
+        emptyDir: {}
+      - name: platform-ca
+        secret: {secretName: platform-ca}       # 可选：对外 TLS 证书的 CA（kubeconfig 嵌入）
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8s-am-platform
+  namespace: k8s-am-system
+spec:
+  selector: {app: k8s-am-platform}
+  ports:
+  - {name: http, port: 8080, targetPort: http}
+---
+# headless service：副本间 peer 直连（§7.2.4）
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8s-am-platform-headless
+  namespace: k8s-am-system
+spec:
+  clusterIP: None
+  selector: {app: k8s-am-platform}
+  ports:
+  - {name: peer, port: 9090}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: k8s-am-platform
+  namespace: k8s-am-system
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels: {app: k8s-am-platform}
+---
+# NetworkPolicy：peer 端口仅平台 Pod 互访（§7.2.4）
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: k8s-am-platform-peer
+  namespace: k8s-am-system
+spec:
+  podSelector:
+    matchLabels: {app: k8s-am-platform}
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels: {app: k8s-am-platform}
+    ports:
+    - {protocol: TCP, port: 9090}
+  # 8080 的入站来源为 Nginx 网关（集群外）——按部署形态放行：
+  # - 集群内 ingress：补 from: ingress-controller 标签
+  # - NodePort/hostNetwork 网关：默认放行（未列出的端口不受本策略限制）
