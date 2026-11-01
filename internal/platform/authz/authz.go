@@ -13,11 +13,13 @@ package authz
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 
 	"github.com/casbin/casbin/v2"
 	"github.com/casbin/casbin/v2/model"
+	goredis "github.com/redis/go-redis/v9"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/endpoints/request"
 
@@ -47,11 +49,30 @@ m = g(r.sub, p.sub, r.dom) && (r.dom == p.dom || p.dom == "*") && keyMatch2(r.ob
 
 // Enforcer 鉴权入口（封装 SyncedEnforcer 与 DB 适配器）
 type Enforcer struct {
-	e *casbin.SyncedEnforcer
+	e       *casbin.SyncedEnforcer
+	watcher *redisWatcher // 跨副本同步（nil = 单副本形态）
 }
 
-// New 构造鉴权组件：建模型 → 装配 DB 适配器 → 全量加载策略。
-func New(d *dao.Dao) (*Enforcer, error) {
+// Option 鉴权组件选项
+type Option func(*enforcerOptions)
+
+type enforcerOptions struct {
+	redisCli    goredis.UniversalClient
+	syncChannel string
+}
+
+// WithSyncChannel 启用跨副本策略同步（Redis pub/sub；未配置则单副本语义）
+func WithSyncChannel(cli goredis.UniversalClient, channel string) Option {
+	return func(o *enforcerOptions) { o.redisCli, o.syncChannel = cli, channel }
+}
+
+// New 构造鉴权组件：建模型 → 装配 DB 适配器 → 全量加载策略 → 跨副本同步。
+func New(d *dao.Dao, opts ...Option) (*Enforcer, error) {
+	o := &enforcerOptions{syncChannel: DefaultSyncChannel}
+	for _, opt := range opts {
+		opt(o)
+	}
+
 	m, err := model.NewModelFromString(modelText)
 	if err != nil {
 		return nil, fmt.Errorf("authz -> load model: %w", err)
@@ -63,7 +84,36 @@ func New(d *dao.Dao) (*Enforcer, error) {
 	if err := e.LoadPolicy(); err != nil {
 		return nil, fmt.Errorf("authz -> load policy: %w", err)
 	}
-	return &Enforcer{e: e}, nil
+
+	en := &Enforcer{e: e}
+	if o.redisCli != nil {
+		w, err := newRedisWatcher(context.Background(), o.redisCli, o.syncChannel)
+		if err != nil {
+			return nil, fmt.Errorf("authz -> policy watcher: %w", err)
+		}
+		en.watcher = w
+		// 广播回调：全量重载（本副本自己的修改也会收到——幂等）
+		w.SetUpdateCallback(func(string) {
+			if err := e.LoadPolicy(); err != nil {
+				log.Printf("[authz] policy reload: %v", err)
+			}
+		})
+	}
+	return en, nil
+}
+
+// notifyWatchers 策略变更后广播（发布失败不影响本副本正确性——变更已落库）
+func (en *Enforcer) notifyWatchers() {
+	if en.watcher != nil {
+		en.watcher.Notify()
+	}
+}
+
+// Release 释放跨副本同步资源（进程退出时调用；幂等）
+func (en *Enforcer) Release() {
+	if en.watcher != nil {
+		en.watcher.Close()
+	}
 }
 
 // Enforce 判定 (sub, dom, obj, act) 是否放行。错误向上抛（调用方 fail-closed）。
@@ -71,11 +121,14 @@ func (en *Enforcer) Enforce(sub, dom, obj, act string) (bool, error) {
 	return en.e.Enforce(sub, dom, obj, act)
 }
 
-// AddPolicy 增加策略行（AutoSave 落库）
+// AddPolicy 增加策略行（AutoSave 落库 + 广播其他副本重载）
 func (en *Enforcer) AddPolicy(sub, dom, obj, act string) (bool, error) {
 	added, err := en.e.AddPolicy(sub, dom, obj, act)
 	if err != nil {
 		return false, fmt.Errorf("authz -> add policy: %w", err)
+	}
+	if added {
+		en.notifyWatchers()
 	}
 	return added, nil
 }
@@ -85,6 +138,9 @@ func (en *Enforcer) RemovePolicy(sub, dom, obj, act string) (bool, error) {
 	removed, err := en.e.RemovePolicy(sub, dom, obj, act)
 	if err != nil {
 		return false, fmt.Errorf("authz -> remove policy: %w", err)
+	}
+	if removed {
+		en.notifyWatchers()
 	}
 	return removed, nil
 }
@@ -100,6 +156,9 @@ func (en *Enforcer) AddBinding(user, role, dom string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("authz -> add binding: %w", err)
 	}
+	if added {
+		en.notifyWatchers()
+	}
 	return added, nil
 }
 
@@ -108,6 +167,9 @@ func (en *Enforcer) RemoveBinding(user, role, dom string) (bool, error) {
 	removed, err := en.e.RemoveGroupingPolicy(user, role, dom)
 	if err != nil {
 		return false, fmt.Errorf("authz -> remove binding: %w", err)
+	}
+	if removed {
+		en.notifyWatchers()
 	}
 	return removed, nil
 }

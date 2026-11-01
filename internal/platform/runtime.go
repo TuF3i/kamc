@@ -62,11 +62,12 @@ type Runtime struct {
 
 	Tunnels *tunnel.Runtime // 隧道模块（可选注入；代理转发落地后使用，§6.2）
 
-	engine *chi.Mux
-	srv    *http.Server
-	db     *gorm.DB                // 依赖的数据库连接 (自建时 Release 负责关闭)
-	ownDB  bool                    // db 是否为 CreateRuntime 自建 (决定 Release 是否关闭)
-	revCli goredis.UniversalClient // 吊销存储的 Redis 客户端 (自建时 Release 负责关闭)
+	engine   *chi.Mux
+	srv      *http.Server
+	db       *gorm.DB                // 依赖的数据库连接 (自建时 Release 负责关闭)
+	ownDB    bool                    // db 是否为 CreateRuntime 自建 (决定 Release 是否关闭)
+	authzEn  *authz.Enforcer         // 鉴权组件（Release 释放 watcher）
+	redisCli goredis.UniversalClient // 共享 Redis 客户端 (自建时 Release 负责关闭)
 }
 
 // Option CreateRuntime 选项
@@ -127,8 +128,22 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	if err := d.SetupPolicy(context.Background()); err != nil {
 		return nil, fmt.Errorf("platform -> setup policy table: %w", err)
 	}
-	authzEn, err := authz.New(d)
+	// Redis 客户端（配置存在时）：策略同步 watcher 与 Token 吊销共用；
+	// 归 Runtime 所有（Release 关闭）。未配置 = 单副本语义（无跨副本同步）。
+	var sharedRedisCli goredis.UniversalClient
+	if os.Getenv("REDIS_ADDRESSES") != "" || os.Getenv("REDIS_ADDR") != "" {
+		cli, err := redis.NewRedisClient()
+		if err != nil {
+			return nil, fmt.Errorf("platform -> connect redis: %w", err)
+		}
+		sharedRedisCli = cli
+	}
+
+	authzEn, err := authz.New(d, authz.WithSyncChannel(sharedRedisCli, authz.DefaultSyncChannel))
 	if err != nil {
+		if sharedRedisCli != nil {
+			_ = sharedRedisCli.Close()
+		}
 		return nil, fmt.Errorf("platform -> build authz: %w", err)
 	}
 	svc := service.NewService(d, authzEn)
@@ -137,18 +152,13 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	// Token 吊销：Redis 可用时跨副本同步（惰性周期拉取，鉴权热路径只查本地
 	// 缓存——§7.1 鉴权零外部依赖不变量），否则进程内语义（单副本）
 	var revStore auth.RevocationStore
-	var revCli goredis.UniversalClient
-	if os.Getenv("REDIS_ADDRESSES") != "" || os.Getenv("REDIS_ADDR") != "" {
-		revCli, err = redis.NewRedisClient()
-		if err != nil {
-			return nil, fmt.Errorf("platform -> connect redis (revocations): %w", err)
-		}
-		revStore = auth.NewRedisRevocations(revCli)
+	if sharedRedisCli != nil {
+		revStore = auth.NewRedisRevocations(sharedRedisCli)
 	}
 	authSvc, err := buildAuthService(revStore)
 	if err != nil {
-		if revCli != nil {
-			_ = revCli.Close()
+		if sharedRedisCli != nil {
+			_ = sharedRedisCli.Close()
 		}
 		return nil, fmt.Errorf("platform -> build auth: %w", err)
 	}
@@ -185,8 +195,8 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	rateLimitN := 0
 	if v, err := strconv.Atoi(os.Getenv("AM_RATE_LIMIT")); err == nil && v > 0 {
 		rateLimitN = v
-		if revCli != nil {
-			limiter = mw.NewRedisRateLimiter(revCli, time.Minute, rateLimitN)
+		if sharedRedisCli != nil {
+			limiter = mw.NewRedisRateLimiter(sharedRedisCli, time.Minute, rateLimitN)
 		} else {
 			limiter = mw.NewMemoryRateLimiter(time.Minute, rateLimitN)
 			log.Printf("[platform] 未配置 Redis，限流窗口为进程内（多副本各算各的）")
@@ -229,14 +239,15 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	}
 
 	rt := &Runtime{
-		Service: svc,
-		Handler: h,
-		Tunnels: o.tunnels,
-		engine:  engine,
-		srv:     srv,
-		db:      db,
-		ownDB:   ownDB,
-		revCli:  revCli,
+		Service:  svc,
+		Handler:  h,
+		Tunnels:  o.tunnels,
+		engine:   engine,
+		srv:      srv,
+		db:       db,
+		ownDB:    ownDB,
+		authzEn:  authzEn,
+		redisCli: sharedRedisCli,
 	}
 
 	// ErrServerClosed 不算错误：ReleaseRuntime 主动 Shutdown 的正常路径
@@ -281,14 +292,19 @@ func (r *Runtime) ReleaseRuntime() error {
 		}
 	}
 
+	r.Service.Release()
+
 	if r.ownDB && r.db != nil {
 		if sqlDB, err := r.db.DB(); err == nil {
 			_ = sqlDB.Close()
 		}
 	}
 
-	if r.revCli != nil {
-		_ = r.revCli.Close()
+	if r.authzEn != nil {
+		r.authzEn.Release()
+	}
+	if r.redisCli != nil {
+		_ = r.redisCli.Close()
 	}
 
 	if defaultRuntime == r {

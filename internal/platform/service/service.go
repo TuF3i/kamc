@@ -36,6 +36,11 @@ func (s *Service) Ping(ctx context.Context) error {
 	return s.d.Ping(ctx)
 }
 
+// Release 释放持有的组件（鉴权 watcher 等；幂等）
+func (s *Service) Release() {
+	s.authz.Release()
+}
+
 // CreateCluster 注册集群：参数校验 → 唯一性检查 → 落库（默认 pending，Agent 接入后转 online）
 func (s *Service) CreateCluster(ctx context.Context, req *modules.CreateClusterRequest) (*modules.ClusterDTO, *errcode.Response) {
 	if req == nil {
