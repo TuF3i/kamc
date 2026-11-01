@@ -88,8 +88,10 @@ make vet
       （/auth/login、/auth/callback）+ RequireJWT/RequireAdmin 中间件
 - [x] Casbin RequestInfo 鉴权（§5，act 锚定 FIX-8）+ /proxy Impersonation 注入
       （§8.1 完整顺序，无鉴权开关已移除）
-- [ ] exec/port-forward 流式入口：官方 StreamTranslatorHandler / TunnelingHandler
-      接入 /proxy 路由（§9；Agent 侧 101 反代已就绪，平台侧待接）
+- [x] exec/port-forward 流式入口（§9）：WS 升级按子协议分流——channel.k8s.io →
+      StreamTranslatorHandler（WS→SPDY，本地中继注入 Impersonation）；
+      SPDY/3.1+portforward.k8s.io → TunnelingHandler；旧版 SPDY 经 ReverseProxy 直通。
+      注意：UpgradeAwareHandler 必须开 UseRequestLocation（否则路径被 location 替换）
 - [ ] 跨 Pod peer 转发：peer yamux 会话 + RELAY 拼接（§7.2.4）
 - [ ] kubeconfig 生成与 k8s-am-login exec plugin（§4.4）
 - [ ] 多副本策略同步：casbin Redis watcher（§7.6）；OIDC state 外置 Redis
