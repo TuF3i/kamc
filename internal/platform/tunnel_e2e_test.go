@@ -72,7 +72,7 @@ func TestTunnelEndToEnd(t *testing.T) {
 	t.Cleanup(func() { _ = trt.ReleaseRuntime() })
 
 	// 平台（含 /tunnel 与 /proxy 路由；代理池走未鉴权开关语义之外的直配）
-	t.Setenv("AM_ENABLE_UNAUTH_PROXY", "1")
+	t.Setenv("AM_DEV_ISSUE_TOKEN", "1")
 	rt, err := platform.CreateRuntime(platform.WithDB(db), platform.WithTunnels(trt))
 	if err != nil {
 		t.Fatalf("platform runtime: %v", err)
@@ -85,13 +85,14 @@ func TestTunnelEndToEnd(t *testing.T) {
 
 	// 注册集群 + 签发 Token
 	clusterID := fmt.Sprintf("e2e-tunnel-%d", time.Now().UnixNano())
+	tok := adminToken(t, rt)
 	resp, ar := call(t, rt, http.MethodPost, "/api/v1/clusters",
-		map[string]string{"id": clusterID, "name": "e2e 隧道集群"})
+		map[string]string{"id": clusterID, "name": "e2e 隧道集群"}, tok)
 	if ar.Status != errcode.CodeSuccess {
 		t.Fatalf("create cluster: http=%d body=%+v", resp.StatusCode, ar)
 	}
 	resp, ar = call(t, rt, http.MethodPost, "/api/v1/clusters/"+clusterID+"/tokens",
-		map[string]string{"kind": "longterm"})
+		map[string]string{"kind": "longterm"}, tok)
 	if ar.Status != errcode.CodeSuccess {
 		t.Fatalf("issue token: %+v", ar)
 	}
@@ -126,12 +127,12 @@ func TestTunnelEndToEnd(t *testing.T) {
 	t.Cleanup(func() { _ = art.ReleaseRuntime() })
 
 	// 集群应转 online
-	waitForClusterStatus(t, rt, clusterID, "online", 5*time.Second)
+	waitForClusterStatus(t, rt, tok, clusterID, "online", 5*time.Second)
 
 	// 经 /proxy 穿隧道请求（带伪造 Impersonate 与用户凭证，断言不透传）
 	req := httptest.NewRequest(http.MethodGet, "/proxy/"+clusterID+"/api/v1/namespaces/dev/pods", nil)
 	req.Header.Set("Impersonate-User", "mallory")
-	req.Header.Set("Authorization", "Bearer platform-user-jwt")
+	req.Header.Set("Authorization", "Bearer "+tok)
 	rec := httptest.NewRecorder()
 	rt.Engine().ServeHTTP(rec, req)
 
@@ -153,14 +154,14 @@ func TestTunnelEndToEnd(t *testing.T) {
 
 	// Agent 断开 → 集群转 offline
 	_ = art.ReleaseRuntime()
-	waitForClusterStatus(t, rt, clusterID, "offline", 5*time.Second)
+	waitForClusterStatus(t, rt, tok, clusterID, "offline", 5*time.Second)
 }
 
-func waitForClusterStatus(t *testing.T, rt *platform.Runtime, id, want string, timeout time.Duration) {
+func waitForClusterStatus(t *testing.T, rt *platform.Runtime, tok, id, want string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		_, ar := call(t, rt, http.MethodGet, "/api/v1/clusters/"+id, nil)
+		_, ar := call(t, rt, http.MethodGet, "/api/v1/clusters/"+id, nil, tok)
 		if ar.Status == errcode.CodeSuccess && strings.Contains(string(ar.Data), `"status":"`+want+`"`) {
 			return
 		}

@@ -8,24 +8,47 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	mw "github.com/TuF3i/kamc/internal/platform/middleware"
+
+	"github.com/TuF3i/kamc/internal/auth"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
 	"github.com/TuF3i/kamc/internal/platform/modules"
+	"github.com/TuF3i/kamc/internal/platform/oidc"
 	"github.com/TuF3i/kamc/internal/platform/proxy"
 	"github.com/TuF3i/kamc/internal/platform/service"
 	"github.com/TuF3i/kamc/internal/tunnel"
 	"github.com/TuF3i/kamc/internal/version"
 )
 
-// Handler 平台 HTTP 处理器（业务下沉 Service；隧道/代理依赖可空，对应降级行为）
+// Deps Handler 的可空依赖（nil 即功能降级：对应端点返回 503/501）
+type Deps struct {
+	Auth    *auth.Service   // JWT 签发/校验（nil = 认证未装配）
+	OIDC    *oidc.Client    // OIDC 登录（nil = 未配置 → /auth/login 503）
+	Tunnels *tunnel.Service // 隧道模块（nil = 未启用 → /tunnel 返回 503）
+	Proxies *proxy.Pool     // API 代理池（nil = 未装配 → /proxy 返回 501）
+}
+
+// Handler 平台 HTTP 处理器（业务下沉 Service；依赖可空，对应降级行为）
 type Handler struct {
 	svc     *service.Service
-	tunnels *tunnel.Service // 隧道模块（nil = 未启用 → /tunnel 返回 503）
-	proxies *proxy.Pool     // API 代理池（nil = 未装配 → /proxy 返回 501）
+	auth    *auth.Service
+	oidc    *oidc.Client
+	tunnels *tunnel.Service
+	proxies *proxy.Pool
+
+	adminGroup      string // 管理面用户组（AM_ADMIN_GROUP）
+	devTokenEnabled bool   // 开发用直签 Token 开关（AM_DEV_ISSUE_TOKEN）
 }
 
 // NewHandler 构造 Handler
-func NewHandler(svc *service.Service, tunnels *tunnel.Service, proxies *proxy.Pool) *Handler {
-	return &Handler{svc: svc, tunnels: tunnels, proxies: proxies}
+func NewHandler(svc *service.Service, deps Deps) *Handler {
+	return &Handler{svc: svc, auth: deps.Auth, oidc: deps.OIDC, tunnels: deps.Tunnels, proxies: deps.Proxies}
+}
+
+// SetPolicy 设置运行策略（装配层调用）
+func (h *Handler) SetPolicy(adminGroup string, devToken bool) {
+	h.adminGroup = adminGroup
+	h.devTokenEnabled = devToken
 }
 
 // RegisterRoutes 挂载全部路由（健康检查 + /api/v1 业务 API + /tunnel + /proxy）。
@@ -36,23 +59,37 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/readyz", h.Readyz)   // 就绪：数据库连通（下线摘流依据）
 	r.Get("/version", h.Version)
 	r.Get("/tunnel", h.TunnelWS) // Agent 隧道入口（WS 升级 + Token 认证）
+	r.Get("/.well-known/jwks.json", h.JWKS)
+
+	// 认证流程：login/callback 匿名（OIDC 流程自身防 CSRF）；me 需 JWT
+	r.Get("/auth/login", h.AuthLogin)
+	r.Get("/auth/callback", h.AuthCallback)
+	r.Post("/auth/dev-token", h.AuthDevToken)
+	r.With(mw.RequireJWT(h.auth)).Get("/auth/me", h.AuthMe)
+
+	// 数据面代理：JWT 必选（资源级 Casbin 鉴权随策略里程碑挂载）
+	r.With(mw.RequireJWT(h.auth)).
+		HandleFunc("/proxy/{clusterID}", h.Proxy)
+	r.With(mw.RequireJWT(h.auth)).
+		HandleFunc("/proxy/{clusterID}/*", h.Proxy)
 
 	r.Route("/api/v1", func(api chi.Router) {
-		// Agent 注册交换：注册 Token 即凭证，不入 JWT 保护组（后续里程碑）
+		// Agent 注册交换：注册 Token 即凭证，不入 JWT 保护组
 		api.Post("/agent/register", h.AgentRegister)
 
-		api.Post("/clusters", h.CreateCluster)
-		api.Get("/clusters", h.ListClusters)
-		api.Get("/clusters/{id}", h.GetCluster)
-		api.Delete("/clusters/{id}", h.DeleteCluster)
-		api.Post("/clusters/{id}/tokens", h.IssueToken)
-		api.Get("/clusters/{id}/tokens", h.ListTokens)
-		api.Delete("/clusters/{id}/tokens/{kind}", h.RevokeToken)
+		// 管理面：JWT + 管理员组（最小授权；数据面资源级鉴权由 Casbin 承担）
+		api.Group(func(admin chi.Router) {
+			admin.Use(mw.RequireJWT(h.auth))
+			admin.Use(mw.RequireAdmin(h.adminGroup))
+			admin.Post("/clusters", h.CreateCluster)
+			admin.Get("/clusters", h.ListClusters)
+			admin.Get("/clusters/{id}", h.GetCluster)
+			admin.Delete("/clusters/{id}", h.DeleteCluster)
+			admin.Post("/clusters/{id}/tokens", h.IssueToken)
+			admin.Get("/clusters/{id}/tokens", h.ListTokens)
+			admin.Delete("/clusters/{id}/tokens/{kind}", h.RevokeToken)
+		})
 	})
-
-	// /proxy/{clusterID}/... —— kubeconfig 的 server 路径前缀（FIX-6）
-	r.HandleFunc("/proxy/{clusterID}", h.Proxy)
-	r.HandleFunc("/proxy/{clusterID}/*", h.Proxy)
 }
 
 // Healthz 存活探针：进程活着即返回 200，不做依赖检查

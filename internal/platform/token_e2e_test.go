@@ -2,6 +2,7 @@ package platform_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -15,19 +16,20 @@ import (
 // 签发 → 校验命中 → 轮换产生宽限 → 旧 Token 宽限期内仍可校验 → 吊销立即失效。
 func TestTokenLifecycleE2E(t *testing.T) {
 	rt := newTestRuntime(t)
-	id := "it-token-cluster"
+	tok := adminToken(t, rt)
+	id := fmt.Sprintf("it-token-%d", time.Now().UnixNano())
 
 	// 前置：注册集群
 	resp, ar := call(t, rt, http.MethodPost, "/api/v1/clusters",
-		map[string]string{"id": id, "name": "token 测试集群"})
+		map[string]string{"id": id, "name": "token 测试集群"}, tok)
 	if resp.StatusCode != http.StatusOK || ar.Status != errcode.CodeSuccess {
 		t.Fatalf("setup cluster: http=%d body=%+v", resp.StatusCode, ar)
 	}
-	t.Cleanup(func() { _, _ = call(t, rt, http.MethodDelete, "/api/v1/clusters/"+id, nil) })
+	t.Cleanup(func() { _, _ = call(t, rt, http.MethodDelete, "/api/v1/clusters/"+id, nil, tok) })
 
 	// 签发 longterm Token
 	resp, ar = call(t, rt, http.MethodPost, "/api/v1/clusters/"+id+"/tokens",
-		map[string]string{"kind": "longterm"})
+		map[string]string{"kind": "longterm"}, tok)
 	if resp.StatusCode != http.StatusOK || ar.Status != errcode.CodeSuccess {
 		t.Fatalf("issue: http=%d body=%+v", resp.StatusCode, ar)
 	}
@@ -50,7 +52,7 @@ func TestTokenLifecycleE2E(t *testing.T) {
 
 	// 轮换：旧 Token 进宽限期
 	resp, ar = call(t, rt, http.MethodPost, "/api/v1/clusters/"+id+"/tokens",
-		map[string]string{"kind": "longterm"})
+		map[string]string{"kind": "longterm"}, tok)
 	if ar.Status != errcode.CodeSuccess {
 		t.Fatalf("rotate: %+v", ar)
 	}
@@ -77,7 +79,7 @@ func TestTokenLifecycleE2E(t *testing.T) {
 	}
 
 	// 元数据列表：状态 rotating，永不泄露哈希/明文
-	resp, ar = call(t, rt, http.MethodGet, "/api/v1/clusters/"+id+"/tokens", nil)
+	resp, ar = call(t, rt, http.MethodGet, "/api/v1/clusters/"+id+"/tokens", nil, tok)
 	if ar.Status != errcode.CodeSuccess {
 		t.Fatalf("list: %+v", ar)
 	}
@@ -86,7 +88,7 @@ func TestTokenLifecycleE2E(t *testing.T) {
 	}
 
 	// 吊销 → 立即失效
-	resp, ar = call(t, rt, http.MethodDelete, "/api/v1/clusters/"+id+"/tokens/longterm", nil)
+	resp, ar = call(t, rt, http.MethodDelete, "/api/v1/clusters/"+id+"/tokens/longterm", nil, tok)
 	if ar.Status != errcode.CodeSuccess {
 		t.Fatalf("revoke: %+v", ar)
 	}
@@ -95,7 +97,7 @@ func TestTokenLifecycleE2E(t *testing.T) {
 	}
 
 	// 再吊销 → ErrTokenNotFound
-	_, ar = call(t, rt, http.MethodDelete, "/api/v1/clusters/"+id+"/tokens/longterm", nil)
+	_, ar = call(t, rt, http.MethodDelete, "/api/v1/clusters/"+id+"/tokens/longterm", nil, tok)
 	if ar.Status != errcode.CodeTokenNotFound {
 		t.Fatalf("revoke again: want %d, got %+v", errcode.CodeTokenNotFound, ar)
 	}
@@ -104,16 +106,17 @@ func TestTokenLifecycleE2E(t *testing.T) {
 // TestRegisterTokenExpiry 注册 Token 过期后失效（1h TTL，测试中直接构造过期行）。
 func TestRegisterTokenExpiry(t *testing.T) {
 	rt := newTestRuntime(t)
-	id := "it-token-expiry"
+	tok := adminToken(t, rt)
+	id := fmt.Sprintf("it-expiry-%d", time.Now().UnixNano())
 	_, ar := call(t, rt, http.MethodPost, "/api/v1/clusters",
-		map[string]string{"id": id, "name": "expiry"})
+		map[string]string{"id": id, "name": "expiry"}, tok)
 	if ar.Status != errcode.CodeSuccess {
 		t.Fatalf("setup: %+v", ar)
 	}
-	t.Cleanup(func() { _, _ = call(t, rt, http.MethodDelete, "/api/v1/clusters/"+id, nil) })
+	t.Cleanup(func() { _, _ = call(t, rt, http.MethodDelete, "/api/v1/clusters/"+id, nil, tok) })
 
 	resp, ar := call(t, rt, http.MethodPost, "/api/v1/clusters/"+id+"/tokens",
-		map[string]string{"kind": "register"})
+		map[string]string{"kind": "register"}, tok)
 	if resp.StatusCode != http.StatusOK || ar.Status != errcode.CodeSuccess {
 		t.Fatalf("issue register: http=%d body=%+v", resp.StatusCode, ar)
 	}
@@ -133,16 +136,17 @@ func TestRegisterTokenExpiry(t *testing.T) {
 // 长期 Token 不能再次交换（类型不对）。
 func TestRegisterTokenExchangeE2E(t *testing.T) {
 	rt := newTestRuntime(t)
-	id := "it-exchange-cluster"
+	tok := adminToken(t, rt)
+	id := fmt.Sprintf("it-exchange-%d", time.Now().UnixNano())
 	_, ar := call(t, rt, http.MethodPost, "/api/v1/clusters",
-		map[string]string{"id": id, "name": "exchange"})
+		map[string]string{"id": id, "name": "exchange"}, tok)
 	if ar.Status != errcode.CodeSuccess {
 		t.Fatalf("setup: %+v", ar)
 	}
-	t.Cleanup(func() { _, _ = call(t, rt, http.MethodDelete, "/api/v1/clusters/"+id, nil) })
+	t.Cleanup(func() { _, _ = call(t, rt, http.MethodDelete, "/api/v1/clusters/"+id, nil, tok) })
 
 	_, ar = call(t, rt, http.MethodPost, "/api/v1/clusters/"+id+"/tokens",
-		map[string]string{"kind": "register"})
+		map[string]string{"kind": "register"}, tok)
 	if ar.Status != errcode.CodeSuccess {
 		t.Fatalf("issue register: %+v", ar)
 	}

@@ -24,11 +24,13 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/TuF3i/kamc/infrastructure/postgres"
+	"github.com/TuF3i/kamc/internal/auth"
 	"github.com/TuF3i/kamc/internal/platform/dao"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
 	"github.com/TuF3i/kamc/internal/platform/handler"
 	"github.com/TuF3i/kamc/internal/platform/middleware"
 	"github.com/TuF3i/kamc/internal/platform/modules"
+	"github.com/TuF3i/kamc/internal/platform/oidc"
 	"github.com/TuF3i/kamc/internal/platform/proxy"
 	"github.com/TuF3i/kamc/internal/platform/service"
 	"github.com/TuF3i/kamc/internal/tunnel"
@@ -119,13 +121,36 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	}
 	svc := service.NewService(d)
 
-	// API 代理池：依赖隧道模块；无鉴权代理仅显式开发开关可用（JWT 里程碑前）
-	var proxies *proxy.Pool
-	if o.tunnels != nil && os.Getenv("AM_ENABLE_UNAUTH_PROXY") == "1" {
-		proxies = proxy.NewPool(o.tunnels.Service.Open)
-		log.Printf("[platform] 未鉴权代理已启用（仅开发用途，AM_ENABLE_UNAUTH_PROXY=1）")
+	// 认证服务：密钥环（Secret 挂载）或开发环境临时密钥（重启失效，打警告）
+	authSvc, err := buildAuthService()
+	if err != nil {
+		return nil, fmt.Errorf("platform -> build auth: %w", err)
 	}
-	h := handler.NewHandler(svc, tunnelsService(o.tunnels), proxies)
+
+	// OIDC 登录客户端：未配置时 /auth/login 降级 503（本地开发走 dev-token）
+	oidcClient, err := oidc.New(oidc.Config{
+		Issuer:       os.Getenv("OIDC_ISSUER"),
+		ClientID:     os.Getenv("OIDC_CLIENT_ID"),
+		ClientSecret: os.Getenv("OIDC_CLIENT_SECRET"),
+		RedirectURL:  os.Getenv("OIDC_REDIRECT_URL"),
+	})
+	if err != nil && !errors.Is(err, oidc.ErrNotConfigured) {
+		return nil, fmt.Errorf("platform -> build oidc: %w", err)
+	}
+
+	// API 代理池：依赖隧道模块；鉴权已挂载（JWT），无开关依赖
+	var proxies *proxy.Pool
+	if o.tunnels != nil {
+		proxies = proxy.NewPool(o.tunnels.Service.Open)
+	}
+
+	h := handler.NewHandler(svc, handler.Deps{
+		Auth:    authSvc,
+		OIDC:    oidcClient,
+		Tunnels: tunnelsService(o.tunnels),
+		Proxies: proxies,
+	})
+	h.SetPolicy(envDefault("AM_ADMIN_GROUP", "am:admin"), os.Getenv("AM_DEV_ISSUE_TOKEN") == "1")
 
 	// 隧道分离回调：该集群在本副本已无隧道时标记 offline。
 	// 跨副本收敛由注册表驱动（路线图），当前保守取本地视角。
@@ -228,6 +253,27 @@ func envDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// buildAuthService 构造 JWT 服务：JWT_KEYRING_DIR（Secret 挂载，多 kid）优先，
+// 未配置则生成临时密钥（开发语义：重启后存量 Token 失效，显式告警）。
+func buildAuthService() (*auth.Service, error) {
+	var opts []auth.Option
+	opts = append(opts,
+		auth.WithIssuer(envDefault("AM_JWT_ISSUER", "https://kamc.local")),
+		auth.WithAudience(envDefault("AM_JWT_AUD", "kamc")),
+	)
+	if dir := os.Getenv("JWT_KEYRING_DIR"); dir != "" {
+		opts = append(opts, auth.WithKeyDir(dir))
+	} else {
+		pem, err := auth.GenerateKeyPEM()
+		if err != nil {
+			return nil, fmt.Errorf("generate ephemeral key: %w", err)
+		}
+		opts = append(opts, auth.WithKey("dev-ephemeral", pem))
+		log.Printf("[platform] 未配置 JWT_KEYRING_DIR，使用临时签名密钥（重启后存量 Token 失效，仅开发用）")
+	}
+	return auth.NewService(opts...)
 }
 
 // tunnelsService 取隧道模块的 Service（未启用返回 nil，handler 据此降级）
