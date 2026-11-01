@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -100,8 +101,9 @@ func seedClusterAndPolicies(t *testing.T, rt *platform.Runtime, _ *httptest.Serv
 	return tok, issued.Token
 }
 
-// startAgent 启动接入指定平台的 Agent（真实 WS 拨号 + 显式上游）
-func startAgent(t *testing.T, clusterID, platformAddr, token, upstreamURL string) {
+// startAgent 启动接入指定平台的 Agent（真实拨号 + 显式上游）。
+// platformURL 为完整地址（ws:// 或 wss://…/tunnel）；tls 面向自签证书时跳过校验。
+func startAgent(t *testing.T, clusterID, platformURL, token, upstreamURL string) {
 	t.Helper()
 	tokenFile := filepath.Join(t.TempDir(), "token")
 	if err := os.WriteFile(tokenFile, []byte(token+"\n"), 0o600); err != nil {
@@ -113,13 +115,14 @@ func startAgent(t *testing.T, clusterID, platformAddr, token, upstreamURL string
 	}
 	art, err := agent.CreateRuntime(
 		agent.WithConfig(agent.Config{
-			PlatformURL:  "ws://" + platformAddr + "/tunnel",
+			PlatformURL:  platformURL,
 			ClusterID:    clusterID,
 			AgentID:      "e2e-agent-" + clusterID,
 			TokenFile:    tokenFile,
 			PingInterval: 100 * time.Millisecond,
 			BackoffBase:  10 * time.Millisecond,
 			BackoffMax:   50 * time.Millisecond,
+			InsecureTLS:  strings.HasPrefix(platformURL, "wss://"),
 		}),
 		agent.WithUpstream(upstream, http.DefaultTransport),
 	)

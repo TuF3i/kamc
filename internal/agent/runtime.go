@@ -121,6 +121,7 @@ func LoadConfig() Config {
 		APIServerURL: os.Getenv("APISERVER_URL"), // 显式覆盖；空则探测 in-cluster SA
 		SACAFile:     os.Getenv("SA_CA_FILE"),
 		SATokenFile:  os.Getenv("SA_TOKEN_FILE"),
+		InsecureTLS:  os.Getenv("PLATFORM_INSECURE") == "1",
 	}
 }
 

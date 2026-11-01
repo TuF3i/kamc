@@ -4,6 +4,7 @@ package middleware
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"strings"
 
@@ -27,11 +28,13 @@ func RequireJWT(as *auth.Service) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := bearerToken(r)
 			if token == "" || as == nil {
+				log.Printf("[platform] jwt missing (remote=%s path=%s)", r.RemoteAddr, r.URL.Path)
 				unauthorized(w)
 				return
 			}
 			claims, err := as.Verify(token)
 			if err != nil {
+				log.Printf("[platform] jwt verify failed: %v", err)
 				unauthorized(w)
 				return
 			}

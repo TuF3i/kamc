@@ -13,6 +13,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -52,6 +53,7 @@ type Config struct {
 	APIServerURL string        // 上游 kube-apiserver（显式覆盖；未设置时探测 in-cluster）
 	SACAFile     string        // 上游 CA 文件（默认探测 in-cluster ca.crt）
 	SATokenFile  string        // 上游 SA Token 文件（默认探测 in-cluster token）
+	InsecureTLS  bool          // 跳过平台证书校验（开发环境自签证书）
 }
 
 // Validate 必填项校验
@@ -116,6 +118,9 @@ func (s *Service) SetUpstream(u *url.URL, tr http.RoundTripper) {
 // 平台证书为私有 CA 时经 TOKEN_CA_FILE 扩展（路线图：Token 认证入口）。
 func defaultDial(ctx context.Context, cfg Config, token string) (*websocket.Conn, error) {
 	d := websocket.Dialer{HandshakeTimeout: 10 * time.Second}
+	if cfg.InsecureTLS {
+		d.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // 开发环境显式开关（--insecure 语义）
+	}
 	header := http.Header{
 		"Authorization": []string{"Bearer " + token},
 		"X-Cluster-ID":  []string{cfg.ClusterID},

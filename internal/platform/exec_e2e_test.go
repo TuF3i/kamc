@@ -94,7 +94,7 @@ func TestExecEndToEnd(t *testing.T) {
 	adminTok, agentToken := seedClusterAndPolicies(t, rt, srv, clusterID)
 
 	// Agent 接入（显式注入上游）
-	startAgent(t, clusterID, srv.Listener.Addr().String(), agentToken, upstream.URL)
+	startAgent(t, clusterID, "ws://"+srv.Listener.Addr().String()+"/tunnel", agentToken, upstream.URL)
 	waitForClusterStatus(t, rt, adminTok, clusterID, "online", 5*time.Second)
 
 	// client-go 回退执行器：WS 优先（kubectl 1.31+ 默认），失败回退 SPDY
