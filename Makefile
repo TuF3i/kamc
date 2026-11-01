@@ -6,10 +6,10 @@ LDFLAGS := -X github.com/TuF3i/kamc/internal/version.Commit=$(COMMIT)
 
 .PHONY: build platform agent test vet fmt tidy clean
 
-build: platform agent
+build: platform agent k8s-am-login
 
-platform:
-	go build -ldflags "$(LDFLAGS)" -o bin/kamc-platform ./cmd/kamc-platform
+k8s-am-login:
+	go build -ldflags "$(LDFLAGS)" -o bin/k8s-am-login ./cmd/k8s-am-login
 
 agent:
 	go build -ldflags "$(LDFLAGS)" -o bin/kamc-agent ./cmd/kamc-agent
