@@ -88,6 +88,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			admin.Post("/clusters/{id}/tokens", h.IssueToken)
 			admin.Get("/clusters/{id}/tokens", h.ListTokens)
 			admin.Delete("/clusters/{id}/tokens/{kind}", h.RevokeToken)
+			policiesRoutes(admin, h)
 		})
 	})
 }

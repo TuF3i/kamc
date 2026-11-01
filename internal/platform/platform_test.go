@@ -47,8 +47,14 @@ func newTestRuntime(t *testing.T) *platform.Runtime {
 // adminToken 经 dev-token 端点签发管理员 JWT（AM_ADMIN_GROUP 默认 am:admin）
 func adminToken(t *testing.T, rt *platform.Runtime) string {
 	t.Helper()
+	return devToken(t, rt, "admin-test", []string{"am:admin"})
+}
+
+// devToken 经 dev-token 端点签发指定身份的 JWT
+func devToken(t *testing.T, rt *platform.Runtime, sub string, groups []string) string {
+	t.Helper()
 	resp, ar := call(t, rt, http.MethodPost, "/auth/dev-token",
-		map[string]any{"sub": "admin-test", "groups": []string{"am:admin"}})
+		map[string]any{"sub": sub, "groups": groups})
 	if resp.StatusCode != http.StatusOK || ar.Status != errcode.CodeSuccess {
 		t.Fatalf("dev-token: http=%d body=%+v", resp.StatusCode, ar)
 	}

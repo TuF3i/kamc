@@ -56,7 +56,9 @@ func (p *Pool) For(clusterID string) (*httputil.ReverseProxy, error) {
 	}
 	rp := &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
-			// FIX-6: strip /proxy/{clusterID} 前缀，apiserver 收到干净路径
+			// FIX-6: strip /proxy/{clusterID} 前缀，apiserver 收到干净路径。
+			// （Casbin 鉴权与 Impersonation 注入在 handler 层完成——必须基于
+			// strip 后的语义路径且发生在转发之前。）
 			req.URL.Path = strings.TrimPrefix(req.URL.Path, "/proxy/"+clusterID)
 			if req.URL.Path == "" {
 				req.URL.Path = "/"
@@ -69,7 +71,6 @@ func (p *Pool) For(clusterID string) (*httputil.ReverseProxy, error) {
 			req.URL.Host = "kube-apiserver"
 			req.Host = "kube-apiserver"
 
-			stripImpersonateHeaders(req)
 			// FIX-7: 用户凭证不透传（Agent 侧 transport 注入 SA Token）
 			req.Header.Del("Authorization")
 		},
@@ -83,14 +84,4 @@ func (p *Pool) For(clusterID string) (*httputil.ReverseProxy, error) {
 	}
 	p.items[clusterID] = rp
 	return rp, nil
-}
-
-// stripImpersonateHeaders 剥离用户传入的所有 Impersonate-* 头（§8.1 第 3 步，
-// 防伪造身份；正式的 Impersonation 注入随 JWT/Casbin 里程碑落地）
-func stripImpersonateHeaders(r *http.Request) {
-	for key := range r.Header {
-		if strings.HasPrefix(strings.ToLower(key), "impersonate-") {
-			delete(r.Header, key)
-		}
-	}
 }

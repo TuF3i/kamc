@@ -25,6 +25,7 @@ import (
 
 	"github.com/TuF3i/kamc/infrastructure/postgres"
 	"github.com/TuF3i/kamc/internal/auth"
+	"github.com/TuF3i/kamc/internal/platform/authz"
 	"github.com/TuF3i/kamc/internal/platform/dao"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
 	"github.com/TuF3i/kamc/internal/platform/handler"
@@ -111,7 +112,7 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		ownDB = true
 	}
 
-	// 依赖注入链: Dao → Service → Handler
+	// 依赖注入链: Dao → authz 组件 → Service → Handler
 	d := dao.NewDao(db)
 	if err := d.SetupCluster(context.Background()); err != nil {
 		return nil, fmt.Errorf("platform -> setup cluster table: %w", err)
@@ -119,7 +120,14 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	if err := d.SetupToken(context.Background()); err != nil {
 		return nil, fmt.Errorf("platform -> setup token table: %w", err)
 	}
-	svc := service.NewService(d)
+	if err := d.SetupPolicy(context.Background()); err != nil {
+		return nil, fmt.Errorf("platform -> setup policy table: %w", err)
+	}
+	authzEn, err := authz.New(d)
+	if err != nil {
+		return nil, fmt.Errorf("platform -> build authz: %w", err)
+	}
+	svc := service.NewService(d, authzEn)
 
 	// 认证服务：密钥环（Secret 挂载）或开发环境临时密钥（重启失效，打警告）
 	authSvc, err := buildAuthService()

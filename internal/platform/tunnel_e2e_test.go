@@ -50,9 +50,10 @@ func TestTunnelEndToEnd(t *testing.T) {
 	})
 
 	// 假 kube-apiserver：回显路径与收到的头
-	var gotImpersonateUser, gotAuth, gotPath string
+	var gotImpersonateUser, gotImpersonateGroups, gotAuth, gotPath string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotImpersonateUser = r.Header.Get("Impersonate-User")
+		gotImpersonateGroups = strings.Join(r.Header.Values("Impersonate-Group"), ",")
 		gotAuth = r.Header.Get("Authorization")
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
@@ -103,6 +104,18 @@ func TestTunnelEndToEnd(t *testing.T) {
 		t.Fatalf("decode issued: %v", err)
 	}
 
+	// 策略种子：管理员角色绑定（Casbin 数据面鉴权）
+	resp, ar = call(t, rt, http.MethodPost, "/api/v1/policies",
+		map[string]string{"sub": "role:cluster-admin", "dom": clusterID, "obj": "*", "act": ".*"}, tok)
+	if ar.Status != errcode.CodeSuccess {
+		t.Fatalf("seed policy: %+v", ar)
+	}
+	resp, ar = call(t, rt, http.MethodPost, "/api/v1/bindings",
+		map[string]string{"user": "admin-test", "role": "role:cluster-admin", "dom": clusterID}, tok)
+	if ar.Status != errcode.CodeSuccess {
+		t.Fatalf("seed binding: %+v", ar)
+	}
+
 	// Agent：真实拨号（默认 dialFn）+ 显式注入上游
 	tokenFile := filepath.Join(t.TempDir(), "token")
 	if err := os.WriteFile(tokenFile, []byte(issued.Token+"\n"), 0o600); err != nil {
@@ -129,7 +142,13 @@ func TestTunnelEndToEnd(t *testing.T) {
 	// 集群应转 online
 	waitForClusterStatus(t, rt, tok, clusterID, "online", 5*time.Second)
 
-	// 经 /proxy 穿隧道请求（带伪造 Impersonate 与用户凭证，断言不透传）
+	// 无策略用户 → 403（Casbin 第一层拒绝，fail-closed）
+	viewerTok := devToken(t, rt, "viewer-user", nil)
+	if resp := callRaw(t, rt, http.MethodGet, "/proxy/"+clusterID+"/api/v1/namespaces/dev/pods", viewerTok); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("viewer proxy: want 403, got %d", resp.StatusCode)
+	}
+
+	// 经 /proxy 穿隧道请求（带伪造 Impersonate，断言被剥离并替换为平台注入值）
 	req := httptest.NewRequest(http.MethodGet, "/proxy/"+clusterID+"/api/v1/namespaces/dev/pods", nil)
 	req.Header.Set("Impersonate-User", "mallory")
 	req.Header.Set("Authorization", "Bearer "+tok)
@@ -145,8 +164,12 @@ func TestTunnelEndToEnd(t *testing.T) {
 	if gotPath != "/api/v1/namespaces/dev/pods" {
 		t.Fatalf("upstream path: got %q (FIX-6 strip)", gotPath)
 	}
-	if gotImpersonateUser != "" {
-		t.Fatalf("Impersonate-User leaked: %q", gotImpersonateUser)
+	// Impersonation 注入（§8.1 第 4 步）：mallory 被剥离，替换为 JWT 身份
+	if gotImpersonateUser != "admin-test" {
+		t.Fatalf("Impersonate-User: got %q, want injected admin-test", gotImpersonateUser)
+	}
+	if !strings.Contains(gotImpersonateGroups, "am:admin") {
+		t.Fatalf("Impersonate-Group: got %q, want am:admin", gotImpersonateGroups)
 	}
 	if gotAuth != "" {
 		t.Fatalf("user Authorization leaked: %q", gotAuth)

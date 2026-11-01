@@ -11,6 +11,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/TuF3i/kamc/internal/platform/authz"
 	"github.com/TuF3i/kamc/internal/platform/dao"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
 	"github.com/TuF3i/kamc/internal/platform/modules"
@@ -21,12 +22,13 @@ const maxClusterIDLen = 64
 
 // Service 集群管理业务
 type Service struct {
-	d *dao.Dao
+	d     *dao.Dao
+	authz *authz.Enforcer
 }
 
-// NewService 构造 Service（组合 Dao）
-func NewService(d *dao.Dao) *Service {
-	return &Service{d: d}
+// NewService 构造 Service（组合 Dao 与鉴权组件）
+func NewService(d *dao.Dao, authz *authz.Enforcer) *Service {
+	return &Service{d: d, authz: authz}
 }
 
 // Ping 数据库连通性（readyz）
