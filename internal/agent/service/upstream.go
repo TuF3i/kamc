@@ -79,7 +79,10 @@ func BuildUpstream(cfg Config) (*url.URL, http.RoundTripper, error) {
 		return nil, nil, fmt.Errorf("agent -> parse apiserver url: %w", err)
 	}
 
-	base := &http.Transport{ForceAttemptHTTP2: true}
+	// ForceAttemptHTTP2 必须为 false：apiserver 经 TLS ALPN 协商出 h2 后，
+	// Connection: Upgrade（SPDY exec/port-forward）无法在 h2 上发起。
+	// exec 的 SPDY 升级与普通请求都走 HTTP/1.1。
+	base := &http.Transport{ForceAttemptHTTP2: false}
 	caFile := cfg.SACAFile
 	if caFile == "" && fileExists(saCAFile) {
 		caFile = saCAFile
