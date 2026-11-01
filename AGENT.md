@@ -72,6 +72,7 @@ docs/
 | `AM_EXTERNAL_URL` | X-Forwarded-Proto 推导 | 平台对外地址（kubeconfig 生成用） |
 | `AM_KUBECONFIG_CA_FILE` | — | kubeconfig 嵌入的平台 CA（可选） |
 | `PLATFORM_INSECURE`（Agent） | — | 跳过平台证书校验（开发环境自签） |
+| `AM_RATE_LIMIT` | 0（不限） | 数据面每用户每分钟最大请求数（Redis 共享窗口） |
 | `TEST_PG_DSN` | — | 数据库集成测试门控（仅测试用） |
 
 ## 构建与测试
@@ -106,6 +107,12 @@ make vet
       （ID Token 验签兑换）、GET /api/v1/clusters/{id}/kubeconfig（static/exec 两模式，
       自服务 JWT 组）、cmd/k8s-am-login（RFC 8628 设备流程 + 本地缓存）。
       注意：client-go 对明文连接不加载凭证——生产平台必须 https
+- [x] JWT 吊销（§4.2）：用户 epoch 踢出（am_ep 声明，同秒重签不误杀）+ jti
+      黑名单（登出）；校验只查本地缓存（§7.1 不变量），Redis HINCRBY/ZSET
+      跨副本惰性同步（5s 窗口）
+- [x] 数据面限流（§7）：/proxy 按用户 ZSET 滑动窗口（AM_RATE_LIMIT 每分钟，
+      0=不限）；限流器故障 fail-open；Redis 跨副本 / 内存单副本双实现
+- [x] 优雅下线显式通知（§7.5）：Release 对 Agent 隧道发 WS 1001 GoingAway
 - [ ] 多副本策略同步：casbin Redis watcher（§7.6）；OIDC state 外置 Redis；
       peer 地址发现改经 headless service 自动枚举（当前 PEER_ADDRESSES 显式）
 - [ ] Agent 收到 401 后停止重试等管理员的重新注册流程（§6.5）
