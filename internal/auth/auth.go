@@ -9,6 +9,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -38,17 +39,22 @@ type Claims struct {
 	jwt.RegisteredClaims
 	Email  string   `json:"email,omitempty"`
 	Groups []string `json:"groups,omitempty"`
+	// Epoch 签发时的用户吊销纪元（RevokeUser 递增；token.epoch < 用户当前
+	// epoch 即吊销。无此声明的旧 Token 按 0 处理）
+	Epoch int64 `json:"am_ep,omitempty"`
 }
 
 // Option 服务选项
 type Option func(*options)
 
 type options struct {
-	issuer   string
-	audience string
-	ttl      time.Duration
-	keys     []keyEntry
-	now      func() time.Time
+	issuer                 string
+	audience               string
+	ttl                    time.Duration
+	keys                   []keyEntry
+	now                    func() time.Time
+	revocations            RevocationStore
+	revocationSyncInterval time.Duration
 }
 
 type keyEntry struct {
@@ -96,6 +102,14 @@ type Service struct {
 	audience string
 	ttl      time.Duration
 	now      func() time.Time
+
+	// 吊销状态（本地缓存；Verify 只查内存，§7.1 鉴权零外部依赖）
+	store           RevocationStore
+	revSyncInterval time.Duration
+	revMu           sync.RWMutex
+	userEpochs      map[string]int64
+	revokedTokens   map[string]struct{}
+	lastRevSync     time.Time
 }
 
 // NewService 构造认证服务：至少一把密钥，末位为当前签名密钥。
@@ -109,12 +123,19 @@ func NewService(opts ...Option) (*Service, error) {
 	}
 
 	s := &Service{
-		keys:     make(map[string]*rsa.PrivateKey, len(o.keys)),
-		issuer:   o.issuer,
-		audience: o.audience,
-		ttl:      o.ttl,
-		now:      o.now,
+		keys:            make(map[string]*rsa.PrivateKey, len(o.keys)),
+		issuer:          o.issuer,
+		audience:        o.audience,
+		ttl:             o.ttl,
+		now:             o.now,
+		store:           o.revocations,
+		revSyncInterval: o.revocationSyncInterval,
 	}
+	if s.revSyncInterval <= 0 {
+		s.revSyncInterval = 5 * time.Second
+	}
+	s.userEpochs = make(map[string]int64)
+	s.revokedTokens = make(map[string]struct{})
 	for _, e := range o.keys {
 		if _, dup := s.keys[e.kid]; dup {
 			return nil, fmt.Errorf("auth -> duplicate kid %q", e.kid)
@@ -147,6 +168,9 @@ func (s *Service) Sign(subject, email string, groups []string) (string, time.Tim
 	if !ok {
 		return "", time.Time{}, fmt.Errorf("auth -> sign kid %q missing", s.signKid)
 	}
+	s.revMu.RLock()
+	userEpoch := s.userEpochs[subject]
+	s.revMu.RUnlock()
 	now := s.now()
 	exp := now.Add(s.ttl)
 	claims := &Claims{
@@ -160,6 +184,7 @@ func (s *Service) Sign(subject, email string, groups []string) (string, time.Tim
 		},
 		Email:  email,
 		Groups: groups,
+		Epoch:  userEpoch,
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	token.Header["kid"] = s.signKid
@@ -170,11 +195,11 @@ func (s *Service) Sign(subject, email string, groups []string) (string, time.Tim
 	return signed, exp, nil
 }
 
-// Verify 校验平台 JWT：kid 定位密钥 → RS256 验签 → iss/aud/exp 校验。
-// 过期返回 ErrExpired，其余无效情形一律 ErrInvalid（防细节泄露）。
-func (s *Service) Verify(tokenStr string) (*Claims, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+// Verify 校验平台 JWT：kid 定位密钥 → RS256 验签 → iss/aud/exp 校验 →
+// 本地吊销状态检查（jti 黑名单 + 用户级踢出标记）。
+// 过期返回 ErrExpired、吊销返回 ErrRevoked，其余无效情形一律 ErrInvalid（防细节泄露）。
+func (s *Service) Verify(ctx context.Context, tokenStr string) (*Claims, error) {
+	s.maybeSyncRevocations()
 
 	claims := &Claims{}
 	_, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (any, error) {
@@ -195,6 +220,9 @@ func (s *Service) Verify(tokenStr string) (*Claims, error) {
 			return nil, ErrExpired
 		}
 		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
+	if err := s.checkRevoked(claims); err != nil {
+		return nil, err
 	}
 	return claims, nil
 }

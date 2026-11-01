@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/TuF3i/kamc/internal/platform/errcode"
@@ -91,6 +92,41 @@ func (h *Handler) AuthTokenExchange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.issueAndRespond(w, user.Sub, user.Email, user.Groups)
+}
+
+// AuthRevokeUser POST /api/v1/auth/revoke —— 踢出用户（管理面）：
+// 该时刻之前签发的该用户全部 Token 立即失效（本地即时 + Redis 跨副本同步）。
+func (h *Handler) AuthRevokeUser(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Sub string `json:"sub"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Sub) == "" {
+		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
+		return
+	}
+	if err := h.auth.RevokeUser(r.Context(), strings.TrimSpace(req.Sub)); err != nil {
+		errcode.GenFinalResponse(w, nil, errcode.ServerInternal(err))
+		return
+	}
+	errcode.GenFinalResponse(w, map[string]string{"sub": req.Sub, "revoked": "before-now"}, nil)
+}
+
+// AuthLogout POST /auth/logout —— 当前 Token 立即失效（自服务登出，jti 黑名单）
+func (h *Handler) AuthLogout(w http.ResponseWriter, r *http.Request) {
+	claims, ok := middleware.ClaimsFromCtx(r.Context())
+	if !ok {
+		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
+		return
+	}
+	ttl := time.Until(claims.ExpiresAt.Time)
+	if ttl < 0 {
+		ttl = 0
+	}
+	if err := h.auth.RevokeToken(r.Context(), claims.ID, ttl); err != nil {
+		errcode.GenFinalResponse(w, nil, errcode.ServerInternal(err))
+		return
+	}
+	errcode.GenFinalResponse(w, map[string]bool{"logout": true}, nil)
 }
 
 // JWKS GET /.well-known/jwks.json —— 平台 JWT 公钥集（§4.3）

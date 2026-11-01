@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -45,7 +46,7 @@ func TestSignVerifyRoundtrip(t *testing.T) {
 		t.Fatal("expiry should be in the future")
 	}
 
-	claims, err := s.Verify(token)
+	claims, err := s.Verify(context.Background(), token)
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
@@ -66,14 +67,14 @@ func TestVerifyRejects(t *testing.T) {
 	token, _, _ := s.Sign("alice", "", nil)
 
 	// 篡改
-	if _, err := s.Verify(token + "x"); !errors.Is(err, ErrInvalid) {
+	if _, err := s.Verify(context.Background(), token+"x"); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("tampered: want ErrInvalid, got %v", err)
 	}
 
 	// 其他密钥签发（未知 kid）
 	other := newTestService(t, 1)
 	foreign, _, _ := other.Sign("mallory", "", nil)
-	if _, err := s.Verify(foreign); !errors.Is(err, ErrInvalid) {
+	if _, err := s.Verify(context.Background(), foreign); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("foreign key: want ErrInvalid, got %v", err)
 	}
 
@@ -98,7 +99,7 @@ func TestVerifyRejects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("verifier: %v", err)
 	}
-	if _, err := verifier.Verify(tokenExpired); !errors.Is(err, ErrExpired) {
+	if _, err := verifier.Verify(context.Background(), tokenExpired); !errors.Is(err, ErrExpired) {
 		t.Fatalf("expired: want ErrExpired, got %v", err)
 	}
 }
@@ -121,7 +122,7 @@ func TestKeyRotation(t *testing.T) {
 		t.Fatalf("stage2: %v", err)
 	}
 	newToken, _, _ := s2.Sign("bob", "", nil)
-	if _, err := s2.Verify(oldToken); err != nil {
+	if _, err := s2.Verify(context.Background(), oldToken); err != nil {
 		t.Fatalf("old token should still verify: %v", err)
 	}
 
@@ -130,10 +131,10 @@ func TestKeyRotation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stage3: %v", err)
 	}
-	if _, err := s3.Verify(oldToken); !errors.Is(err, ErrInvalid) {
+	if _, err := s3.Verify(context.Background(), oldToken); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("old token should fail after key removal: %v", err)
 	}
-	if _, err := s3.Verify(newToken); err != nil {
+	if _, err := s3.Verify(context.Background(), newToken); err != nil {
 		t.Fatalf("new token verify: %v", err)
 	}
 }
@@ -152,12 +153,12 @@ func TestKeyDirLoading(t *testing.T) {
 		t.Fatalf("load dir: %v", err)
 	}
 	token, _, _ := s.Sign("alice", "", nil)
-	claims, err := s.Verify(token)
+	claims, err := s.Verify(context.Background(), token)
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
 	// jwt-2 排序最后 → 签名 kid
-	if _, err := s.Verify(token); err != nil {
+	if _, err := s.Verify(context.Background(), token); err != nil {
 		t.Fatalf("re-verify: %v", err)
 	}
 	_ = claims

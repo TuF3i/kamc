@@ -32,7 +32,7 @@ func RequireJWT(as *auth.Service) func(http.Handler) http.Handler {
 				unauthorized(w)
 				return
 			}
-			claims, err := as.Verify(token)
+			claims, err := as.Verify(r.Context(), token)
 			if err != nil {
 				log.Printf("[platform] jwt verify failed: %v", err)
 				unauthorized(w)

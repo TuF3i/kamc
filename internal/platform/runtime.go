@@ -21,9 +21,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
+	goredis "github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
 	"github.com/TuF3i/kamc/infrastructure/postgres"
+	"github.com/TuF3i/kamc/infrastructure/redis"
 	"github.com/TuF3i/kamc/internal/auth"
 	"github.com/TuF3i/kamc/internal/platform/authz"
 	"github.com/TuF3i/kamc/internal/platform/dao"
@@ -61,8 +63,9 @@ type Runtime struct {
 
 	engine *chi.Mux
 	srv    *http.Server
-	db     *gorm.DB // 依赖的数据库连接 (自建时 Release 负责关闭)
-	ownDB  bool     // db 是否为 CreateRuntime 自建 (决定 Release 是否关闭)
+	db     *gorm.DB                // 依赖的数据库连接 (自建时 Release 负责关闭)
+	ownDB  bool                    // db 是否为 CreateRuntime 自建 (决定 Release 是否关闭)
+	revCli goredis.UniversalClient // 吊销存储的 Redis 客户端 (自建时 Release 负责关闭)
 }
 
 // Option CreateRuntime 选项
@@ -129,9 +132,23 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	}
 	svc := service.NewService(d, authzEn)
 
-	// 认证服务：密钥环（Secret 挂载）或开发环境临时密钥（重启失效，打警告）
-	authSvc, err := buildAuthService()
+	// 认证服务：密钥环（Secret 挂载）或开发环境临时密钥（重启失效，打警告）；
+	// Token 吊销：Redis 可用时跨副本同步（惰性周期拉取，鉴权热路径只查本地
+	// 缓存——§7.1 鉴权零外部依赖不变量），否则进程内语义（单副本）
+	var revStore auth.RevocationStore
+	var revCli goredis.UniversalClient
+	if os.Getenv("REDIS_ADDRESSES") != "" || os.Getenv("REDIS_ADDR") != "" {
+		revCli, err = redis.NewRedisClient()
+		if err != nil {
+			return nil, fmt.Errorf("platform -> connect redis (revocations): %w", err)
+		}
+		revStore = auth.NewRedisRevocations(revCli)
+	}
+	authSvc, err := buildAuthService(revStore)
 	if err != nil {
+		if revCli != nil {
+			_ = revCli.Close()
+		}
 		return nil, fmt.Errorf("platform -> build auth: %w", err)
 	}
 
@@ -202,6 +219,7 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		srv:     srv,
 		db:      db,
 		ownDB:   ownDB,
+		revCli:  revCli,
 	}
 
 	// ErrServerClosed 不算错误：ReleaseRuntime 主动 Shutdown 的正常路径
@@ -252,6 +270,10 @@ func (r *Runtime) ReleaseRuntime() error {
 		}
 	}
 
+	if r.revCli != nil {
+		_ = r.revCli.Close()
+	}
+
 	if defaultRuntime == r {
 		defaultRuntime = nil
 	}
@@ -277,7 +299,7 @@ func envDefault(key, def string) string {
 
 // buildAuthService 构造 JWT 服务：JWT_KEYRING_DIR（Secret 挂载，多 kid）优先，
 // 未配置则生成临时密钥（开发语义：重启后存量 Token 失效，显式告警）。
-func buildAuthService() (*auth.Service, error) {
+func buildAuthService(revStore auth.RevocationStore) (*auth.Service, error) {
 	var opts []auth.Option
 	opts = append(opts,
 		auth.WithIssuer(envDefault("AM_JWT_ISSUER", "https://kamc.local")),
@@ -292,6 +314,9 @@ func buildAuthService() (*auth.Service, error) {
 		}
 		opts = append(opts, auth.WithKey("dev-ephemeral", pem))
 		log.Printf("[platform] 未配置 JWT_KEYRING_DIR，使用临时签名密钥（重启后存量 Token 失效，仅开发用）")
+	}
+	if revStore != nil {
+		opts = append(opts, auth.WithRevocations(revStore))
 	}
 	return auth.NewService(opts...)
 }
