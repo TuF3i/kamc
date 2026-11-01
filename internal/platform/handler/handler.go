@@ -78,6 +78,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/auth/token-exchange", h.AuthTokenExchange)
 	r.Post("/auth/dev-token", h.AuthDevToken)
 	r.With(mw.RequireJWT(h.auth)).Get("/auth/me", h.AuthMe)
+	r.With(mw.RequireJWT(h.auth)).Post("/auth/logout", h.AuthLogout)
 
 	// 数据面代理：JWT 必选（资源级 Casbin 鉴权随策略里程碑挂载）
 	r.With(mw.RequireJWT(h.auth)).
