@@ -43,22 +43,90 @@ type User struct {
 	Groups []string
 }
 
+// StateStore 授权 state 存储（一次性消费）。默认进程内实现（单副本语义）；
+// 多副本注入 Redis 实现（state 外置，§4.1）。
+type StateStore interface {
+	// Save 保存 state，exp 到期后可被清理
+	Save(ctx context.Context, state string, exp time.Time) error
+	// Take 一次性消费：存在且未过期返回 true 并删除（无论结果）
+	Take(ctx context.Context, state string) (bool, error)
+}
+
+// memoryStateStore 进程内 state 存储（默认；Janitor 惰性清理）
+type memoryStateStore struct {
+	mu     sync.Mutex
+	states map[string]time.Time
+	now    func() time.Time
+}
+
+func newMemoryStateStore() *memoryStateStore {
+	return &memoryStateStore{states: make(map[string]time.Time), now: time.Now}
+}
+
+func (m *memoryStateStore) Save(_ context.Context, state string, exp time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.states[state] = exp
+	return nil
+}
+
+func (m *memoryStateStore) Take(_ context.Context, state string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	exp, ok := m.states[state]
+	delete(m.states, state) // 一次性
+	if !ok || m.now().After(exp) {
+		return false, nil
+	}
+	return true, nil
+}
+
+// sweepLocked 清理过期 state（调用方持锁）
+func (m *memoryStateStore) sweepLocked() {
+	now := m.now()
+	for s, exp := range m.states {
+		if now.After(exp) {
+			delete(m.states, s)
+		}
+	}
+}
+
 // Client OIDC 登录客户端（provider 懒发现，首次使用时请求 discovery）
 type Client struct {
-	cfg Config
+	cfg   Config
+	store StateStore
 
 	mu       sync.Mutex
 	provider *oidc.Provider
 	oauth    *oauth2.Config
-	states   map[string]time.Time
+}
+
+// Option 客户端选项
+type Option func(*clientOptions)
+
+type clientOptions struct {
+	store StateStore
+}
+
+// WithStateStore 注入 state 存储（默认进程内实现；多副本传 Redis 实现）
+func WithStateStore(store StateStore) Option {
+	return func(o *clientOptions) { o.store = store }
 }
 
 // New 构造客户端（配置不全返回 ErrNotConfigured）
-func New(cfg Config) (*Client, error) {
+func New(cfg Config, opts ...Option) (*Client, error) {
 	if cfg.Issuer == "" || cfg.ClientID == "" || cfg.RedirectURL == "" {
 		return nil, ErrNotConfigured
 	}
-	return &Client{cfg: cfg, states: make(map[string]time.Time)}, nil
+	o := &clientOptions{}
+	for _, opt := range opts {
+		opt(o)
+	}
+	store := o.store
+	if store == nil {
+		store = newMemoryStateStore()
+	}
+	return &Client{cfg: cfg, store: store}, nil
 }
 
 // LoginURL 发起登录：返回授权跳转地址与一次性 state（回调须原样带回）
@@ -69,10 +137,9 @@ func (c *Client) LoginURL(ctx context.Context) (string, string, error) {
 	}
 
 	state := randomState()
-	c.mu.Lock()
-	c.sweepLocked()
-	c.states[state] = time.Now().Add(stateTTL)
-	c.mu.Unlock()
+	if err := c.store.Save(ctx, state, time.Now().Add(stateTTL)); err != nil {
+		return "", "", fmt.Errorf("oidc -> save state: %w", err)
+	}
 
 	return oauth.AuthCodeURL(state), state, nil
 }
@@ -85,13 +152,11 @@ func (c *Client) Exchange(ctx context.Context, code, state string) (*User, error
 		return nil, err
 	}
 
-	c.mu.Lock()
-	exp, ok := c.states[state]
-	if ok {
-		delete(c.states, state) // 一次性
+	ok, err := c.store.Take(ctx, state)
+	if err != nil {
+		return nil, fmt.Errorf("oidc -> take state: %w", err)
 	}
-	c.mu.Unlock()
-	if !ok || time.Now().After(exp) {
+	if !ok {
 		return nil, ErrState
 	}
 
@@ -160,16 +225,6 @@ func (c *Client) ensure(ctx context.Context) (*oauth2.Config, error) {
 		Scopes:       []string{oidc.ScopeOpenID, "profile", "email", "groups"},
 	}
 	return c.oauth, nil
-}
-
-// sweepLocked 清理过期 state（调用方持锁）
-func (c *Client) sweepLocked() {
-	now := time.Now()
-	for s, exp := range c.states {
-		if now.After(exp) {
-			delete(c.states, s)
-		}
-	}
 }
 
 func randomState() string {

@@ -164,12 +164,17 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	}
 
 	// OIDC 登录客户端：未配置时 /auth/login 降级 503（本地开发走 dev-token）
+	var oidcOpts []oidc.Option
+	if sharedRedisCli != nil {
+		// state 外置 Redis（多副本登录发起与回调可落在不同副本，§4.1）
+		oidcOpts = append(oidcOpts, oidc.WithStateStore(oidc.NewRedisStateStore(sharedRedisCli)))
+	}
 	oidcClient, err := oidc.New(oidc.Config{
 		Issuer:       os.Getenv("OIDC_ISSUER"),
 		ClientID:     os.Getenv("OIDC_CLIENT_ID"),
 		ClientSecret: os.Getenv("OIDC_CLIENT_SECRET"),
 		RedirectURL:  os.Getenv("OIDC_REDIRECT_URL"),
-	})
+	}, oidcOpts...)
 	if err != nil && !errors.Is(err, oidc.ErrNotConfigured) {
 		return nil, fmt.Errorf("platform -> build oidc: %w", err)
 	}
