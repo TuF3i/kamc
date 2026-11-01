@@ -1,0 +1,53 @@
+// Package modules 平台模块的纯数据模型：gorm 模型 / DTO / 常量，不含业务逻辑，
+// 不 import 同模块其他包（叶包约定）。
+package modules
+
+import "time"
+
+// ClusterStatus 集群接入状态
+type ClusterStatus string
+
+const (
+	ClusterStatusPending ClusterStatus = "pending" // 已注册，Agent 尚未接入
+	ClusterStatusOnline  ClusterStatus = "online"  // 至少一条隧道在线
+	ClusterStatusOffline ClusterStatus = "offline" // 隧道全部离线
+)
+
+// Cluster 集群注册表：平台纳管的每个目标集群一行（Casbin dom 维度）。
+type Cluster struct {
+	ID        string        `gorm:"primaryKey;size:64" json:"id"` // 集群 ID（Casbin dom）
+	Name      string        `gorm:"size:128;not null" json:"name"`
+	Desc      string        `gorm:"size:512" json:"desc"`
+	Status    ClusterStatus `gorm:"size:16;not null;default:pending" json:"status"`
+	CreatedAt time.Time     `json:"created_at"`
+	UpdatedAt time.Time     `json:"updated_at"`
+}
+
+// CreateClusterRequest POST /api/v1/clusters 请求体
+type CreateClusterRequest struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Desc string `json:"desc"`
+}
+
+// ClusterDTO 对外输出的集群信息（未来敏感字段在此收敛，不直接出 gorm 模型）
+type ClusterDTO struct {
+	ID        string        `json:"id"`
+	Name      string        `json:"name"`
+	Desc      string        `json:"desc"`
+	Status    ClusterStatus `json:"status"`
+	CreatedAt time.Time     `json:"created_at"`
+	UpdatedAt time.Time     `json:"updated_at"`
+}
+
+// ToDTO 转对外 DTO（哈希/密钥等敏感字段一旦出现，置空必须发生在 service 层、本转换之前）
+func (c *Cluster) ToDTO() *ClusterDTO {
+	return &ClusterDTO{
+		ID:        c.ID,
+		Name:      c.Name,
+		Desc:      c.Desc,
+		Status:    c.Status,
+		CreatedAt: c.CreatedAt,
+		UpdatedAt: c.UpdatedAt,
+	}
+}

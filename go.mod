@@ -3,6 +3,7 @@ module github.com/TuF3i/kamc
 go 1.26.0
 
 require (
+	github.com/go-chi/chi/v5 v5.5.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/yamux v0.1.2
 	github.com/redis/go-redis/v9 v9.23.0
