@@ -4,6 +4,7 @@ package dao
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -42,6 +43,15 @@ func (d *Dao) Ping(ctx context.Context) error {
 		return fmt.Errorf("dao -> ping: %w", err)
 	}
 	return nil
+}
+
+// DBStats 连接池运行时统计（/api/v1/system 用）。
+func (d *Dao) DBStats() sql.DBStats {
+	sqlDB, err := d.db.DB()
+	if err != nil {
+		return sql.DBStats{}
+	}
+	return sqlDB.Stats()
 }
 
 // CreateCluster 新增集群行

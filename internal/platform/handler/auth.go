@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -10,7 +11,6 @@ import (
 
 	"github.com/TuF3i/kamc/internal/metrics"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
-	"github.com/TuF3i/kamc/internal/platform/luaauth"
 	"github.com/TuF3i/kamc/internal/platform/middleware"
 )
 
@@ -44,7 +44,7 @@ func (h *Handler) AuthCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "login failed", http.StatusUnauthorized)
 		return
 	}
-	h.issueAfterBinding(w, r, user.Sub, user.Email, user.Groups, "/auth/callback", wantsHTML(r))
+	h.issueJWT(w, r, user.Sub, user.Email, user.Groups, "/auth/callback", wantsHTML(r))
 }
 
 // AuthMe GET /auth/me —— 回显当前 JWT claims（调试与客户端自检）
@@ -73,7 +73,38 @@ func (h *Handler) AuthDevToken(w http.ResponseWriter, r *http.Request) {
 		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
 		return
 	}
-	h.issueAfterBinding(w, r, req.Sub, req.Email, req.Groups, "/auth/dev-token", false)
+	h.issueJWT(w, r, req.Sub, req.Email, req.Groups, "/auth/dev-token", false)
+}
+
+// AuthPasswordLogin POST /auth/password-login —— 内置管理员账号密码登录。
+// 默认账号 sysadmin/sysadmin123（可用 AM_PASSWORD_LOGIN_USER/PASSWORD 覆盖，
+// AM_PASSWORD_LOGIN=0 关闭）。成功后的签发/审计流程与 OIDC 一致。
+func (h *Handler) AuthPasswordLogin(w http.ResponseWriter, r *http.Request) {
+	if !h.passwordLoginEnabled || h.auth == nil {
+		http.NotFound(w, r)
+		return
+	}
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
+		return
+	}
+	username := strings.TrimSpace(req.Username)
+	if username == "" || req.Password == "" {
+		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
+		return
+	}
+	userOK := subtle.ConstantTimeCompare([]byte(username), []byte(h.passwordUser)) == 1
+	passOK := subtle.ConstantTimeCompare([]byte(req.Password), []byte(h.passwordPass)) == 1
+	if !userOK || !passOK {
+		h.auditSimple(r, username, "", "/auth/password-login", "login-failed", false)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	h.issueJWT(w, r, username, "", []string{h.adminGroup}, "/auth/password-login", false)
 }
 
 // AuthTokenExchange POST /auth/token-exchange —— OIDC ID Token 兑换平台 JWT
@@ -97,7 +128,7 @@ func (h *Handler) AuthTokenExchange(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	h.issueAfterBinding(w, r, user.Sub, user.Email, user.Groups, "/auth/token-exchange", false)
+	h.issueJWT(w, r, user.Sub, user.Email, user.Groups, "/auth/token-exchange", false)
 }
 
 // AuthRevokeUser POST /api/v1/auth/revoke —— 踢出用户（管理面）：
@@ -159,20 +190,9 @@ func wantsHTML(r *http.Request) bool {
 	return strings.Contains(r.Header.Get("Accept"), "text/html")
 }
 
-// issueAfterBinding 登录挂载点（§5 扩展，fail-closed）：
-// 执行启用的权限绑定脚本（Authentik claims → Casbin 绑定/策略），
-// 任何脚本错误拒绝签发（403 + 审计告警）——权限没算出来不放行；
-// 管理员禁用脚本即可恢复登录。脚本未启用（nil 引擎/无脚本）直接签发。
+// issueJWT 登录签发挂载点：审计登录成功并签发平台 JWT；
 // browser=true 时以桥接 HTML 输出（仅 /auth/callback 浏览器导航使用）。
-func (h *Handler) issueAfterBinding(w http.ResponseWriter, r *http.Request, sub, email string, groups []string, source string, browser bool) {
-	if h.luaAuth != nil {
-		if err := h.luaAuth.Execute(r.Context(), luaauth.ClaimsOf(sub, email, groups)); err != nil {
-			log.Printf("[platform] binding script failed for %s: %v", sub, err)
-			h.auditSimple(r, sub, "", source, "binding-script-failed", false)
-			http.Error(w, "binding script failed", http.StatusForbidden)
-			return
-		}
-	}
+func (h *Handler) issueJWT(w http.ResponseWriter, r *http.Request, sub, email string, groups []string, source string, browser bool) {
 	h.auditSimple(r, sub, "", source, "login-success", true)
 	token, exp, err := h.auth.Sign(sub, email, groups)
 	if err != nil {

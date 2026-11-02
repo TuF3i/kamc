@@ -23,8 +23,13 @@ const (
 	CodeClusterNotFound = 20001
 	CodeClusterExists   = 20002
 	CodeTokenNotFound   = 30001
+	CodeRobotExists     = 30002
+	CodeRobotNotFound   = 30003
+	CodeRobotExpired    = 30004
 	CodePolicyNotFound  = 40001
-	CodeScriptNotFound  = 40002
+	CodeRoleNotFound    = 40003
+	CodeRoleExists      = 40004
+	CodeRoleInUse       = 40005
 	CodeServerInternal  = 50000
 )
 
@@ -41,13 +46,18 @@ func (r *Response) Error() string {
 
 // 业务错误码（包级 var，禁止运行期修改）
 var (
-	OperationSuccess      = &Response{Status: CodeSuccess, Message: "success"}
-	ErrInvalidParam       = &Response{Status: CodeInvalidParam, Message: "invalid parameter"}
-	ErrClusterNotFound    = &Response{Status: CodeClusterNotFound, Message: "cluster not found"}
-	ErrClusterExists      = &Response{Status: CodeClusterExists, Message: "cluster already exists"}
-	ErrTokenNotFound      = &Response{Status: CodeTokenNotFound, Message: "token not found"}
-	ErrPolicyNotFound     = &Response{Status: CodePolicyNotFound, Message: "policy not found"}
-	ErrAuthScriptNotFound = &Response{Status: CodeScriptNotFound, Message: "auth script not found"}
+	OperationSuccess   = &Response{Status: CodeSuccess, Message: "success"}
+	ErrInvalidParam    = &Response{Status: CodeInvalidParam, Message: "invalid parameter"}
+	ErrClusterNotFound = &Response{Status: CodeClusterNotFound, Message: "cluster not found"}
+	ErrClusterExists   = &Response{Status: CodeClusterExists, Message: "cluster already exists"}
+	ErrTokenNotFound   = &Response{Status: CodeTokenNotFound, Message: "token not found"}
+	ErrRobotExists     = &Response{Status: CodeRobotExists, Message: "robot already exists"}
+	ErrRobotNotFound   = &Response{Status: CodeRobotNotFound, Message: "robot not found"}
+	ErrRobotExpired    = &Response{Status: CodeRobotExpired, Message: "robot token expired"}
+	ErrPolicyNotFound  = &Response{Status: CodePolicyNotFound, Message: "policy not found"}
+	ErrRoleNotFound    = &Response{Status: CodeRoleNotFound, Message: "role not found"}
+	ErrRoleExists      = &Response{Status: CodeRoleExists, Message: "role already exists"}
+	ErrRoleInUse       = &Response{Status: CodeRoleInUse, Message: "role is still in use"}
 )
 
 // ServerInternal 系统内部错误：携带底层 err 详情，仅 handler 出口构造

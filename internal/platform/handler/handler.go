@@ -15,7 +15,6 @@ import (
 
 	"github.com/TuF3i/kamc/internal/auth"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
-	"github.com/TuF3i/kamc/internal/platform/luaauth"
 	"github.com/TuF3i/kamc/internal/platform/modules"
 	"github.com/TuF3i/kamc/internal/platform/oidc"
 	"github.com/TuF3i/kamc/internal/platform/proxy"
@@ -26,17 +25,17 @@ import (
 
 // Deps Handler 的可空依赖（nil 即功能降级：对应端点返回 503/501）
 type Deps struct {
-	Auth         *auth.Service   // JWT 签发/校验（nil = 认证未装配）
-	OIDC         *oidc.Client    // OIDC 登录（nil = 未配置 → /auth/login 503）
-	Tunnels      *tunnel.Service // 隧道模块（nil = 未启用 → /tunnel 返回 503）
-	Proxies      *proxy.Pool     // API 代理池（nil = 未装配 → /proxy 返回 501）
-	CAData       []byte          // kubeconfig 嵌入的平台 CA（AM_KUBECONFIG_CA_FILE，可选）
-	OIDCIssuer   string          // exec 插件参数（kubeconfig 生成用）
-	OIDCClientID string          // exec 插件参数
-	RateLimiter  mw.RateLimiter  // 数据面限流器（nil 或 RateLimit<=0 不启用）
-	RateLimitN   int             // 窗口内最大请求数
-	Audit        *audit.Writer   // 审计异步写出器（nil = 不审计）
-	LuaAuth      *luaauth.Engine // 登录期权限绑定脚本引擎（nil = 不启用）
+	Auth          *auth.Service   // JWT 签发/校验（nil = 认证未装配）
+	OIDC          *oidc.Client    // OIDC 登录（nil = 未配置 → /auth/login 503）
+	Tunnels       *tunnel.Service // 隧道模块（nil = 未启用 → /tunnel 返回 503）
+	Proxies       *proxy.Pool     // API 代理池（nil = 未装配 → /proxy 返回 501）
+	CAData        []byte          // kubeconfig 嵌入的平台 CA（AM_KUBECONFIG_CA_FILE，可选）
+	OIDCIssuer    string          // exec 插件参数（kubeconfig 生成用）
+	OIDCClientID  string          // exec 插件参数
+	RateLimiter   mw.RateLimiter  // 数据面限流器（nil 或 RateLimit<=0 不启用）
+	RateLimitN    int             // 窗口内最大请求数
+	Audit         *audit.Writer   // 审计异步写出器（nil = 不审计）
+	RobotTokenTTL time.Duration   // Robot 长期 JWT 有效期（默认 365 天）
 }
 
 // Handler 平台 HTTP 处理器（业务下沉 Service；依赖可空，对应降级行为）
@@ -51,13 +50,18 @@ type Handler struct {
 	oidcIssuer   string // exec 插件参数
 	oidcClientID string // exec 插件参数
 
-	rateLimiter mw.RateLimiter // 数据面限流器（nil 或 rateLimitN<=0 不启用）
-	rateLimitN  int            // 窗口内最大请求数
-	audit       *audit.Writer
-	luaAuth     *luaauth.Engine
+	rateLimiter   mw.RateLimiter // 数据面限流器（nil 或 rateLimitN<=0 不启用）
+	rateLimitN    int            // 窗口内最大请求数
+	audit         *audit.Writer
+	robotTokenTTL time.Duration // Robot 长期 JWT 有效期
 
-	adminGroup      string // 管理面用户组（AM_ADMIN_GROUP）
-	devTokenEnabled bool   // 开发用直签 Token 开关（AM_DEV_ISSUE_TOKEN）
+	adminGroup      string    // 管理面用户组（AM_ADMIN_GROUP）
+	devTokenEnabled bool      // 开发用直签 Token 开关（AM_DEV_ISSUE_TOKEN）
+	startedAt       time.Time // Handler 装配时间（运行时长统计）
+
+	passwordLoginEnabled bool   // 内置账号密码登录开关（AM_PASSWORD_LOGIN）
+	passwordUser         string // 内置账号（AM_PASSWORD_LOGIN_USER）
+	passwordPass         string // 内置密码（AM_PASSWORD_LOGIN_PASSWORD）
 }
 
 // NewHandler 构造 Handler
@@ -66,7 +70,7 @@ func NewHandler(svc *service.Service, deps Deps) *Handler {
 		svc: svc, auth: deps.Auth, oidc: deps.OIDC, tunnels: deps.Tunnels, proxies: deps.Proxies,
 		caData: deps.CAData, oidcIssuer: deps.OIDCIssuer, oidcClientID: deps.OIDCClientID,
 		rateLimiter: deps.RateLimiter, rateLimitN: deps.RateLimitN, audit: deps.Audit,
-		luaAuth: deps.LuaAuth,
+		robotTokenTTL: deps.RobotTokenTTL, startedAt: time.Now(),
 	}
 }
 
@@ -74,6 +78,13 @@ func NewHandler(svc *service.Service, deps Deps) *Handler {
 func (h *Handler) SetPolicy(adminGroup string, devToken bool) {
 	h.adminGroup = adminGroup
 	h.devTokenEnabled = devToken
+}
+
+// SetPasswordLogin 设置内置账号密码登录（装配层调用）。
+func (h *Handler) SetPasswordLogin(user, pass string, enabled bool) {
+	h.passwordUser = user
+	h.passwordPass = pass
+	h.passwordLoginEnabled = enabled
 }
 
 // RegisterRoutes 挂载全部路由（健康检查 + /api/v1 业务 API + /tunnel + /proxy）。
@@ -93,6 +104,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/auth/callback", h.AuthCallback)
 	r.Post("/auth/token-exchange", h.AuthTokenExchange)
 	r.Post("/auth/dev-token", h.AuthDevToken)
+	r.Post("/auth/password-login", h.AuthPasswordLogin)
 	r.With(mw.RequireJWT(h.auth)).Get("/auth/me", h.AuthMe)
 	r.With(mw.RequireJWT(h.auth)).Post("/auth/logout", h.AuthLogout)
 
@@ -125,8 +137,10 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			admin.Delete("/clusters/{id}/tokens/{kind}", h.RevokeToken)
 			admin.Post("/auth/revoke", h.AuthRevokeUser)
 			admin.Get("/audit", h.ListAudit)
-			authScriptsRoutes(admin, h)
 			policiesRoutes(admin, h)
+			rolesRoutes(admin, h)
+			robotsRoutes(admin, h)
+			admin.Get("/system", h.SystemInfo)
 		})
 	})
 }

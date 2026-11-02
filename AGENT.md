@@ -13,6 +13,7 @@ v1.0 缺陷修复记录 BUG-1~8、高可用设计与故障模式分析）。
 
 Go 1.24+ / chi v5 / gorm(PostgreSQL) / go-redis v9 / gorilla/websocket / hashicorp/yamux
 golang-jwt v5 + go-oidc v3（认证） / casbin v2 + k8s.io/apiserver（RequestInfo 鉴权）
+前端：React 18 + Ant Design 5 + TypeScript + Vite（web/，见 web/README.md）
 
 ## 目录结构
 
@@ -33,9 +34,8 @@ docs/
   design.md          设计文档 v2.0（架构权威来源）
 api/
   openapi.yaml       平台 HTTP API 的 OpenAPI 3.0 规范（与代码包分离）
-internal/platform/luaauth/  登录期权限绑定脚本引擎（Lua 沙箱 + kamc 桥接）
 deploy/              部署产物（nginx/manifests/README，见其内部说明）
-web/                 管理前端（Vite+Vue3+TS+Pinia，Rancher 风格；见 web/README.md）
+web/                 管理前端（React 18 + Ant Design 5 + Vite + TypeScript；见 web/README.md）
 ```
 
 ## 架构约定（摘要）
@@ -68,6 +68,10 @@ web/                 管理前端（Vite+Vue3+TS+Pinia，Rancher 风格；见 we
 | `JWT_KEYRING_DIR` | 临时密钥 | JWT 签名密钥环目录（Secret 挂载，*.pem 文件名即 kid；未配置用临时密钥并告警） |
 | `AM_JWT_ISSUER` / `AM_JWT_AUD` | `https://kamc.local` / `kamc` | 平台 JWT iss/aud |
 | `AM_ADMIN_GROUP` | `am:admin` | 管理面用户组（JWT groups 内） |
+| `AM_PASSWORD_LOGIN` | 启用 | 内置账号密码登录开关（`0` 关闭） |
+| `AM_PASSWORD_LOGIN_USER` | `sysadmin` | 内置管理员账号（生产必须覆盖） |
+| `AM_PASSWORD_LOGIN_PASSWORD` | `sysadmin123` | 内置管理员密码（生产必须覆盖） |
+| `AM_ROBOT_TOKEN_TTL` | `8760h` | Robot 长期 JWT 有效期（Go duration，默认 365 天） |
 | `AM_DEV_ISSUE_TOKEN` | — | 开发直签 Token 开关（`/auth/dev-token`，生产勿开） |
 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_REDIRECT_URL` | — | Authentik OIDC（未配置则 /auth/login 503） |
 | `APISERVER_URL`（Agent） | in-cluster 探测 | 上游 kube-apiserver 显式覆盖（开发/测试） |
@@ -81,6 +85,7 @@ web/                 管理前端（Vite+Vue3+TS+Pinia，Rancher 风格；见 we
 | `AM_AUDIT_SPILL_FILE` | `/tmp/kamc-audit-spill.jsonl` | 审计本地暂存文件（PG 故障时） |
 | `TEST_REDIS_ADDR` | — | Redis 集成测试门控（watcher/state store/限流，仅测试用） |
 | `TEST_PG_DSN` | — | 数据库集成测试门控（仅测试用） |
+| `KAMC_API` | `http://127.0.0.1:8080` | 前端开发时 Vite 代理目标（仅 web 开发用） |
 
 ## 构建与测试
 
@@ -88,6 +93,10 @@ web/                 管理前端（Vite+Vue3+TS+Pinia，Rancher 风格；见 we
 make build   # bin/kamc-platform + bin/kamc-agent
 make test    # 全量测试
 make vet
+
+cd web && npm install
+npm run build   # tsc 严格类型检查 + vite build → web/dist/
+KAMC_API=http://127.0.0.1:8080 npm run dev
 ```
 
 ## 路线图（对应设计文档章节）
@@ -131,13 +140,15 @@ make vet
 - [x] Prometheus 指标（§12.3）：/metrics（平台侧；Agent 侧无 HTTP 端口属后续）
 - [x] 部署产物：deploy/（nginx、平台/Agent manifests、NetworkPolicy、README
       含上线前人工验收清单——真实集群演练属上线前人工项）
-- [x] 登录期权限绑定脚本（Lua，§5 扩展）：Authentik claims → 沙箱脚本 →
-      kamc 桥接计算绑定/策略（组不存在则新建）；fail-closed（脚本错误拒绝
-      登录）；管理面 CRUD + 手动执行/dry-run；沙箱白名单库 + 2s 超时
-- [x] Web 前端（web/，Rancher Dashboard 风格自绘主题）：登录（SSO 跳转 +
-      dev-token）、概览、集群/Token 管理、Casbin 权限、Lua 脚本编辑与
-      dry-run、审计、kubeconfig 下载、exec 终端（xterm + v4.channel.k8s.io
-      WS，access_token 查询参数凭证——仅 WS 升级接受，见 middleware/jwt.go）。
-      技术栈 Vite+Vue3+TS+Pinia；浏览器接入后端配合：/auth/callback 浏览器
-      导航返回桥接页（写 localStorage 后跳 SPA）。开发：KAMC_API=… npm run dev；
-      生产构建 dist/ + 同源反代（web/README.md）
+- [x] 角色与机器人（§5/§4.4 扩展）：`roles` 表显式角色 + 派生角色合并；
+      `/api/v1/roles` CRUD；`/api/v1/robots` 签发长期 Robot kubeconfig
+      （static JWT，默认 365 天，自动建立 robot → role @ cluster 绑定），
+      列表/重新下载/吊销（jti 黑名单）。Web「权限」页按角色 → 用户 → 策略组织，
+      「机器人」页管理 CICD 机器人。
+- [x] Web 前端（web/，React 18 + Ant Design 5 + TypeScript + Vite）：
+      登录（SSO + 用户名密码）、概览、集群/Token 管理、Casbin 权限、机器人、
+      审计、kubeconfig 下载、exec 终端（xterm + v5.channel.k8s.io WS，
+      access_token 查询参数凭证——仅 WS 升级接受）。浏览器接入后端配合：
+      /auth/callback 浏览器导航返回桥接页（写 localStorage['kamc_token'] 后跳
+      SPA）。开发：KAMC_API=… npm run dev；生产构建 dist/ + 同源反代
+      （web/README.md）

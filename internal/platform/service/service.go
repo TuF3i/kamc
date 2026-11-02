@@ -6,6 +6,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 
@@ -34,6 +35,11 @@ func NewService(d *dao.Dao, authz *authz.Enforcer) *Service {
 // Ping 数据库连通性（readyz）
 func (s *Service) Ping(ctx context.Context) error {
 	return s.d.Ping(ctx)
+}
+
+// DBStats 数据库连接池运行时统计（/api/v1/system 用）。
+func (s *Service) DBStats() sql.DBStats {
+	return s.d.DBStats()
 }
 
 // Release 释放持有的组件（鉴权 watcher 等；幂等）

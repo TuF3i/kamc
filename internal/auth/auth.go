@@ -162,25 +162,55 @@ func GenerateKeyPEM() ([]byte, error) {
 
 // Sign 签发平台 JWT（kid 头指向当前签名密钥），返回 token 与过期时间。
 func (s *Service) Sign(subject, email string, groups []string) (string, time.Time, error) {
+	now := s.now()
+	exp := now.Add(s.ttl)
+	signed, err := s.sign(subject, email, groups, "", now, exp)
+	return signed, exp, err
+}
+
+// SignLongLived 签发长期 JWT（Robot/CICD 用），返回 token、jti、签发与到期时间。
+// 保存 jti/iat/exp 后可用 SignWithClaims 再次生成同一身份的 kubeconfig。
+func (s *Service) SignLongLived(subject, email string, groups []string, ttl time.Duration) (
+	token, jti string, issuedAt, expiresAt time.Time, err error,
+) {
+	issuedAt = s.now()
+	expiresAt = issuedAt.Add(ttl)
+	jti = randomID()
+	token, err = s.sign(subject, email, groups, jti, issuedAt, expiresAt)
+	return token, jti, issuedAt, expiresAt, err
+}
+
+// SignWithClaims 用指定的 jti/iat/exp 重新签名（Robot kubeconfig 再次下载），
+// 不改变吊销语义：删除机器人时吊销的仍是同一个 jti。
+func (s *Service) SignWithClaims(subject, email string, groups []string, jti string, issuedAt, expiresAt time.Time) (string, error) {
+	if jti == "" || issuedAt.IsZero() || expiresAt.IsZero() {
+		return "", errors.New("auth -> sign with claims: empty claims")
+	}
+	return s.sign(subject, email, groups, jti, issuedAt, expiresAt)
+}
+
+// sign 内部签发实现：jti 为空时随机生成；调用方负责时钟与过期时间。
+func (s *Service) sign(subject, email string, groups []string, jti string, issuedAt, expiresAt time.Time) (string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	key, ok := s.keys[s.signKid]
 	if !ok {
-		return "", time.Time{}, fmt.Errorf("auth -> sign kid %q missing", s.signKid)
+		return "", fmt.Errorf("auth -> sign kid %q missing", s.signKid)
 	}
 	s.revMu.RLock()
 	userEpoch := s.userEpochs[subject]
 	s.revMu.RUnlock()
-	now := s.now()
-	exp := now.Add(s.ttl)
+	if jti == "" {
+		jti = randomID()
+	}
 	claims := &Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    s.issuer,
 			Subject:   subject,
 			Audience:  jwt.ClaimStrings{s.audience},
-			ExpiresAt: jwt.NewNumericDate(exp),
-			IssuedAt:  jwt.NewNumericDate(now),
-			ID:        randomID(),
+			ExpiresAt: jwt.NewNumericDate(expiresAt),
+			IssuedAt:  jwt.NewNumericDate(issuedAt),
+			ID:        jti,
 		},
 		Email:  email,
 		Groups: groups,
@@ -190,9 +220,9 @@ func (s *Service) Sign(subject, email string, groups []string) (string, time.Tim
 	token.Header["kid"] = s.signKid
 	signed, err := token.SignedString(key)
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("auth -> sign: %w", err)
+		return "", fmt.Errorf("auth -> sign: %w", err)
 	}
-	return signed, exp, nil
+	return signed, nil
 }
 
 // Verify 校验平台 JWT：kid 定位密钥 → RS256 验签 → iss/aud/exp 校验 →

@@ -1,0 +1,176 @@
+# kamc Web 前端
+
+kamc 管理控制台：React 18 + Ant Design 5 + TypeScript + Vite + Recharts。
+深色悬浮导航运维控制台风格，覆盖集群、Agent Token、Casbin 权限、审计、
+机器人、kubeconfig 与 exec 终端。
+
+## 快速开始
+
+```bash
+cd web
+npm install
+KAMC_API=http://127.0.0.1:8080 npm run dev
+```
+
+打开 <http://localhost:5173>：
+
+- 默认显示 **SSO 登录**。
+- 点击「使用用户名和密码」切换到内置账号登录，默认 `sysadmin / sysadmin123`
+  （`AM_PASSWORD_LOGIN_USER` / `AM_PASSWORD_LOGIN_PASSWORD` 可覆盖，
+  `AM_PASSWORD_LOGIN=0` 关闭）。
+- 开发直签登录已从界面移除；`/auth/dev-token` 端点仍保留给测试/CLI 使用。
+
+生产登录优先走 Authentik SSO：前端跳转后端 `/auth/login`，回调桥接页写入
+`localStorage['kamc_token']` 后跳回 SPA 根路径。
+
+### 开发代理
+
+平台没有 CORS，浏览器必须与 API 同源。Vite 开发代理（`vite.config.ts`）：
+
+| 路径 | 说明 |
+| --- | --- |
+| `/api` | 管理面 API |
+| `/auth` | OIDC / 用户名密码登录 / me / logout |
+| `/proxy` | 数据面，**必须开启 `ws: true`**（exec 终端） |
+| `/.well-known` | JWKS |
+| `/healthz`、`/readyz`、`/version` | 运维端点 |
+
+`KAMC_API` 只影响开发代理目标，不是前端运行时 baseURL。
+
+> OIDC 联调：`OIDC_REDIRECT_URL` 应与前端访问源一致（如
+> `http://localhost:5173/auth/callback`），否则桥接页会把 token 写到另一个源的
+> localStorage。
+
+## 页面
+
+| 路由 | 页面 | 权限 |
+| --- | --- | --- |
+| `/login` | 登录（默认 SSO，可切换用户名密码） | 公开 |
+| `/` | 概览（系统统计 + 近 7 天登录/操作/拦截折线图） | 管理员 |
+| `/clusters` | 集群列表：注册、搜索、注销（输入完整 ID 确认） | 管理员 |
+| `/clusters/:id` | 集群详情：概况 / Agent Token / 终端 / kubeconfig | 管理员 |
+| `/access` | 角色、用户绑定、角色策略、踢出用户 | 管理员 |
+| `/audit` | 审计日志查询（用户/集群/条数） | 管理员 |
+| `/robots` | CICD 机器人：签发长期 kubeconfig、下载、吊销 | 管理员 |
+| `/kubeconfig` | 独立 kubeconfig 下载页（普通用户默认落地页） | 登录 |
+| `/account` | 当前身份详细信息 | 登录 |
+
+## 权限模型与页面顺序
+
+权限页按 **角色 → 用户 → 策略** 的顺序组织：
+
+1. **角色**：显式创建受管角色（`roles` 表），或展示策略/绑定中已存在的派生角色。
+2. **用户**：把用户绑定到角色（`g, user, role, dom`）。
+3. **策略**：给角色配置资源与动词（`p, role, dom, obj, act`）。
+
+踢出用户使用下拉选择（数据来自现有用户绑定），不再手工输入 sub。
+Robot 的绑定会出现在 Casbin 中，但在用户页会被过滤，统一在机器人页管理。
+
+## Robot 长期 kubeconfig
+
+管理员可在「机器人」页签发 CICD 机器人：
+
+- 输入名称、选择集群与角色；后端自动建立 `robot:<id> → role @ cluster` 绑定。
+- 使用长期 JWT（默认 365 天，`AM_ROBOT_TOKEN_TTL` 可调）生成 static kubeconfig。
+- 列表记录名称、集群、角色、状态、到期时间；可随时重新下载同一份凭证。
+- 吊销机器人会删除记录、解除角色绑定，并把 JWT 的 jti 加入黑名单。
+
+## 认证与 API 约定
+
+- **统一信封**：业务响应为 `{status, message, data}`；`status !== 0` 即业务错误，
+  HTTP 通常仍为 200；`status >= 50000` 才是 HTTP 500。
+- **纯文本错误**：401 / 403 / 429 与 kubeconfig 400 不是 JSON，HTTP 封装按
+  `Content-Type` 分支处理。
+- **Token**：`localStorage['kamc_token']`；HTTP 请求使用
+  `Authorization: Bearer <token>`；浏览器 WebSocket 使用 `?access_token=<token>`
+  （仅 WS 升级请求有效）。
+- **密码登录**：`POST /auth/password-login`（`{username,password}`），默认
+  `sysadmin/sysadmin123`，返回与 OIDC 相同的 `IssuedCredential`。
+- **管理员判定**：`GET /api/v1/clusters` 返回 200 = 管理员，403 = 普通用户；
+  `/auth/me` 没有 `is_admin` 字段。
+- **401**：清理 token 并跳 `/login?expired=1`；403 不视为登录失效。
+- **kubeconfig**：必须带 Authorization 头 `fetch` 后以 Blob 下载，不能
+  `window.open`；文件名取 `Content-Disposition`。
+- **数据面**：`/proxy/{clusterID}/...` 返回原生 Kubernetes JSON，不是平台信封。
+- **审计**：`groups` 是逗号分隔字符串；`limit` ≤ 0 或 > 1000 会被后端强制为 100；
+  异步批量落库，查询可能有约 0.5s 延迟。
+
+## exec 终端协议
+
+- 子协议：`v5.channel.k8s.io`（当前 `k8s.io/apiserver v0.37.2` 的
+  StreamTranslator 只支持 v5；v4 会握手失败）。
+- 二进制帧首字节为通道号：`0` stdin、`1` stdout、`2` stderr、`3` error、
+  `4` resize、`255` CLOSE（v5 半关闭 stdin）。
+- resize JSON 字段必须大写：`{"Width": cols, "Height": rows}`。
+- 浏览器 WebSocket 握手固定为 GET，平台按 RequestInfo 解析出的 verb 是 `get`；
+  若 Casbin 策略只授予 `create`，浏览器 exec 会被 403。kubectl 的 WebSocket
+  executor 用 POST（`create`），两套客户端需要分别授权或由后端统一。
+- 终端依赖集群隧道在线；本地未配置 Redis 时 `/proxy` 返回
+  `501 proxy requires tunnels enabled`。
+
+## 目录结构
+
+```text
+web/src/
+  api/         http 封装与各资源 API（types.ts 为后端 JSON 字段）
+  stores/      auth（token/claims/管理员探测）
+  layouts/     AppLayout（悬浮三段式导航：Logo / 标签页选择器 / 用户面板）
+  components/  PageHeader / StatusTag / CopyButton / ExecTerminal / 路由守卫
+  pages/       Login / Dashboard / Clusters / ClusterDetail / Access /
+               Audit / Robots / Kubeconfig / Account / NotFound
+  terminal/    exec WebSocket 协议（URL、帧、子协议）
+  utils/       时间与剩余有效期格式化
+  theme.ts     Ant Design ConfigProvider 主题
+```
+
+## 构建与部署
+
+```bash
+npm run build     # tsc --noEmit + vite build → web/dist/
+npm run preview   # 本地预览 dist（无后端代理，仅静态）
+```
+
+生产必须同源部署：Nginx 托管 `dist/` 的 SPA 回退，并显式反代 API/认证/数据面。
+现有 `deploy/nginx/nginx.conf` 只反代平台、未托管静态文件，可参考以下片段整合：
+
+```nginx
+root /usr/share/nginx/html/kamc;
+location / {
+    try_files $uri $uri/ /index.html;
+}
+
+location /api/    { proxy_pass http://kamc_platform; proxy_set_header Host $host; }
+location /auth/   { proxy_pass http://kamc_platform; proxy_set_header Host $host; }
+location /.well-known/ { proxy_pass http://kamc_platform; }
+location ~ ^/(healthz|readyz|version)$ { proxy_pass http://kamc_platform; }
+
+location /proxy/ {
+    proxy_pass http://kamc_platform;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_set_header Host $host;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+    proxy_buffering off;
+    proxy_request_buffering off;
+}
+```
+
+`/tunnel` 是 Agent 专用路径，不要暴露给浏览器或落到 SPA 回退。
+
+## 已知后端行为
+
+- Robot 长期 Token 默认 365 天（`AM_ROBOT_TOKEN_TTL`）；删除机器人时吊销 jti。
+  未配置 Redis 时吊销只在当前进程生效，重启后黑名单丢失；生产应启用 Redis。
+- `/auth/callback` 浏览器分支固定跳 `/`，不支持子路径部署或回跳原页面。
+- 平台不提供静态文件服务、没有 CORS；不要尝试跨域直连。
+- 审计中允许的 exec/port-forward WebSocket 事件当前不落库（仅拒绝事件有审计）。
+- `access_token` 会随 query 转发到上游 apiserver，生产需注意日志脱敏。
+
+## 验证
+
+```bash
+npm run build          # 类型检查 + 生产构建
+go build ./... && go vet ./... && go test -count=1 ./...
+```

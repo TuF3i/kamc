@@ -30,7 +30,8 @@ info:
     | `/proxy/{clusterID}/**` | 平台 JWT（Bearer） | 数据面，Casbin 资源级鉴权 + Impersonation 注入 |
 
     平台 JWT 获取途径：OIDC 登录（/auth/login → /auth/callback）、
-    ID Token 兑换（/auth/token-exchange，exec plugin 用）。
+    ID Token 兑换（/auth/token-exchange，exec plugin 用）、
+    内置账号密码登录（/auth/password-login，默认 sysadmin/sysadmin123）。
     开发环境可经 `/auth/dev-token` 直签（AM_DEV_ISSUE_TOKEN=1，生产默认 404）。
 servers:
   - url: https://{domain}
@@ -51,16 +52,10 @@ tags:
     description: 用户 kubeconfig 生成（自服务）
   - name: 策略与绑定
     description: Casbin 策略与用户-角色绑定管理（管理面）
+  - name: 角色与机器人
+    description: 显式角色管理与 CICD 机器人长期 kubeconfig 签发（管理面）
   - name: 审计
     description: 审计事件查询（管理面）
-  - name: 绑定脚本
-    description: |
-      登录期权限绑定脚本（Lua）：每次登录/Token 兑换时按 name 排序执行，
-      脚本经 kamc.* 桥接计算该用户的 Casbin 绑定/策略（按 Authentik 组绑定
-      角色，组不存在则新建）。fail-closed：脚本错误拒绝登录。
-      沙箱：白名单库（table/string/math），无 os/io/load；单脚本超时 2s。
-      桥接清单：list_clusters / cluster_exists / list_bindings / add_binding /
-      remove_binding / has_policy / add_policy / remove_policy / list_policies
   - name: 数据面
     description: kubectl 请求代理（JWT + Casbin + Impersonation）
   - name: Agent
@@ -222,6 +217,39 @@ paths:
                     properties:
                       data: {$ref: '#/components/schemas/IssuedCredential'}
         '404': {description: 未开启开发开关}
+
+  /auth/password-login:
+    post:
+      tags: [认证]
+      summary: 内置管理员账号密码登录
+      description: |
+        默认账号 sysadmin/sysadmin123，可用 AM_PASSWORD_LOGIN_USER /
+        AM_PASSWORD_LOGIN_PASSWORD 覆盖，AM_PASSWORD_LOGIN=0 关闭。
+        成功后签发管理员平台 JWT。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: {type: string, example: sysadmin}
+                password: {type: string, example: sysadmin123}
+      responses:
+        '200':
+          description: 平台 JWT
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/IssuedCredential'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '404': {description: 密码登录未启用（AM_PASSWORD_LOGIN=0）}
 
   /auth/me:
     get:
@@ -513,144 +541,6 @@ paths:
         '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
         '403': {$ref: '#/components/responses/PlainTextForbidden'}
 
-  /api/v1/auth-scripts:
-    get:
-      tags: [绑定脚本]
-      summary: 脚本列表
-      security:
-        - platformJWT: []
-      parameters:
-        - {name: all, in: query, schema: {type: string, enum: ["1"]}, description: 传 1 时含禁用脚本}
-      responses:
-        '200':
-          description: 脚本列表（按 name 排序 = 执行顺序）
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/Envelope'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items: {$ref: '#/components/schemas/AuthScript'}
-        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
-        '403': {$ref: '#/components/responses/PlainTextForbidden'}
-
-  /api/v1/auth-scripts/{name}:
-    get:
-      tags: [绑定脚本]
-      summary: 脚本详情
-      security:
-        - platformJWT: []
-      parameters:
-        - $ref: '#/components/parameters/ScriptName'
-      responses:
-        '200':
-          description: 脚本内容
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/Envelope'
-                  - type: object
-                    properties:
-                      data: {$ref: '#/components/schemas/AuthScript'}
-        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
-        '403': {$ref: '#/components/responses/PlainTextForbidden'}
-    put:
-      tags: [绑定脚本]
-      summary: 保存脚本（upsert）
-      description: 保存前做 Lua 语法编译校验，语法错误不落库（50000，message 携带编译信息）。
-      security:
-        - platformJWT: []
-      parameters:
-        - $ref: '#/components/parameters/ScriptName'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [content]
-              properties:
-                content: {type: string, description: Lua 源码}
-                enabled: {type: boolean, default: true}
-      responses:
-        '200':
-          description: 已保存
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/Envelope'
-                  - type: object
-                    properties:
-                      data: {$ref: '#/components/schemas/AuthScript'}
-        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
-        '403': {$ref: '#/components/responses/PlainTextForbidden'}
-    delete:
-      tags: [绑定脚本]
-      summary: 删除脚本
-      security:
-        - platformJWT: []
-      parameters:
-        - $ref: '#/components/parameters/ScriptName'
-      responses:
-        '200':
-          description: 已删除（40002=不存在）
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/Envelope'}
-        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
-        '403': {$ref: '#/components/responses/PlainTextForbidden'}
-
-  /api/v1/auth-scripts/{name}/execute:
-    post:
-      tags: [绑定脚本]
-      summary: 手动执行（dry-run 验证闭环）
-      description: |
-        body 可注入 mock claims（缺省用调用者身份）。`?dry_run=1` 时桥接
-        只记录动作不落地，返回动作清单；执行失败返回 50000 + 错误详情
-        （与登录 fail-closed 同源）。
-      security:
-        - platformJWT: []
-      parameters:
-        - $ref: '#/components/parameters/ScriptName'
-        - {name: dry_run, in: query, schema: {type: string, enum: ["1"]}}
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                sub: {type: string, description: mock 身份（缺省调用者）}
-                email: {type: string}
-                groups: {type: array, items: {type: string}}
-      responses:
-        '200':
-          description: 执行结果（dry-run 含动作清单）
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/Envelope'
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        properties:
-                          dry_run: {type: boolean}
-                          actions:
-                            type: array
-                            items:
-                              type: object
-                              properties:
-                                api: {type: string}
-                                args: {type: array, items: {type: string}}
-        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
-        '403': {$ref: '#/components/responses/PlainTextForbidden'}
-
   /api/v1/audit:
     get:
       tags: [审计]
@@ -915,6 +805,186 @@ paths:
         '401': {description: Token 无效/过期/集群不匹配（防枚举，不区分原因）}
         '503': {description: 隧道模块未启用}
 
+  /api/v1/roles:
+    get:
+      tags: [角色与机器人]
+      summary: 角色列表
+      description: roles 表显式角色与策略/绑定中出现的派生角色合并；含策略数/绑定数。
+      security:
+        - platformJWT: []
+      responses:
+        '200':
+          description: 角色列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: {$ref: '#/components/schemas/Role'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+    post:
+      tags: [角色与机器人]
+      summary: 创建角色
+      security:
+        - platformJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateRoleRequest'}
+      responses:
+        '200':
+          description: 已创建（40004=已存在）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/Role'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+
+  /api/v1/roles/{name}:
+    delete:
+      tags: [角色与机器人]
+      summary: 删除角色
+      description: 仍被策略或用户绑定引用时返回 40005；派生角色未在 roles 表创建时返回 40003。
+      security:
+        - platformJWT: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: {type: string, maxLength: 256}
+      responses:
+        '200':
+          description: 已删除（40003=不存在，40005=仍在使用）
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Envelope'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+
+  /api/v1/robots:
+    get:
+      tags: [角色与机器人]
+      summary: 机器人列表
+      description: 不含 Token 明文；status 按到期时间计算（active/expired）。
+      security:
+        - platformJWT: []
+      responses:
+        '200':
+          description: 机器人列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: {$ref: '#/components/schemas/Robot'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+    post:
+      tags: [角色与机器人]
+      summary: 签发机器人长期 kubeconfig
+      description: |
+        自动建立 `robot:<id> → role @ cluster` 绑定，使用长期 JWT（默认 365 天，
+        `AM_ROBOT_TOKEN_TTL`）生成 static kubeconfig。响应中的 kubeconfig 为 YAML 字符串，
+        后续可通过下载接口重新生成同一 jti 的凭证。
+      security:
+        - platformJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateRobotRequest'}
+      responses:
+        '200':
+          description: 机器人 + kubeconfig
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/RobotKubeconfigResponse'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+
+  /api/v1/robots/{id}:
+    delete:
+      tags: [角色与机器人]
+      summary: 吊销机器人
+      description: 删除记录、解除角色绑定，并将该机器人 JWT 的 jti 加入黑名单。
+      security:
+        - platformJWT: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: 已吊销（30003=不存在）
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Envelope'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+
+  /api/v1/robots/{id}/kubeconfig:
+    get:
+      tags: [角色与机器人]
+      summary: 下载机器人 kubeconfig
+      security:
+        - platformJWT: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: kubeconfig YAML
+          content:
+            application/yaml:
+              schema: {type: string}
+        '400': {description: 机器人不存在/已过期/集群不存在（纯文本）}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+
+  /api/v1/system:
+    get:
+      tags: [运维]
+      summary: 平台进程运行时信息
+      description: Go runtime、内存、goroutine 与 DB 连接池统计（管理面）。
+      security:
+        - platformJWT: []
+      responses:
+        '200':
+          description: 运行时信息
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/SystemInfo'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+
 components:
   securitySchemes:
     platformJWT:
@@ -932,12 +1002,6 @@ components:
       description: 注册 Token（am-reg- 前缀，1h 有效，一次性）
 
   parameters:
-    ScriptName:
-      name: name
-      in: path
-      required: true
-      schema: {type: string, maxLength: 128}
-      description: 脚本名（执行顺序按名称排序）
     ClusterID:
       name: id
       in: path
@@ -1071,14 +1135,67 @@ components:
         source_ip: {type: string}
         latency_ms: {type: integer}
 
-    AuthScript:
+    SystemInfo:
       type: object
       properties:
-        name: {type: string, maxLength: 128}
-        content: {type: string, description: Lua 源码}
-        enabled: {type: boolean}
+        go_version: {type: string, example: go1.27.2}
+        goroutines: {type: integer}
+        num_cpu: {type: integer}
+        heap_alloc_bytes: {type: integer, format: int64}
+        heap_sys_bytes: {type: integer, format: int64}
+        sys_bytes: {type: integer, format: int64}
+        total_alloc_bytes: {type: integer, format: int64}
+        num_gc: {type: integer}
+        uptime_seconds: {type: integer, format: int64}
+        db_open_connections: {type: integer}
+        db_in_use: {type: integer}
+        db_idle: {type: integer}
+        db_wait_count: {type: integer, format: int64}
+        db_max_open_connections: {type: integer}
+
+    Role:
+      type: object
+      properties:
+        name: {type: string, example: 'role:developer'}
+        desc: {type: string}
+        policy_count: {type: integer}
+        binding_count: {type: integer}
+        managed: {type: boolean, description: 是否在 roles 表显式创建}
+        created_at: {type: string, format: date-time, nullable: true}
+
+    CreateRoleRequest:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string, maxLength: 256, example: 'role:developer'}
+        desc: {type: string, maxLength: 512}
+
+    Robot:
+      type: object
+      properties:
+        id: {type: string, example: robot-1a2b3c4d5e6f7a8b}
+        name: {type: string, example: ci-deployer}
+        cluster_id: {type: string, example: prod-bj}
+        sub: {type: string, example: 'robot:robot-1a2b3c4d5e6f7a8b'}
+        role: {type: string, example: 'role:developer'}
+        status: {type: string, enum: [active, expired]}
+        issued_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
         created_at: {type: string, format: date-time}
-        updated_at: {type: string, format: date-time}
+
+    CreateRobotRequest:
+      type: object
+      required: [name, cluster_id, role]
+      properties:
+        name: {type: string, maxLength: 128, example: ci-deployer}
+        cluster_id: {type: string, example: prod-bj}
+        role: {type: string, example: 'role:developer'}
+
+    RobotKubeconfigResponse:
+      type: object
+      properties:
+        robot: {$ref: '#/components/schemas/Robot'}
+        kubeconfig: {type: string, description: kubeconfig YAML（static 长期 Token）}
 
     Claims:
       type: object
