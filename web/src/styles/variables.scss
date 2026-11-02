@@ -1,0 +1,47 @@
+// Rancher Dashboard 风格调色板（自绘，非拷贝资产）
+// 顶栏/侧栏深蓝灰，内容区浅灰底白卡片，品牌蓝为主操作色
+
+// 布局
+$header-h: 52px;
+$nav-w: 232px;
+$nav-w-collapsed: 56px;
+
+// 色板
+$header-bg: #1a222d;
+$nav-bg: #222b37;
+$nav-fg: #a3b1bf;
+$nav-fg-active: #ffffff;
+$nav-active-bg: rgba(64, 141, 217, 0.22);
+$brand: #2b7dc9;
+$brand-hover: #256cb0;
+$content-bg: #f4f6f9;
+$card-bg: #ffffff;
+$border: #dde4ec;
+$input-border: #c3cddb;
+$text: #2a3441;
+$text-muted: #76838f;
+
+// 语义色
+$success: #2e9e5b;
+$warning: #d08700;
+$error: #d44a32;
+$info: $brand;
+
+$radius: 4px;
+$shadow: 0 1px 2px rgba(16, 28, 41, 0.08);
+
+// 状态色映射（StatusBadge 用，键与 class 名一致）
+$status-colors: (
+  online: $success,
+  active: $success,
+  enabled: $success,
+  allowed: $success,
+  success: $success,
+  offline: #8a97a3,
+  pending: $warning,
+  rotating: $warning,
+  warning: $warning,
+  denied: $error,
+  error: $error,
+  info: $info,
+);
