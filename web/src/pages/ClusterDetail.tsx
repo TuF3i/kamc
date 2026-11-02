@@ -11,6 +11,7 @@ import {
   Modal,
   Radio,
   Result,
+  Skeleton,
   Space,
   Spin,
   Table,
@@ -21,24 +22,54 @@ import {
 import {
   ArrowLeftOutlined,
   CloudDownloadOutlined,
+  CodeOutlined,
   KeyOutlined,
   ReloadOutlined,
 } from '@ant-design/icons';
 import {
+  createAgentInstallPreview,
   downloadKubeconfig,
   getCluster,
+  getClusterInfo,
   issueToken,
   listTokens,
   revokeToken,
 } from '@/api/clusters';
-import type { Cluster, IssuedToken, TokenDTO, TokenKind } from '@/api/types';
+import type {
+  AgentInstallPreview,
+  Cluster,
+  ClusterVersionInfo,
+  IssuedToken,
+  TokenDTO,
+  TokenKind,
+} from '@/api/types';
 import { PageHeader } from '@/components/PageHeader';
 import { ClusterStatusTag, TokenKindTag, TokenStatusTag } from '@/components/StatusTag';
 import { CopyButton } from '@/components/CopyButton';
-import { ExecTerminal } from '@/components/ExecTerminal';
 import { fmtTime } from '@/utils/format';
 
 function OverviewTab({ cluster }: { cluster: Cluster }) {
+  const [info, setInfo] = useState<ClusterVersionInfo | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadInfo = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setInfo(await getClusterInfo(cluster.id));
+    } catch (err) {
+      setInfo(null);
+      setError(err instanceof Error ? err.message : '读取集群信息失败');
+    } finally {
+      setLoading(false);
+    }
+  }, [cluster.id]);
+
+  useEffect(() => {
+    void loadInfo();
+  }, [loadInfo]);
+
   return (
     <div className="tab-stack">
       <Card title="集群信息" className="soft-card">
@@ -56,18 +87,44 @@ function OverviewTab({ cluster }: { cluster: Cluster }) {
         </Descriptions>
       </Card>
 
-      <Card title="接入说明" className="soft-card">
-        <Typography.Paragraph>
-          Agent 使用注册 Token 调用 <code className="mono">POST /api/v1/agent/register</code>{' '}
-          一次性换取长期 Token，随后通过 <code className="mono">/tunnel</code> WebSocket 建立反向隧道上线。
-        </Typography.Paragraph>
-        <Typography.Paragraph>
-          数据面请求由平台经隧道转发，并在转发前完成 Casbin 鉴权与身份注入；Agent 只负责字节转发，
-          不做权限判断。
-        </Typography.Paragraph>
-        <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          部署清单见仓库 <code className="mono">deploy/</code> 目录。
-        </Typography.Paragraph>
+      <Card
+        title="集群详细信息"
+        className="soft-card"
+        extra={
+          <Button icon={<ReloadOutlined />} size="small" loading={loading} onClick={() => void loadInfo()}>
+            刷新
+          </Button>
+        }
+      >
+        {loading ? (
+          <Skeleton active paragraph={{ rows: 4 }} />
+        ) : error || !info ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="无法读取 apiserver 信息"
+            description="集群未接入或 Agent 隧道离线；接入 Agent 后即可从 api-server 读取版本等详细信息。"
+          />
+        ) : (
+          <Descriptions column={{ xs: 1, md: 2 }} size="middle">
+            <Descriptions.Item label="Kubernetes 版本">
+              <code className="mono strong">{info.git_version || '—'}</code>
+            </Descriptions.Item>
+            <Descriptions.Item label="主次版本">
+              {info.major}.{info.minor}
+            </Descriptions.Item>
+            <Descriptions.Item label="编译提交">
+              <code className="mono">{info.git_commit || '—'}</code>
+            </Descriptions.Item>
+            <Descriptions.Item label="构建时间">{info.build_date || '—'}</Descriptions.Item>
+            <Descriptions.Item label="apiserver Go 版本">
+              <code className="mono">{info.go_version || '—'}</code>
+            </Descriptions.Item>
+            <Descriptions.Item label="运行平台">{info.platform || '—'}</Descriptions.Item>
+            <Descriptions.Item label="编译器">{info.compiler || '—'}</Descriptions.Item>
+            <Descriptions.Item label="采集时间">{fmtTime(info.fetched_at)}</Descriptions.Item>
+          </Descriptions>
+        )}
       </Card>
     </div>
   );
@@ -319,8 +376,8 @@ function KubeconfigTab({ clusterId }: { clusterId: string }) {
     <div className="tab-stack">
       <Card title="kubeconfig 下载" className="soft-card">
         <Typography.Paragraph>
-          kubeconfig 只承载当前登录用户身份；数据面权限仍由平台 Casbin 在每次请求时判定。
-          server 指向 <code className="mono">/proxy/{clusterId}</code>。
+          下载后通过 <code className="mono">kubectl --kubeconfig kubeconfig-{clusterId}.yaml</code>{' '}
+          直接访问目标集群；凭证只承载当前登录用户身份，数据面权限仍由平台策略实时判定。
         </Typography.Paragraph>
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
           <Radio.Group value={mode} onChange={(e) => setMode(e.target.value as 'exec' | 'static')}>
@@ -342,13 +399,99 @@ function KubeconfigTab({ clusterId }: { clusterId: string }) {
           </Button>
         </Space>
       </Card>
+    </div>
+  );
+}
 
-      <Card title="使用方式" className="soft-card">
-        <pre className="code-block">{`kubectl --kubeconfig ./kubeconfig-${clusterId}.yaml get pods -n dev`}</pre>
-        <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          exec 模式的凭证缓存于 <code className="mono">~/.config/kamc/login-cache.json</code>；
-          static 模式在 JWT 过期后需重新下载。
+function AgentInstallTab({ clusterId }: { clusterId: string }) {
+  const { message, modal } = App.useApp();
+  const [preview, setPreview] = useState<AgentInstallPreview | null>(null);
+  const [generating, setGenerating] = useState(false);
+
+  const generate = () => {
+    modal.confirm({
+      title: '生成一键安装命令？',
+      content:
+        '将签发/轮换该集群的长期 Agent Token（旧 Token 进入 24 小时宽限期），并生成包含 Token 的安装清单。明文 Token 仅此一次展示。',
+      okText: '生成',
+      cancelText: '取消',
+      onOk: async () => {
+        setGenerating(true);
+        try {
+          const issued = await issueToken(clusterId, 'longterm');
+          const result = await createAgentInstallPreview(clusterId, issued.token);
+          setPreview(result);
+          message.success('安装命令已生成');
+        } catch (err) {
+          message.error(err instanceof Error ? err.message : '生成安装命令失败');
+        } finally {
+          setGenerating(false);
+        }
+      },
+    });
+  };
+
+  return (
+    <div className="tab-stack">
+      <Card title="一键安装 Agent" className="soft-card">
+        <Typography.Paragraph>
+          在目标集群执行下面的命令即可完成 Agent 部署（Namespace + RBAC + 双副本 Deployment，
+          Token 经 Secret 挂载）。Agent 通过反向隧道上线后，集群接入状态变为「在线」。
         </Typography.Paragraph>
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
+          镜像仓库由平台启动配置 <code className="mono">AM_AGENT_IMAGE_REPO</code>{' '}
+          决定（未设置默认走 Docker Hub），tag 与平台版本一致。
+        </Typography.Paragraph>
+
+        {preview ? (
+          <div className="agent-install">
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="安装命令内含 Agent Token，等同集群接入凭证，请勿外泄"
+              description="kubectl 会从平台拉取安装清单；清单中的 Token 已写入目标集群 Secret，可在 Agent Token 页签吊销。"
+            />
+            <Descriptions column={1} size="middle" style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="Agent 镜像">
+                <code className="mono strong">{preview.image}</code>
+              </Descriptions.Item>
+              <Descriptions.Item label="隧道入口">
+                <code className="mono">{preview.tunnel_url}</code>
+              </Descriptions.Item>
+            </Descriptions>
+            <Typography.Paragraph strong style={{ marginBottom: 8 }}>
+              安装命令（在目标集群执行）
+            </Typography.Paragraph>
+            <div className="token-block">
+              <pre className="code-block" style={{ marginBottom: 8 }}>{preview.apply_command}</pre>
+              <CopyButton text={preview.apply_command} label="复制安装命令" type="primary" />
+            </div>
+            <Typography.Paragraph strong style={{ margin: '16px 0 8px' }}>
+              安装清单预览
+            </Typography.Paragraph>
+            <div className="token-block">
+              <pre className="code-block" style={{ maxHeight: 360, overflow: 'auto', marginBottom: 8 }}>{preview.yaml}</pre>
+              <CopyButton text={preview.yaml} label="复制 YAML" />
+            </div>
+            <Button
+              style={{ marginTop: 16 }}
+              loading={generating}
+              onClick={generate}
+            >
+              重新生成（轮换 Token）
+            </Button>
+          </div>
+        ) : (
+          <Empty
+            description="尚未生成本集群的安装命令"
+            style={{ padding: '16px 0' }}
+          >
+            <Button type="primary" icon={<CodeOutlined />} loading={generating} onClick={generate}>
+              生成安装命令
+            </Button>
+          </Empty>
+        )}
       </Card>
     </div>
   );
@@ -441,9 +584,9 @@ export function ClusterDetail() {
             children: <TokensTab clusterId={cluster.id} />,
           },
           {
-            key: 'terminal',
-            label: '终端',
-            children: <ExecTerminal clusterId={cluster.id} />,
+            key: 'agent-install',
+            label: 'Agent 安装',
+            children: <AgentInstallTab clusterId={cluster.id} />,
           },
           {
             key: 'kubeconfig',

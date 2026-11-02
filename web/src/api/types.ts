@@ -136,6 +136,68 @@ export interface VersionInfo {
   component: string;
 }
 
+/** 目标集群 kube-apiserver /version（经 Agent 隧道读取） */
+export interface ClusterVersionInfo {
+  major: string;
+  minor: string;
+  git_version: string;
+  git_commit: string;
+  build_date: string;
+  go_version: string;
+  compiler: string;
+  platform: string;
+  fetched_at: string;
+}
+
+/** Agent 一键安装预览（YAML 亦可经 /agent-install.yaml?token= 被 kubectl 拉取） */
+export interface AgentInstallPreview {
+  cluster_id: string;
+  image: string;
+  tunnel_url: string;
+  apply_command: string;
+  yaml: string;
+}
+
+/** 平台信息页（/api/v1/platform/info，敏感值已在后端脱敏） */
+export interface PlatformInfo {
+  version: { version: string; commit: string; component: string };
+  settings: {
+    listen_addr: string;
+    external_url: string;
+    admin_group: string;
+    password_login: boolean;
+    password_user: string;
+    robot_token_ttl: number;
+    agent_image: string;
+  };
+  sso: { enabled: boolean; issuer: string; client_id: string; redirect_url: string };
+  database: {
+    dsn: string;
+    open_connections: number;
+    in_use: number;
+    idle: number;
+    max_open_connections: number;
+    wait_count: number;
+  };
+  cache: { enabled: boolean; addrs: string; db: number };
+  authentik: {
+    configured: boolean;
+    api_url?: string;
+    user_sub_field?: string;
+    cache_ttl_seconds?: number;
+  };
+  runtime: {
+    go_version: string;
+    goroutines: number;
+    num_cpu: number;
+    heap_alloc_bytes: number;
+    sys_bytes: number;
+    total_alloc_bytes: number;
+    num_gc: number;
+    uptime_seconds: number;
+  };
+}
+
 export type RobotStatus = 'active' | 'expired';
 
 export interface Robot {

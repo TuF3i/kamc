@@ -27,19 +27,22 @@ import (
 
 // Deps Handler 的可空依赖（nil 即功能降级：对应端点返回 503/501）
 type Deps struct {
-	Auth          *auth.Service     // JWT 签发/校验（nil = 认证未装配）
-	OIDC          *oidc.Client      // OIDC 登录（nil = 未配置 → /auth/login 503）
-	Tunnels       *tunnel.Service   // 隧道模块（nil = 未启用 → /tunnel 返回 503）
-	Proxies       *proxy.Pool       // API 代理池（nil = 未装配 → /proxy 返回 501）
-	CAData        []byte            // kubeconfig 嵌入的平台 CA（AM_KUBECONFIG_CA_FILE，可选）
-	OIDCIssuer    string            // exec 插件参数（kubeconfig 生成用）
-	OIDCClientID  string            // exec 插件参数
-	RateLimiter   mw.RateLimiter    // 数据面限流器（nil 或 RateLimit<=0 不启用）
-	RateLimitN    int               // 窗口内最大请求数
-	Audit         *audit.Writer     // 审计异步写出器（nil = 不审计）
-	RobotTokenTTL time.Duration     // Robot 长期 JWT 有效期（默认 365 天）
-	Directory     *directory.Client // Authentik 用户/组织目录（nil = 未配置）
-	Catalog       *catalog.Service  // 集群 GVR 资源目录（nil = 未装配）
+	Auth            *auth.Service     // JWT 签发/校验（nil = 认证未装配）
+	OIDC            *oidc.Client      // OIDC 登录（nil = 未配置 → /auth/login 503）
+	Tunnels         *tunnel.Service   // 隧道模块（nil = 未启用 → /tunnel 返回 503）
+	Proxies         *proxy.Pool       // API 代理池（nil = 未装配 → /proxy 返回 501）
+	CAData          []byte            // kubeconfig 嵌入的平台 CA（AM_KUBECONFIG_CA_FILE，可选）
+	OIDCIssuer      string            // exec 插件参数（kubeconfig 生成用）
+	OIDCClientID    string            // exec 插件参数
+	OIDCRedirectURL string            // OIDC 回调地址（平台信息页展示）
+	RateLimiter     mw.RateLimiter    // 数据面限流器（nil 或 RateLimit<=0 不启用）
+	RateLimitN      int               // 窗口内最大请求数
+	Audit           *audit.Writer     // 审计异步写出器（nil = 不审计）
+	RobotTokenTTL   time.Duration     // Robot 长期 JWT 有效期（默认 365 天）
+	Directory       *directory.Client // Authentik 用户/组织目录（nil = 未配置）
+	Catalog         *catalog.Service  // 集群 GVR 资源目录（nil = 未装配）
+	AgentImageRepo  string            // Agent 镜像仓库完整地址（不含 tag，AM_AGENT_IMAGE_REPO）
+	Settings        Settings          // 平台静态配置快照（平台信息页展示，敏感值已在装配层脱敏）
 }
 
 // Handler 平台 HTTP 处理器（业务下沉 Service；依赖可空，对应降级行为）
@@ -54,13 +57,16 @@ type Handler struct {
 	oidcIssuer   string // exec 插件参数
 	oidcClientID string // exec 插件参数
 
-	rateLimiter   mw.RateLimiter // 数据面限流器（nil 或 rateLimitN<=0 不启用）
-	rateLimitN    int            // 窗口内最大请求数
-	audit         *audit.Writer
-	robotTokenTTL time.Duration     // Robot 长期 JWT 有效期
-	directory     *directory.Client // Authentik 用户/组织目录
-	catalog       *catalog.Service  // 集群 GVR 资源目录
+	rateLimiter    mw.RateLimiter // 数据面限流器（nil 或 rateLimitN<=0 不启用）
+	rateLimitN     int            // 窗口内最大请求数
+	audit          *audit.Writer
+	robotTokenTTL  time.Duration     // Robot 长期 JWT 有效期
+	directory      *directory.Client // Authentik 用户/组织目录
+	catalog        *catalog.Service  // 集群 GVR 资源目录
+	agentImageRepo string            // Agent 镜像仓库完整地址（不含 tag）
 
+	settings        Settings  // 平台静态配置快照（平台信息页）
+	oidcRedirectURL string    // OIDC 回调地址（平台信息页展示）
 	adminGroup      string    // 管理面用户组（AM_ADMIN_GROUP）
 	devTokenEnabled bool      // 开发用直签 Token 开关（AM_DEV_ISSUE_TOKEN）
 	startedAt       time.Time // Handler 装配时间（运行时长统计）
@@ -75,8 +81,10 @@ func NewHandler(svc *service.Service, deps Deps) *Handler {
 	return &Handler{
 		svc: svc, auth: deps.Auth, oidc: deps.OIDC, tunnels: deps.Tunnels, proxies: deps.Proxies,
 		caData: deps.CAData, oidcIssuer: deps.OIDCIssuer, oidcClientID: deps.OIDCClientID,
-		rateLimiter: deps.RateLimiter, rateLimitN: deps.RateLimitN, audit: deps.Audit,
-		robotTokenTTL: deps.RobotTokenTTL, directory: deps.Directory, catalog: deps.Catalog, startedAt: time.Now(),
+		oidcRedirectURL: deps.OIDCRedirectURL,
+		rateLimiter:     deps.RateLimiter, rateLimitN: deps.RateLimitN, audit: deps.Audit,
+		robotTokenTTL: deps.RobotTokenTTL, directory: deps.Directory, catalog: deps.Catalog,
+		agentImageRepo: deps.AgentImageRepo, settings: deps.Settings, startedAt: time.Now(),
 	}
 }
 
@@ -100,8 +108,9 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/healthz", h.Healthz) // 存活：不碰任何依赖
 	r.Get("/readyz", h.Readyz)   // 就绪：数据库连通（下线摘流依据）
 	r.Get("/version", h.Version)
-	r.Get("/metrics", promhttp.Handler().ServeHTTP) // 平台指标（集群内网约定，鉴权属部署层）
-	r.Get("/tunnel", h.TunnelWS)                    // Agent 隧道入口（WS 升级 + Token 认证）
+	r.Get("/metrics", promhttp.Handler().ServeHTTP)          // 平台指标（集群内网约定，鉴权属部署层）
+	r.Get("/tunnel", h.TunnelWS)                             // Agent 隧道入口（WS 升级 + Token 认证）
+	r.Get("/agent-install.yaml", h.AgentInstallYAMLForFetch) // Agent 一键安装清单（Token 即凭证）
 	r.Get("/.well-known/jwks.json", h.JWKS)
 
 	// 认证流程：login/callback 匿名（OIDC 流程自身防 CSRF）；me 需 JWT；
@@ -146,8 +155,10 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			policiesRoutes(admin, h)
 			directoryRoutes(admin, h)
 			clusterResourcesRoutes(admin, h)
+			clusterInfoRoutes(admin, h)
 			robotsRoutes(admin, h)
 			admin.Get("/system", h.SystemInfo)
+			admin.Get("/platform/info", h.PlatformInfo)
 		})
 	})
 }

@@ -511,6 +511,82 @@ paths:
           description: 参数非法 / 集群不存在（纯文本）
         '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
 
+  /api/v1/clusters/{id}/info:
+    get:
+      tags: [集群]
+      summary: 集群 apiserver 版本信息
+      description: 经 Agent 隧道读取目标集群 kube-apiserver /version（集群详情「集群详细信息」卡片）。集群未接入时返回 20003。
+      security:
+        - platformJWT: []
+      parameters:
+        - $ref: '#/components/parameters/ClusterID'
+      responses:
+        '200':
+          description: 版本信息
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/ClusterVersionInfo'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+
+  /api/v1/clusters/{id}/agent-install:
+    post:
+      tags: [集群]
+      summary: 生成 Agent 一键安装预览
+      description: |
+        用刚签发的长期 Agent Token 生成一键安装清单预览（kubectl 命令 + YAML）。
+        明文 Token 仅在签发响应中出现且平台只存哈希，预览必须在签发窗口内发起；
+        Token 归属集群即安装目标。
+      security:
+        - platformJWT: []
+      parameters:
+        - $ref: '#/components/parameters/ClusterID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AgentInstallPreviewRequest'}
+      responses:
+        '200':
+          description: 安装预览
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/AgentInstallPreview'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+
+  /agent-install.yaml:
+    get:
+      tags: [集群]
+      summary: 拉取 Agent 一键安装清单（kubectl apply 用）
+      description: |
+        kubectl apply -f 的拉取端点：Agent 长期 Token 即拉取凭证（与清单内嵌
+        Token 同源，持有即授权），不入 JWT 保护组。Token 无效返回 401 纯文本。
+      security: []
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: 安装清单 YAML
+          content:
+            application/yaml:
+              schema: {type: string}
+        '401':
+          description: Token 无效（纯文本）
+
   /api/v1/auth/revoke:
     post:
       tags: [认证]
@@ -944,6 +1020,29 @@ paths:
         '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
         '403': {$ref: '#/components/responses/PlainTextForbidden'}
 
+  /api/v1/platform/info:
+    get:
+      tags: [运维]
+      summary: 平台信息页数据
+      description: |
+        平台设置 / SSO 接入 / 数据库 / 缓存 / Authentik API / Go 运行时的配置
+        快照与聚合指标（管理面）。密钥与明文密码不出现在响应中（DSN 已脱敏）。
+      security:
+        - platformJWT: []
+      responses:
+        '200':
+          description: 平台信息
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/PlatformInfo'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+
 components:
   securitySchemes:
     platformJWT:
@@ -1140,6 +1239,98 @@ components:
         db_idle: {type: integer}
         db_wait_count: {type: integer, format: int64}
         db_max_open_connections: {type: integer}
+
+    ClusterVersionInfo:
+      type: object
+      properties:
+        major: {type: string, example: '1'}
+        minor: {type: string, example: '31'}
+        git_version: {type: string, example: v1.31.4}
+        git_commit: {type: string}
+        build_date: {type: string}
+        go_version: {type: string, example: go1.22.8}
+        compiler: {type: string, example: gc}
+        platform: {type: string, example: linux/amd64}
+        fetched_at: {type: string, format: date-time}
+
+    AgentInstallPreviewRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          description: 刚签发的长期 Agent Token 明文（平台只存哈希）
+
+    AgentInstallPreview:
+      type: object
+      properties:
+        cluster_id: {type: string}
+        image: {type: string, example: 'registry.example.com/kamc/k8s-am-agent:v1.0.0'}
+        tunnel_url: {type: string, example: 'wss://kamc.example.com/tunnel'}
+        apply_command:
+          type: string
+          description: kubectl apply -f 命令（URL 内含 Agent Token）
+        yaml: {type: string, description: 完整安装清单 YAML}
+
+    PlatformInfo:
+      type: object
+      properties:
+        version:
+          type: object
+          properties:
+            version: {type: string}
+            commit: {type: string}
+            component: {type: string}
+        settings:
+          type: object
+          properties:
+            listen_addr: {type: string}
+            external_url: {type: string}
+            admin_group: {type: string}
+            password_login: {type: boolean}
+            password_user: {type: string}
+            robot_token_ttl: {type: integer, format: int64, description: 秒}
+            agent_image: {type: string}
+        sso:
+          type: object
+          properties:
+            enabled: {type: boolean}
+            issuer: {type: string}
+            client_id: {type: string}
+            redirect_url: {type: string}
+        database:
+          type: object
+          properties:
+            dsn: {type: string, description: 已脱敏连接串（password=***）}
+            open_connections: {type: integer}
+            in_use: {type: integer}
+            idle: {type: integer}
+            max_open_connections: {type: integer}
+            wait_count: {type: integer, format: int64}
+        cache:
+          type: object
+          properties:
+            enabled: {type: boolean}
+            addrs: {type: string}
+            db: {type: integer}
+        authentik:
+          type: object
+          properties:
+            configured: {type: boolean}
+            api_url: {type: string}
+            user_sub_field: {type: string}
+            cache_ttl_seconds: {type: integer, format: int64}
+        runtime:
+          type: object
+          properties:
+            go_version: {type: string}
+            goroutines: {type: integer}
+            num_cpu: {type: integer}
+            heap_alloc_bytes: {type: integer, format: int64}
+            sys_bytes: {type: integer, format: int64}
+            total_alloc_bytes: {type: integer, format: int64}
+            num_gc: {type: integer}
+            uptime_seconds: {type: integer, format: int64}
 
     DirectoryOption:
       type: object

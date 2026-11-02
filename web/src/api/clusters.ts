@@ -1,5 +1,13 @@
 import { apiDelete, apiGet, apiPost, downloadFile } from './http';
-import type { Cluster, IssuedToken, TokenDTO, TokenKind, VersionInfo } from './types';
+import type {
+  AgentInstallPreview,
+  Cluster,
+  ClusterVersionInfo,
+  IssuedToken,
+  TokenDTO,
+  TokenKind,
+  VersionInfo,
+} from './types';
 
 export function listClusters(): Promise<Cluster[]> {
   return apiGet<Cluster[]>('/api/v1/clusters');
@@ -21,6 +29,25 @@ export function createCluster(input: CreateClusterInput): Promise<Cluster> {
 
 export function deleteCluster(id: string): Promise<void> {
   return apiDelete<void>(`/api/v1/clusters/${encodeURIComponent(id)}`);
+}
+
+/** 目标集群 kube-apiserver 版本信息（经 Agent 隧道；集群离线时返回 20003）。 */
+export function getClusterInfo(id: string): Promise<ClusterVersionInfo> {
+  return apiGet<ClusterVersionInfo>(`/api/v1/clusters/${encodeURIComponent(id)}/info`);
+}
+
+/**
+ * Agent 一键安装预览：token 必须是刚签发的长期 Token 明文
+ * （平台只存哈希，签发窗口之外无法再次生成）。
+ */
+export function createAgentInstallPreview(
+  clusterId: string,
+  token: string,
+): Promise<AgentInstallPreview> {
+  return apiPost<AgentInstallPreview>(
+    `/api/v1/clusters/${encodeURIComponent(clusterId)}/agent-install`,
+    { token },
+  );
 }
 
 export function listTokens(clusterId: string): Promise<TokenDTO[]> {

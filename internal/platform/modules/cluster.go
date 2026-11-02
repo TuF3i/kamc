@@ -51,3 +51,31 @@ func (c *Cluster) ToDTO() *ClusterDTO {
 		UpdatedAt: c.UpdatedAt,
 	}
 }
+
+// ClusterVersionInfo 目标集群 kube-apiserver /version 信息（经 Agent 隧道读取）
+type ClusterVersionInfo struct {
+	Major      string    `json:"major"`
+	Minor      string    `json:"minor"`
+	GitVersion string    `json:"git_version"`
+	GitCommit  string    `json:"git_commit"`
+	BuildDate  string    `json:"build_date"`
+	GoVersion  string    `json:"go_version"`
+	Compiler   string    `json:"compiler"`
+	Platform   string    `json:"platform"`
+	FetchedAt  time.Time `json:"fetched_at"`
+}
+
+// AgentInstallPreview Agent 一键安装预览：YAML 亦可经 /agent-install.yaml?token=
+// 被 kubectl 直接拉取（Token 即拉取凭证，与清单内嵌的 Agent Token 同源）
+type AgentInstallPreview struct {
+	ClusterID    string `json:"cluster_id"`
+	Image        string `json:"image"`
+	TunnelURL    string `json:"tunnel_url"`
+	ApplyCommand string `json:"apply_command"`
+	YAML         string `json:"yaml"`
+}
+
+// AgentInstallPreviewRequest POST /api/v1/clusters/{id}/agent-install 请求体
+type AgentInstallPreviewRequest struct {
+	Token string `json:"token"`
+}

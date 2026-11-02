@@ -7,6 +7,7 @@ import {
   DashboardOutlined,
   DownOutlined,
   FileSearchOutlined,
+  InfoCircleOutlined,
   LogoutOutlined,
   RobotOutlined,
   SafetyCertificateOutlined,
@@ -27,6 +28,7 @@ const ADMIN_NAV: NavItem[] = [
   { key: '/robots', label: '机器人', icon: <RobotOutlined /> },
   { key: '/audit', label: '审计日志', icon: <FileSearchOutlined /> },
   { key: '/kubeconfig', label: 'Kubeconfig', icon: <CloudDownloadOutlined /> },
+  { key: '/platform', label: '平台信息', icon: <InfoCircleOutlined /> },
   { key: '/account', label: '个人中心', icon: <UserOutlined /> },
 ];
 
@@ -41,6 +43,7 @@ function activeKey(pathname: string): string {
   if (pathname.startsWith('/audit')) return '/audit';
   if (pathname.startsWith('/robots')) return '/robots';
   if (pathname.startsWith('/kubeconfig')) return '/kubeconfig';
+  if (pathname.startsWith('/platform')) return '/platform';
   if (pathname.startsWith('/account')) return '/account';
   return '/';
 }

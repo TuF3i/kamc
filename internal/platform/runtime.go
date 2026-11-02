@@ -17,7 +17,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -229,20 +231,51 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		log.Printf("[platform] Authentik directory not configured (AUTHENTIK_API_URL/AUTHENTIK_API_TOKEN)")
 	}
 
+	// Agent 镜像仓库：完整地址（不含 tag，tag 随平台版本）；默认走 Docker Hub
+	agentImageRepo := envDefault("AM_AGENT_IMAGE_REPO", "tuf3i/k8s-am-agent")
+
+	// 平台信息页配置快照：敏感值（数据库密码）在此脱敏后注入
+	redisAddrs := os.Getenv("REDIS_ADDRESSES")
+	if redisAddrs == "" {
+		redisAddrs = os.Getenv("REDIS_ADDR")
+	}
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		dsn = postgres.DefaultDSN
+	}
+	platSettings := handler.Settings{
+		ListenAddr:        o.addr,
+		ExternalURL:       os.Getenv("AM_EXTERNAL_URL"),
+		DSN:               redactDSN(dsn),
+		RedisEnabled:      sharedRedisCli != nil,
+		RedisAddrs:        redisAddrs,
+		AgentImageRepo:    agentImageRepo,
+		AuthentikAPIURL:   os.Getenv("AUTHENTIK_API_URL"),
+		AuthentikSubField: envDefault("AUTHENTIK_USER_SUB_FIELD", "uid"),
+	}
+	if ttl, err := time.ParseDuration(os.Getenv("AUTHENTIK_CACHE_TTL")); err == nil && ttl > 0 {
+		platSettings.AuthentikCacheTTL = ttl
+	} else {
+		platSettings.AuthentikCacheTTL = 60 * time.Second
+	}
+
 	h := handler.NewHandler(svc, handler.Deps{
-		Auth:          authSvc,
-		OIDC:          oidcClient,
-		Tunnels:       tunnelsService(o.tunnels),
-		Proxies:       proxies,
-		CAData:        caData,
-		OIDCIssuer:    os.Getenv("OIDC_ISSUER"),
-		OIDCClientID:  os.Getenv("OIDC_CLIENT_ID"),
-		RateLimiter:   limiter,
-		RateLimitN:    rateLimitN,
-		Audit:         auditWriter,
-		RobotTokenTTL: envDuration("AM_ROBOT_TOKEN_TTL", 365*24*time.Hour),
-		Directory:     directoryClient,
-		Catalog:       catalogSvc,
+		Auth:            authSvc,
+		OIDC:            oidcClient,
+		Tunnels:         tunnelsService(o.tunnels),
+		Proxies:         proxies,
+		CAData:          caData,
+		OIDCIssuer:      os.Getenv("OIDC_ISSUER"),
+		OIDCClientID:    os.Getenv("OIDC_CLIENT_ID"),
+		OIDCRedirectURL: os.Getenv("OIDC_REDIRECT_URL"),
+		RateLimiter:     limiter,
+		RateLimitN:      rateLimitN,
+		Audit:           auditWriter,
+		RobotTokenTTL:   envDuration("AM_ROBOT_TOKEN_TTL", 365*24*time.Hour),
+		Directory:       directoryClient,
+		Catalog:         catalogSvc,
+		AgentImageRepo:  agentImageRepo,
+		Settings:        platSettings,
 	})
 	h.SetPolicy(envDefault("AM_ADMIN_GROUP", "am:admin"), os.Getenv("AM_DEV_ISSUE_TOKEN") == "1")
 	passwordUser := envDefault("AM_PASSWORD_LOGIN_USER", "sysadmin")
@@ -382,6 +415,26 @@ func envDuration(key string, def time.Duration) time.Duration {
 		return def
 	}
 	return d
+}
+
+// redactDSN 数据库连接串脱敏：kw 形式（password=xxx）与 URL 形式
+// （postgres://user:pass@host/db）统一把密码段替换为 ***。
+func redactDSN(dsn string) string {
+	if dsn == "" {
+		return ""
+	}
+	if strings.Contains(dsn, "://") {
+		slash := strings.Index(dsn, "//")
+		at := strings.Index(dsn, "@")
+		if slash >= 0 && at > slash+2 {
+			auth := dsn[slash+2 : at]
+			if colon := strings.Index(auth, ":"); colon >= 0 {
+				return dsn[:slash+2+colon+1] + "***" + dsn[at:]
+			}
+		}
+		return dsn
+	}
+	return regexp.MustCompile(`(password=)[^\s]*`).ReplaceAllString(dsn, "${1}***")
 }
 
 // buildAuthService 构造 JWT 服务：JWT_KEYRING_DIR（Secret 挂载，多 kid）优先，

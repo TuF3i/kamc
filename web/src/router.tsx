@@ -16,6 +16,7 @@ const Kubeconfig = lazy(() =>
   import('@/pages/Kubeconfig').then((m) => ({ default: m.Kubeconfig })),
 );
 const Robots = lazy(() => import('@/pages/Robots').then((m) => ({ default: m.Robots })));
+const Platform = lazy(() => import('@/pages/Platform').then((m) => ({ default: m.Platform })));
 const NotFound = lazy(() => import('@/pages/NotFound').then((m) => ({ default: m.NotFound })));
 
 function page(node: ReactNode): ReactNode {
@@ -74,6 +75,14 @@ export const router = createBrowserRouter([
         ),
       },
       { path: 'kubeconfig', element: page(<Kubeconfig />) },
+      {
+        path: 'platform',
+        element: page(
+          <RequireAdmin>
+            <Platform />
+          </RequireAdmin>,
+        ),
+      },
       { path: 'account', element: page(<Account />) },
       { path: '*', element: page(<NotFound />) },
     ],

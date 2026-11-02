@@ -4,8 +4,10 @@ package catalog
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -99,6 +101,68 @@ func (s *Service) List(ctx context.Context, clusterID string, refresh bool) (*Ca
 	s.cache[clusterID] = cacheEntry{catalog: catalog, expires: time.Now().Add(5 * time.Minute)}
 	s.mu.Unlock()
 	return catalog, nil
+}
+
+// ServerVersion 读取目标集群 kube-apiserver 的 /version（经 Agent 隧道，
+// 集群详情「集群详细信息」卡片展示用）。不缓存——版本低频读取且需反映实时可达性。
+func (s *Service) ServerVersion(ctx context.Context, clusterID string) (*modules.ClusterVersionInfo, *errcode.Response) {
+	clusterID = strings.TrimSpace(clusterID)
+	if clusterID == "" {
+		return nil, errcode.ErrInvalidParam
+	}
+	if _, rsp := s.clusters.GetCluster(ctx, clusterID); rsp != nil {
+		return nil, rsp
+	}
+	if s.pool == nil {
+		return nil, errcode.ErrClusterUnreachable
+	}
+	transport, err := s.pool.Transport(clusterID)
+	if err != nil {
+		return nil, errcode.ErrClusterUnreachable
+	}
+	base := s.pool.Location(clusterID)
+	if base == nil {
+		return nil, errcode.ErrClusterUnreachable
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base.JoinPath("version").String(), nil)
+	if err != nil {
+		return nil, errcode.ServerInternal(fmt.Errorf("catalog -> version request: %w", err))
+	}
+	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, errcode.ErrClusterUnreachable
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, errcode.ErrClusterUnreachable
+	}
+
+	var raw struct {
+		Major      string `json:"major"`
+		Minor      string `json:"minor"`
+		GitVersion string `json:"gitVersion"`
+		GitCommit  string `json:"gitCommit"`
+		BuildDate  string `json:"buildDate"`
+		GoVersion  string `json:"goVersion"`
+		Compiler   string `json:"compiler"`
+		Platform   string `json:"platform"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, errcode.ServerInternal(fmt.Errorf("catalog -> decode version: %w", err))
+	}
+	return &modules.ClusterVersionInfo{
+		Major:      raw.Major,
+		Minor:      raw.Minor,
+		GitVersion: raw.GitVersion,
+		GitCommit:  raw.GitCommit,
+		BuildDate:  raw.BuildDate,
+		GoVersion:  raw.GoVersion,
+		Compiler:   raw.Compiler,
+		Platform:   raw.Platform,
+		FetchedAt:  time.Now(),
+	}, nil
 }
 
 func (s *Service) discover(ctx context.Context, clusterID string) (*Catalog, *errcode.Response) {

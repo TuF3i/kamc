@@ -2,7 +2,7 @@
 
 kamc 管理控制台：React 18 + Ant Design 5 + TypeScript + Vite + Recharts。
 深色悬浮导航运维控制台风格，覆盖集群、Agent Token、Casbin 权限、审计、
-机器人、kubeconfig 与 exec 终端。
+机器人、kubeconfig 与平台信息页。
 
 ## 快速开始
 
@@ -31,7 +31,7 @@ KAMC_API=http://127.0.0.1:8080 npm run dev
 | --- | --- |
 | `/api` | 管理面 API |
 | `/auth` | OIDC / 用户名密码登录 / me / logout |
-| `/proxy` | 数据面，**必须开启 `ws: true`**（exec 终端） |
+| `/proxy` | 数据面（保留 `ws: true` 以透传 WebSocket，如 kubectl exec） |
 | `/.well-known` | JWKS |
 | `/healthz`、`/readyz`、`/version` | 运维端点 |
 
@@ -48,7 +48,8 @@ KAMC_API=http://127.0.0.1:8080 npm run dev
 | `/login` | 登录（默认 SSO，可切换用户名密码） | 公开 |
 | `/` | 概览（系统统计 + 近 7 天登录/操作/拦截折线图） | 管理员 |
 | `/clusters` | 集群列表：注册、搜索、注销（输入完整 ID 确认） | 管理员 |
-| `/clusters/:id` | 集群详情：概况 / Agent Token / 终端 / kubeconfig | 管理员 |
+| `/clusters/:id` | 集群详情：概况 / Agent Token / Agent 安装 / kubeconfig | 管理员 |
+| `/platform` | 平台信息：设置 / SSO / 数据库 / 缓存 / Authentik / Go 运行时 | 管理员 |
 | `/access` | 权限策略列表与四段式策略编辑器 | 管理员 |
 | `/audit` | 审计日志查询（用户/集群/条数） | 管理员 |
 | `/robots` | CICD 机器人：签发长期 kubeconfig、配置策略、下载、吊销 | 管理员 |
@@ -111,19 +112,6 @@ Robot 不再绑定角色。创建机器人只填名称与集群，之后：
 - **审计**：`groups` 是逗号分隔字符串；`limit` ≤ 0 或 > 1000 会被后端强制为 100；
   异步批量落库，查询可能有约 0.5s 延迟。
 
-## exec 终端协议
-
-- 子协议：`v5.channel.k8s.io`（当前 `k8s.io/apiserver v0.37.2` 的
-  StreamTranslator 只支持 v5；v4 会握手失败）。
-- 二进制帧首字节为通道号：`0` stdin、`1` stdout、`2` stderr、`3` error、
-  `4` resize、`255` CLOSE（v5 半关闭 stdin）。
-- resize JSON 字段必须大写：`{"Width": cols, "Height": rows}`。
-- 浏览器 WebSocket 握手固定为 GET，平台按 RequestInfo 解析出的 verb 是 `get`；
-  若 Casbin 策略只授予 `create`，浏览器 exec 会被 403。kubectl 的 WebSocket
-  executor 用 POST（`create`），两套客户端需要分别授权或由后端统一。
-- 终端依赖集群隧道在线；本地未配置 Redis 时 `/proxy` 返回
-  `501 proxy requires tunnels enabled`。
-
 ## 目录结构
 
 ```text
@@ -131,10 +119,9 @@ web/src/
   api/         http 封装与各资源 API（types.ts 为后端 JSON 字段）
   stores/      auth（token/claims/管理员探测）
   layouts/     AppLayout（悬浮三段式导航：Logo / 标签页选择器 / 用户面板）
-  components/  PageHeader / StatusTag / CopyButton / ExecTerminal / PolicyEditor / 路由守卫
+  components/  PageHeader / StatusTag / CopyButton / PolicyEditor / 路由守卫
   pages/       Login / Dashboard / Clusters / ClusterDetail / Access /
-               Audit / Robots / Kubeconfig / Account / NotFound
-  terminal/    exec WebSocket 协议（URL、帧、子协议）
+               Audit / Robots / Kubeconfig / Platform / Account / NotFound
   utils/       时间与剩余有效期格式化
   theme.ts     Ant Design ConfigProvider 主题
 ```

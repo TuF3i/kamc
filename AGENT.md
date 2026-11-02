@@ -87,6 +87,7 @@ web/                 管理前端（React 18 + Ant Design 5 + Vite + TypeScript�
 | `PLATFORM_INSECURE`（Agent） | — | 跳过平台证书校验（开发环境自签） |
 | `AM_RATE_LIMIT` | 0（不限） | 数据面每用户每分钟最大请求数（Redis 共享窗口） |
 | `AM_AUDIT_SPILL_FILE` | `/tmp/kamc-audit-spill.jsonl` | 审计本地暂存文件（PG 故障时） |
+| `AM_AGENT_IMAGE_REPO` | `tuf3i/k8s-am-agent` | Agent 镜像仓库完整地址（不含 tag；tag 随平台版本，一键安装清单用） |
 | `TEST_REDIS_ADDR` | — | Redis 集成测试门控（watcher/state store/限流，仅测试用） |
 | `TEST_PG_DSN` | — | 数据库集成测试门控（仅测试用） |
 | `KAMC_API` | `http://127.0.0.1:8080` | 前端开发时 Vite 代理目标（仅 web 开发用） |
