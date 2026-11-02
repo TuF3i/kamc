@@ -971,6 +971,125 @@ body {
   row-gap: 10px;
 }
 
+/* ---------- 策略编辑器 ---------- */
+
+.policy-builder {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.policy-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--kamc-border-soft);
+}
+
+.policy-section:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.policy-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--kamc-heading);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.policy-step {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(76, 154, 255, 0.14);
+  color: #7cb3ff;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.policy-subject-select,
+.policy-cluster-select {
+  max-width: 420px;
+}
+
+.policy-rule-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.policy-rule-row {
+  display: grid;
+  grid-template-columns: 26px minmax(180px, 1fr) minmax(160px, 0.8fr) minmax(220px, 1.3fr) 32px;
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--kamc-border-soft);
+  border-radius: 10px;
+  background: var(--kamc-bg-soft);
+}
+
+.policy-rule-index {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 5px;
+  border-radius: 50%;
+  background: rgba(76, 154, 255, 0.12);
+  color: #7cb3ff;
+  font-size: 12px;
+}
+
+.policy-rule-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.policy-rule-label {
+  color: var(--kamc-muted);
+  font-size: 12px;
+}
+
+.policy-preview {
+  margin: 0;
+  padding: 12px 14px;
+  overflow: auto;
+  white-space: pre-wrap;
+  border: 1px solid var(--kamc-border-soft);
+  border-radius: 8px;
+  background: #07111d;
+  color: #cfe0f2;
+  font-family: var(--kamc-mono);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.policy-drawer-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.policy-drawer .ant-drawer-body,
+.policy-drawer .ant-drawer-header,
+.policy-drawer .ant-drawer-footer {
+  background: var(--kamc-bg-elev);
+}
+
+.policy-drawer .ant-drawer-header,
+.policy-drawer .ant-drawer-footer {
+  border-color: var(--kamc-border-soft);
+}
+
 /* ---------- Kubeconfig 独立页 ---------- */
 
 .kubeconfig-page {
@@ -1280,6 +1399,14 @@ body {
 
   .mode-cards {
     grid-template-columns: 1fr;
+  }
+
+  .policy-rule-row {
+    grid-template-columns: 1fr;
+  }
+
+  .policy-rule-index {
+    display: none;
   }
 
   .terminal-host {

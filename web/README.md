@@ -49,31 +49,47 @@ KAMC_API=http://127.0.0.1:8080 npm run dev
 | `/` | 概览（系统统计 + 近 7 天登录/操作/拦截折线图） | 管理员 |
 | `/clusters` | 集群列表：注册、搜索、注销（输入完整 ID 确认） | 管理员 |
 | `/clusters/:id` | 集群详情：概况 / Agent Token / 终端 / kubeconfig | 管理员 |
-| `/access` | 角色、用户绑定、角色策略、踢出用户 | 管理员 |
+| `/access` | 权限策略列表与四段式策略编辑器 | 管理员 |
 | `/audit` | 审计日志查询（用户/集群/条数） | 管理员 |
-| `/robots` | CICD 机器人：签发长期 kubeconfig、下载、吊销 | 管理员 |
+| `/robots` | CICD 机器人：签发长期 kubeconfig、配置策略、下载、吊销 | 管理员 |
 | `/kubeconfig` | 独立 kubeconfig 下载页（普通用户默认落地页） | 登录 |
 | `/account` | 当前身份详细信息 | 登录 |
 
-## 权限模型与页面顺序
+## 权限模型与策略编辑器
 
-权限页按 **角色 → 用户 → 策略** 的顺序组织：
+权限页只保留策略，不再有用户/角色/绑定 Tab。策略主体直接是：
 
-1. **角色**：显式创建受管角色（`roles` 表），或展示策略/绑定中已存在的派生角色。
-2. **用户**：把用户绑定到角色（`g, user, role, dom`）。
-3. **策略**：给角色配置资源与动词（`p, role, dom, obj, act`）。
+- **组织**：Authentik Group，存为 `org:<group name>`；
+- **用户**：Authentik User，存为 `user:<subject>`（Robot 也是 `user:robot:<id>`）。
 
-踢出用户使用下拉选择（数据来自现有用户绑定），不再手工输入 sub。
-Robot 的绑定会出现在 Casbin 中，但在用户页会被过滤，统一在机器人页管理。
+创建策略的 Drawer 从上到下四段：
 
-## Robot 长期 kubeconfig
+1. **主体**：用户/组织单选；组织与用户来自 Authentik API，用户下拉额外合并本平台 Robot。
+2. **集群**：单选；选择后调用 `GET /api/v1/clusters/{id}/resources` 加载 GVR、动词和 namespace。
+3. **资源与动作**：可添加多条；每条选择资源（可含 subresource）、namespace（`*` 或具体值）和多选动作；资源 `*` 自动授予全部动作 `*`。
+4. **通配与预览**：展示最终展开的 `p, sub, dom, obj, act` 行。
 
-管理员可在「机器人」页签发 CICD 机器人：
+后端展开规则：namespace `*` 生成 `*/resource` 并补充 `cluster/resource` 覆盖全命名空间 list；cluster-scoped 资源生成 `cluster/resource`；具体 namespace 生成 `<ns>/resource`。
 
-- 输入名称、选择集群与角色；后端自动建立 `robot:<id> → role @ cluster` 绑定。
-- 使用长期 JWT（默认 365 天，`AM_ROBOT_TOKEN_TTL` 可调）生成 static kubeconfig。
-- 列表记录名称、集群、角色、状态、到期时间；可随时重新下载同一份凭证。
-- 吊销机器人会删除记录、解除角色绑定，并把 JWT 的 jti 加入黑名单。
+## Authentik 目录
+
+策略页的组织/用户下拉由平台后端代理 Authentik API：
+
+- `AUTHENTIK_API_URL`（为空时从 `OIDC_ISSUER` origin 推导）
+- `AUTHENTIK_API_TOKEN`（必填，读取 core users/groups）
+- `AUTHENTIK_USER_SUB_FIELD`（默认 `uid`，可选 `username`/`pk`）
+- `AUTHENTIK_CACHE_TTL`（默认 `60s`）
+
+未配置 Token 时目录接口返回 503，编辑器会显示配置错误。
+
+## Robot 权限
+
+Robot 不再绑定角色。创建机器人只填名称与集群，之后：
+
+- 在权限页为 `user:robot:<id>` 创建策略；或
+- 在机器人列表点击「配置策略」，自动跳转权限页并预填机器人主体。
+
+删除机器人会吊销 JWT、清理该主体的全部直接策略并删除记录。
 
 ## 认证与 API 约定
 
@@ -115,7 +131,7 @@ web/src/
   api/         http 封装与各资源 API（types.ts 为后端 JSON 字段）
   stores/      auth（token/claims/管理员探测）
   layouts/     AppLayout（悬浮三段式导航：Logo / 标签页选择器 / 用户面板）
-  components/  PageHeader / StatusTag / CopyButton / ExecTerminal / 路由守卫
+  components/  PageHeader / StatusTag / CopyButton / ExecTerminal / PolicyEditor / 路由守卫
   pages/       Login / Dashboard / Clusters / ClusterDetail / Access /
                Audit / Robots / Kubeconfig / Account / NotFound
   terminal/    exec WebSocket 协议（URL、帧、子协议）
@@ -161,7 +177,8 @@ location /proxy/ {
 
 ## 已知后端行为
 
-- Robot 长期 Token 默认 365 天（`AM_ROBOT_TOKEN_TTL`）；删除机器人时吊销 jti。
+- 权限模型迁移需执行 `deploy/migrations/2026-11-02-policy-reset.sql`（清空旧策略、删除 roles/auth_scripts、移除 robots.role）。
+- Robot 长期 Token 默认 365 天（`AM_ROBOT_TOKEN_TTL`）；删除机器人时吊销 jti 并清理其策略。
   未配置 Redis 时吊销只在当前进程生效，重启后黑名单丢失；生产应启用 Redis。
 - `/auth/callback` 浏览器分支固定跳 `/`，不支持子路径部署或回跳原页面。
 - 平台不提供静态文件服务、没有 CORS；不要尝试跨域直连。

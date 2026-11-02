@@ -103,8 +103,9 @@ func TestWatcherCrossReplica(t *testing.T) {
 
 	marker := randomSuffix()
 	channel := "am:casbin:test-" + marker
-	sub := "role:w-" + marker
+	sub := "user:w-" + marker
 	dom := "cluster-w-" + marker
+	user := "w-" + marker
 
 	enA, err := New(d, WithSyncChannel(redisCli, channel))
 	if err != nil {
@@ -117,18 +118,15 @@ func TestWatcherCrossReplica(t *testing.T) {
 	}
 	defer enB.Release()
 
-	// A 加绑定 + 策略 → 本地即时生效 → 广播后 B 可见
-	if added, err := enA.AddBinding("u", sub, dom); err != nil || !added {
-		t.Fatalf("A add binding: added=%v err=%v", added, err)
-	}
+	// A 加直接用户策略 → 本地即时生效 → 广播后 B 可见
 	if added, err := enA.AddPolicy(sub, dom, "dev/*", "get"); err != nil || !added {
 		t.Fatalf("A add policy: added=%v err=%v", added, err)
 	}
-	if ok, _ := enA.Enforce("u", dom, "dev/pods", "get"); !ok {
+	if ok, _ := enA.Enforce(user, nil, dom, "dev/pods", "get"); !ok {
 		t.Fatal("A should enforce immediately")
 	}
 	waitFor(t, 3*time.Second, func() bool {
-		ok, _ := enB.Enforce("u", dom, "dev/pods", "get")
+		ok, _ := enB.Enforce(user, nil, dom, "dev/pods", "get")
 		return ok
 	}, "B should see A's policy after broadcast")
 
@@ -137,7 +135,7 @@ func TestWatcherCrossReplica(t *testing.T) {
 		t.Fatalf("A remove policy: %v", err)
 	}
 	waitFor(t, 3*time.Second, func() bool {
-		ok, _ := enB.Enforce("u", dom, "dev/pods", "get")
+		ok, _ := enB.Enforce(user, nil, dom, "dev/pods", "get")
 		return !ok
 	}, "B should drop the removed policy after broadcast")
 }

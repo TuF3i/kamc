@@ -29,14 +29,7 @@ func TestMetricsEndpoint(t *testing.T) {
 		map[string]string{"id": clusterID, "name": "metrics"}, tok); ar.Status != errcode.CodeSuccess {
 		t.Fatalf("create cluster: %+v", ar)
 	}
-	if _, ar := call(t, rt, http.MethodPost, "/api/v1/policies",
-		map[string]string{"sub": "role:m", "dom": clusterID, "obj": "*", "act": ".*"}, tok); ar.Status != errcode.CodeSuccess {
-		t.Fatalf("policy: %+v", ar)
-	}
-	if _, ar := call(t, rt, http.MethodPost, "/api/v1/bindings",
-		map[string]string{"user": "admin-test", "role": "role:m", "dom": clusterID}, tok); ar.Status != errcode.CodeSuccess {
-		t.Fatalf("binding: %+v", ar)
-	}
+	seedUserPolicy(t, rt, tok, "admin-test", clusterID)
 	if resp := callRaw(t, rt, http.MethodGet, "/proxy/"+clusterID+"/api/v1/pods", tok); resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("seed allow request: want 503, got %d", resp.StatusCode)
 	}

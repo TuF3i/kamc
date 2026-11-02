@@ -112,7 +112,23 @@ func setupTunnelPlatform(t *testing.T, _ string) (*tunnel.Runtime, *platform.Run
 	return trt, rt, httptest.NewServer(rt.Engine())
 }
 
-// seedClusterAndPolicies 建集群 + 签发长期 Token + 管理员角色种子。
+// seedUserPolicy 给指定用户主体创建一条 cluster 全资源/全动作策略。
+func seedUserPolicy(t *testing.T, rt *platform.Runtime, token, subject, clusterID string) {
+	t.Helper()
+	_, ar := call(t, rt, http.MethodPost, "/api/v1/policies", map[string]any{
+		"subject_type": "user",
+		"subject":      subject,
+		"cluster":      clusterID,
+		"rules": []map[string]any{
+			{"namespace": "", "resource": "*", "namespaced": false, "verbs": []string{"*"}},
+		},
+	}, token)
+	if ar.Status != errcode.CodeSuccess {
+		t.Fatalf("seed policy for %s: %+v", subject, ar)
+	}
+}
+
+// seedClusterAndPolicies 建集群 + 签发长期 Token + 管理员直接策略种子。
 // 返回 (管理员 JWT, 长期 Token 明文供 Agent 接入)。
 func seedClusterAndPolicies(t *testing.T, rt *platform.Runtime, _ *httptest.Server, clusterID string) (string, string) {
 	t.Helper()
@@ -135,16 +151,7 @@ func seedClusterAndPolicies(t *testing.T, rt *platform.Runtime, _ *httptest.Serv
 		t.Fatalf("decode issued: %v", err)
 	}
 
-	_, ar = call(t, rt, "POST", "/api/v1/policies",
-		map[string]string{"sub": "role:cluster-admin", "dom": clusterID, "obj": "*", "act": ".*"}, tok)
-	if ar.Status != errcode.CodeSuccess {
-		t.Fatalf("seed policy: %+v", ar)
-	}
-	_, ar = call(t, rt, "POST", "/api/v1/bindings",
-		map[string]string{"user": "admin-test", "role": "role:cluster-admin", "dom": clusterID}, tok)
-	if ar.Status != errcode.CodeSuccess {
-		t.Fatalf("seed binding: %+v", ar)
-	}
+	seedUserPolicy(t, rt, tok, "admin-test", clusterID)
 	return tok, issued.Token
 }
 

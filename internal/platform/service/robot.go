@@ -53,36 +53,21 @@ func (s *Service) GetRobotModel(ctx context.Context, id string) (*modules.Robot,
 	return r, nil
 }
 
-// CreateRobot 创建机器人并自动建立 user(robot sub) → role @ cluster 绑定。
-// Token 的 JTI/签发/到期时间由 handler 先生成后传入；本方法只做持久化与绑定。
+// CreateRobot 创建机器人身份；权限由管理员通过 user:<robot sub> 策略单独授予。
+// Token 的 JTI/签发/到期时间由 handler 先生成后传入。
 func (s *Service) CreateRobot(ctx context.Context, r *modules.Robot) (*modules.RobotDTO, *errcode.Response) {
 	if r == nil {
 		return nil, errcode.ErrInvalidParam
 	}
 	r.Name = strings.TrimSpace(r.Name)
 	r.ClusterID = strings.TrimSpace(r.ClusterID)
-	r.Role = strings.TrimSpace(r.Role)
 	r.Sub = strings.TrimSpace(r.Sub)
-	if r.Name == "" || len(r.Name) > maxRobotNameLen || r.ClusterID == "" || r.Role == "" ||
+	if r.Name == "" || len(r.Name) > maxRobotNameLen || r.ClusterID == "" ||
 		r.Sub == "" || r.JTI == "" || r.ExpiresAt.IsZero() {
 		return nil, errcode.ErrInvalidParam
 	}
 	if _, rsp := s.getCluster(ctx, r.ClusterID); rsp != nil {
 		return nil, rsp
-	}
-	roles, rsp := s.ListRoles(ctx)
-	if rsp != nil {
-		return nil, rsp
-	}
-	roleFound := false
-	for _, role := range roles {
-		if role.Name == r.Role {
-			roleFound = true
-			break
-		}
-	}
-	if !roleFound {
-		return nil, errcode.ErrRoleNotFound
 	}
 	if _, err := s.d.GetRobotByName(ctx, r.Name); err == nil {
 		return nil, errcode.ErrRobotExists
@@ -90,29 +75,20 @@ func (s *Service) CreateRobot(ctx context.Context, r *modules.Robot) (*modules.R
 		return nil, errcode.ServerInternal(err)
 	}
 
-	added, err := s.authz.AddBinding(r.Sub, r.Role, r.ClusterID)
-	if err != nil {
-		return nil, errcode.ServerInternal(err)
-	}
 	if err := s.d.CreateRobot(ctx, r); err != nil {
-		if added {
-			_, _ = s.authz.RemoveBinding(r.Sub, r.Role, r.ClusterID)
-		}
 		return nil, errcode.ServerInternal(err)
 	}
 	return r.ToDTO(time.Now()), nil
 }
 
-// DeleteRobot 删除机器人并解除角色绑定；返回被删除的模型供 handler 吊销 JWT。
+// DeleteRobot 删除机器人，并清理 user:<robot sub> 的全部直接策略。
 func (s *Service) DeleteRobot(ctx context.Context, id string) (*modules.Robot, *errcode.Response) {
 	r, rsp := s.GetRobotModel(ctx, id)
 	if rsp != nil {
 		return nil, rsp
 	}
-	if r.Role != "" {
-		if _, err := s.authz.RemoveBinding(r.Sub, r.Role, r.ClusterID); err != nil {
-			return nil, errcode.ServerInternal(err)
-		}
+	if _, rsp := s.RemovePoliciesBySubject(ctx, "user:"+r.Sub); rsp != nil {
+		return nil, rsp
 	}
 	rows, err := s.d.DeleteRobot(ctx, r.ID)
 	if err != nil {

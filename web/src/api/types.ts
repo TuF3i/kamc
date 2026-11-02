@@ -54,12 +54,6 @@ export interface Claims {
   am_ep?: number;
 }
 
-/** [sub, dom, obj, act] */
-export type PolicyRow = [string, string, string, string];
-
-/** [user, role, dom] */
-export type BindingRow = [string, string, string];
-
 export interface AuditEvent {
   id: number;
   timestamp: string;
@@ -76,19 +70,70 @@ export interface AuditEvent {
   latency_ms?: number;
 }
 
+export interface PolicyDTO {
+  subject_type: 'org' | 'user' | 'legacy';
+  subject: string;
+  cluster: string;
+  namespace: string;
+  resource: string;
+  subresource?: string;
+  verbs: string[];
+  sub: string;
+  dom: string;
+  obj: string;
+  act: string;
+}
+
+export interface PolicyRuleInput {
+  namespace: string;
+  resource: string;
+  subresource?: string;
+  namespaced: boolean;
+  verbs: string[];
+}
+
+export interface CreatePolicyInput {
+  subject_type: 'org' | 'user';
+  subject: string;
+  cluster: string;
+  rules: PolicyRuleInput[];
+}
+
+export interface CreatePolicyResult {
+  created: number;
+  policies: PolicyDTO[];
+}
+
+export interface DirectoryOption {
+  value: string;
+  label: string;
+}
+
+export interface ClusterResource {
+  group: string;
+  version: string;
+  resource: string;
+  subresource?: string;
+  gvr: string;
+  kind: string;
+  namespaced: boolean;
+  verbs: string[];
+}
+
+export interface ClusterResourcesResponse {
+  cluster_id: string;
+  namespaces: string[];
+  resources: ClusterResource[];
+  partial: boolean;
+  failed_group_versions?: string[];
+  cached: boolean;
+  discovered_at: string;
+}
+
 export interface VersionInfo {
   version: string;
   commit: string;
   component: string;
-}
-
-export interface RoleDTO {
-  name: string;
-  desc: string;
-  policy_count: number;
-  binding_count: number;
-  managed: boolean;
-  created_at?: string;
 }
 
 export type RobotStatus = 'active' | 'expired';
@@ -98,7 +143,6 @@ export interface Robot {
   name: string;
   cluster_id: string;
   sub: string;
-  role: string;
   status: RobotStatus;
   issued_at: string;
   expires_at: string;

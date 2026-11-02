@@ -249,6 +249,11 @@ users:
 
 ## 五、基于 RequestInfo 的 Casbin 鉴权
 
+> **v3.0 权限模型变更**：移除 `g` 角色/用户绑定；策略主体直接为
+> `user:<sub>` 或 `org:<Authentik group>`，鉴权时对用户与 JWT groups
+> 逐候选匹配。权限页使用 Authentik API 选择组织/用户，并通过 Agent 隧道
+> discovery 获取集群 GVR/动词/namespace。下方 v2.0 的 `g` 示例仅保留历史说明。
+
 ### 5.1 为什么不能用原始 URL 匹配（BUG-2 修复说明）
 
 K8s 资源路径含资源名与子资源层级（`/api/v1/namespaces/dev/pods/{name}/exec`、`/apis/apps/v1/namespaces/dev/deployments/{name}`），用原始路径做 keyMatch2 极易漏配/误配，且集群级资源、非资源路径（`/version`、`/healthz`）语义混杂。v2.0 用 `RequestInfoResolver` 把请求解析为**语义五元组**，Casbin 的 `obj` 使用规范化资源串：

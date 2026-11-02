@@ -46,8 +46,7 @@ func (h *Handler) CreateRobot(w http.ResponseWriter, r *http.Request) {
 	}
 	name := strings.TrimSpace(req.Name)
 	clusterID := strings.TrimSpace(req.ClusterID)
-	role := strings.TrimSpace(req.Role)
-	if name == "" || clusterID == "" || role == "" {
+	if name == "" || clusterID == "" {
 		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
 		return
 	}
@@ -69,7 +68,6 @@ func (h *Handler) CreateRobot(w http.ResponseWriter, r *http.Request) {
 		Name:      name,
 		ClusterID: clusterID,
 		Sub:       sub,
-		Role:      role,
 		JTI:       jti,
 		IssuedAt:  issuedAt,
 		ExpiresAt: expiresAt,
@@ -102,7 +100,7 @@ func (h *Handler) CreateRobot(w http.ResponseWriter, r *http.Request) {
 	}, nil)
 }
 
-// DeleteRobot DELETE /api/v1/robots/{id} —— 吊销 JWT 并删除记录/角色绑定。
+// DeleteRobot DELETE /api/v1/robots/{id} —— 吊销 JWT、清理机器人策略并删除记录。
 func (h *Handler) DeleteRobot(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	robot, rsp := h.svc.GetRobotModel(r.Context(), id)

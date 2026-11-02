@@ -38,10 +38,10 @@ import dayjs from 'dayjs';
 import { useAuthStore } from '@/stores/auth';
 import { listClusters } from '@/api/clusters';
 import { listAudit } from '@/api/audit';
+import { listPolicies } from '@/api/access';
 import { listRobots } from '@/api/robots';
-import { listRoles } from '@/api/roles';
 import { fetchSystemInfo } from '@/api/system';
-import type { AuditEvent, Cluster, Robot, RoleDTO, SystemInfo } from '@/api/types';
+import type { AuditEvent, Cluster, Robot, SystemInfo } from '@/api/types';
 import { PageHeader } from '@/components/PageHeader';
 import { fmtUptime } from '@/utils/format';
 
@@ -103,7 +103,7 @@ export function Dashboard() {
   const isAdmin = useAuthStore((s) => s.isAdmin);
   const [clusters, setClusters] = useState<Cluster[]>([]);
   const [robots, setRobots] = useState<Robot[]>([]);
-  const [roles, setRoles] = useState<RoleDTO[]>([]);
+  const [policyCount, setPolicyCount] = useState(0);
   const [audit, setAudit] = useState<AuditEvent[]>([]);
   const [system, setSystem] = useState<SystemInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -114,17 +114,17 @@ export function Dashboard() {
     setLoading(true);
     setError(null);
     try {
-      const [clusterList, systemInfo, robotList, roleList, auditList] = await Promise.all([
+      const [clusterList, systemInfo, robotList, policyList, auditList] = await Promise.all([
         listClusters(),
         fetchSystemInfo().catch(() => null),
         listRobots().catch(() => []),
-        listRoles().catch(() => []),
+        listPolicies().then((list) => list.length).catch(() => 0),
         listAudit({ limit: 1000 }).catch(() => []),
       ]);
       setClusters(clusterList);
       setSystem(systemInfo);
       setRobots(robotList);
-      setRoles(roleList);
+      setPolicyCount(policyList);
       setAudit(auditList);
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载概览失败');
@@ -237,11 +237,11 @@ export function Dashboard() {
           <Col xs={12} lg={6}>
             <Card className="stat-card">
               <Statistic
-                title="角色"
-                value={roles.length}
+                title="策略"
+                value={policyCount}
                 prefix={<SafetyCertificateOutlined className="stat-icon amber" />}
               />
-              <div className="stat-foot">已定义角色数量</div>
+              <div className="stat-foot">已配置访问策略</div>
             </Card>
           </Col>
         </Row>

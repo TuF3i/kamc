@@ -72,14 +72,7 @@ func TestCrossPodForwardingE2E(t *testing.T) {
 		map[string]string{"id": clusterID, "name": "crosspod"}, tokA); ar.Status != errcode.CodeSuccess {
 		t.Fatalf("create cluster: %+v", ar)
 	}
-	if _, ar := call(t, rtA, http.MethodPost, "/api/v1/policies",
-		map[string]string{"sub": "role:cluster-admin", "dom": clusterID, "obj": "*", "act": ".*"}, tokA); ar.Status != errcode.CodeSuccess {
-		t.Fatalf("seed policy: %+v", ar)
-	}
-	if _, ar := call(t, rtA, http.MethodPost, "/api/v1/bindings",
-		map[string]string{"user": "admin-test", "role": "role:cluster-admin", "dom": clusterID}, tokA); ar.Status != errcode.CodeSuccess {
-		t.Fatalf("seed binding: %+v", ar)
-	}
+	seedUserPolicy(t, rtA, tokA, "admin-test", clusterID)
 
 	// ── Pod-B：无本地隧道，peer 指向 A（Casbin 此时加载种子策略）──
 	trtB, err := tunnel.CreateRuntime(
@@ -167,14 +160,7 @@ func TestCrossPodForwardingE2E(t *testing.T) {
 		map[string]string{"id": clusterID + "-empty", "name": "no agent"}, tokA); ar.Status != errcode.CodeSuccess {
 		t.Fatalf("create empty cluster: %+v", ar)
 	}
-	if _, ar := call(t, rtA, http.MethodPost, "/api/v1/policies",
-		map[string]string{"sub": "role:cluster-admin", "dom": clusterID + "-empty", "obj": "*", "act": ".*"}, tokA); ar.Status != errcode.CodeSuccess {
-		t.Fatalf("seed empty policy: %+v", ar)
-	}
-	if _, ar := call(t, rtA, http.MethodPost, "/api/v1/bindings",
-		map[string]string{"user": "admin-test", "role": "role:cluster-admin", "dom": clusterID + "-empty"}, tokA); ar.Status != errcode.CodeSuccess {
-		t.Fatalf("seed empty binding: %+v", ar)
-	}
+	seedUserPolicy(t, rtA, tokA, "admin-test", clusterID+"-empty")
 	// B 的 Casbin 缓存不含新集群策略，经 peer 触发不了——直接走 A 验证（A 亦无隧道）
 	rec = httptest.NewRecorder()
 	req, _ = http.NewRequest(http.MethodGet, "/proxy/"+clusterID+"-empty/api/v1/pods", nil)

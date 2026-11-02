@@ -58,12 +58,12 @@ func (h *Handler) Proxy(w http.ResponseWriter, r *http.Request) {
 	if cleanPath == "" {
 		cleanPath = "/"
 	}
-	obj, act, err := authz.ParseRequest(r.Method, cleanPath)
+	obj, act, err := authz.ParseRequest(r.Method, cleanPath, r.URL.RawQuery)
 	if err != nil {
 		http.Error(w, "bad request path", http.StatusBadRequest)
 		return
 	}
-	allowed, err := h.svc.Enforce(claims.Subject, clusterID, obj, act)
+	allowed, err := h.svc.Enforce(claims.Subject, claims.Groups, clusterID, obj, act)
 	if err != nil {
 		// fail-closed：鉴权组件故障一律拒绝（§8 双重校验的第一层不能失效开放）
 		log.Printf("[platform] casbin enforce error %s@%s %s %s: %v",

@@ -50,10 +50,10 @@ tags:
     description: Agent Token 签发/轮换/吊销/注册交换
   - name: kubeconfig
     description: 用户 kubeconfig 生成（自服务）
-  - name: 策略与绑定
-    description: Casbin 策略与用户-角色绑定管理（管理面）
-  - name: 角色与机器人
-    description: 显式角色管理与 CICD 机器人长期 kubeconfig 签发（管理面）
+  - name: 权限策略
+    description: 组织/用户直接策略、Authentik 目录与集群资源发现（管理面）
+  - name: 机器人
+    description: CICD 机器人长期 kubeconfig 签发与直接策略管理（管理面）
   - name: 审计
     description: 审计事件查询（管理面）
   - name: 数据面
@@ -569,14 +569,14 @@ paths:
 
   /api/v1/policies:
     get:
-      tags: [策略与绑定]
+      tags: [权限策略]
       summary: 策略列表
-      description: 每行 [sub, dom, obj, act]；act 为正则片段（匹配时锚定，FIX-8）。
+      description: 返回解析后的主体类型/主体/集群/命名空间/资源/动作，以及原始四元组。
       security:
         - platformJWT: []
       responses:
         '200':
-          description: 策略行
+          description: 策略列表
           content:
             application/json:
               schema:
@@ -586,61 +586,71 @@ paths:
                     properties:
                       data:
                         type: array
-                        items: {$ref: '#/components/schemas/PolicyRow'}
+                        items: {$ref: '#/components/schemas/PolicyDTO'}
         '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
         '403': {$ref: '#/components/responses/PlainTextForbidden'}
     post:
-      tags: [策略与绑定]
-      summary: 增加策略
+      tags: [权限策略]
+      summary: 批量创建策略
       description: |
-        obj 语法：`{ns}/{resource}[/{subresource}]`、`cluster/{resource}`、
-        `nonresource{path}`；`*` 通配。act 为 K8s verb 正则片段
-        （如 `get|list|watch`），匹配时锚定——`delete` 不会匹配 `deletecollection`（FIX-8）。
-        变更经 Redis pub/sub 广播，其他副本 1s 内重载（未配置 Redis 时仅本副本即时生效）。
+        主体只能是 Authentik 组织（org）或用户（user）之一；集群单选。
+        每条资源规则按 namespace/resource/subresource/verbs 展开为 Casbin 四元组：
+        - namespace `*` 生成 `*/resource`，并补充 `cluster/resource` 覆盖全命名空间 list；
+        - 具体 namespace 生成 `<ns>/resource`；
+        - cluster-scoped 资源生成 `cluster/resource`；
+        - resource `*` 自动授予全部动作（act=`.*`）。
       security:
         - platformJWT: []
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/AddPolicyRequest'}
+            schema: {$ref: '#/components/schemas/CreatePolicyRequest'}
       responses:
         '200':
-          description: 已增加
+          description: 创建结果
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/Envelope'}
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/CreatePolicyResult'}
         '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
         '403': {$ref: '#/components/responses/PlainTextForbidden'}
     delete:
-      tags: [策略与绑定]
+      tags: [权限策略]
       summary: 删除策略
+      description: 使用原始四元组精确匹配删除；不存在返回 40001。
       security:
         - platformJWT: []
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/AddPolicyRequest'}
+            schema: {$ref: '#/components/schemas/RemovePolicyRequest'}
       responses:
         '200':
-          description: 已删除（40001=不存在）
+          description: 已删除
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Envelope'}
         '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
         '403': {$ref: '#/components/responses/PlainTextForbidden'}
 
-  /api/v1/bindings:
+  /api/v1/directory/orgs:
     get:
-      tags: [策略与绑定]
-      summary: 绑定列表
-      description: 每行 [user, role, dom]。
+      tags: [权限策略]
+      summary: Authentik 组织列表
+      description: 代理 Authentik `/api/v3/core/groups/`；未配置 API URL/Token 时 503。
       security:
         - platformJWT: []
+      parameters:
+        - {name: q, in: query, schema: {type: string}, description: 搜索关键字}
       responses:
         '200':
-          description: 绑定行
+          description: 组织选项
           content:
             application/json:
               schema:
@@ -650,45 +660,61 @@ paths:
                     properties:
                       data:
                         type: array
-                        items: {$ref: '#/components/schemas/BindingRow'}
+                        items: {$ref: '#/components/schemas/DirectoryOption'}
         '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
         '403': {$ref: '#/components/responses/PlainTextForbidden'}
-    post:
-      tags: [策略与绑定]
-      summary: 增加绑定
+        '503': {description: Authentik 目录未配置}
+
+  /api/v1/directory/users:
+    get:
+      tags: [权限策略]
+      summary: Authentik 用户列表
+      description: 代理 Authentik `/api/v3/core/users/`；未配置 API URL/Token 时 503。
       security:
         - platformJWT: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: '#/components/schemas/AddBindingRequest'}
+      parameters:
+        - {name: q, in: query, schema: {type: string}, description: 搜索关键字}
       responses:
         '200':
-          description: 已增加
+          description: 用户选项
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/Envelope'}
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: {$ref: '#/components/schemas/DirectoryOption'}
         '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
         '403': {$ref: '#/components/responses/PlainTextForbidden'}
-    delete:
-      tags: [策略与绑定]
-      summary: 删除绑定
+        '503': {description: Authentik 目录未配置}
+
+  /api/v1/clusters/{id}/resources:
+    get:
+      tags: [权限策略]
+      summary: 集群资源目录（GVR + 动词 + namespace）
+      description: 通过 Agent 隧道读取 Kubernetes discovery；缓存 5 分钟，refresh=1 强制刷新。
       security:
         - platformJWT: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: '#/components/schemas/AddBindingRequest'}
+      parameters:
+        - $ref: '#/components/parameters/ClusterID'
+        - {name: refresh, in: query, schema: {type: string, enum: ["1"]}}
       responses:
         '200':
-          description: 已删除（40001=不存在）
+          description: 资源目录
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/Envelope'}
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/ClusterResourcesResponse'}
         '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
         '403': {$ref: '#/components/responses/PlainTextForbidden'}
+        '503': {description: 集群不可达或目录未装配}
 
   /proxy/{clusterID}:
     get:
@@ -805,76 +831,9 @@ paths:
         '401': {description: Token 无效/过期/集群不匹配（防枚举，不区分原因）}
         '503': {description: 隧道模块未启用}
 
-  /api/v1/roles:
-    get:
-      tags: [角色与机器人]
-      summary: 角色列表
-      description: roles 表显式角色与策略/绑定中出现的派生角色合并；含策略数/绑定数。
-      security:
-        - platformJWT: []
-      responses:
-        '200':
-          description: 角色列表
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/Envelope'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items: {$ref: '#/components/schemas/Role'}
-        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
-        '403': {$ref: '#/components/responses/PlainTextForbidden'}
-    post:
-      tags: [角色与机器人]
-      summary: 创建角色
-      security:
-        - platformJWT: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: '#/components/schemas/CreateRoleRequest'}
-      responses:
-        '200':
-          description: 已创建（40004=已存在）
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/Envelope'
-                  - type: object
-                    properties:
-                      data: {$ref: '#/components/schemas/Role'}
-        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
-        '403': {$ref: '#/components/responses/PlainTextForbidden'}
-
-  /api/v1/roles/{name}:
-    delete:
-      tags: [角色与机器人]
-      summary: 删除角色
-      description: 仍被策略或用户绑定引用时返回 40005；派生角色未在 roles 表创建时返回 40003。
-      security:
-        - platformJWT: []
-      parameters:
-        - name: name
-          in: path
-          required: true
-          schema: {type: string, maxLength: 256}
-      responses:
-        '200':
-          description: 已删除（40003=不存在，40005=仍在使用）
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/Envelope'}
-        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
-        '403': {$ref: '#/components/responses/PlainTextForbidden'}
-
   /api/v1/robots:
     get:
-      tags: [角色与机器人]
+      tags: [机器人]
       summary: 机器人列表
       description: 不含 Token 明文；status 按到期时间计算（active/expired）。
       security:
@@ -895,12 +854,12 @@ paths:
         '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
         '403': {$ref: '#/components/responses/PlainTextForbidden'}
     post:
-      tags: [角色与机器人]
+      tags: [机器人]
       summary: 签发机器人长期 kubeconfig
       description: |
-        自动建立 `robot:<id> → role @ cluster` 绑定，使用长期 JWT（默认 365 天，
-        `AM_ROBOT_TOKEN_TTL`）生成 static kubeconfig。响应中的 kubeconfig 为 YAML 字符串，
-        后续可通过下载接口重新生成同一 jti 的凭证。
+        创建机器人身份并使用长期 JWT（默认 365 天，`AM_ROBOT_TOKEN_TTL`）生成
+        static kubeconfig。权限需管理员通过 `user:robot:<id>` 直接策略授予。
+        响应中的 kubeconfig 为 YAML 字符串，后续可通过下载接口重新生成同一 jti 的凭证。
       security:
         - platformJWT: []
       requestBody:
@@ -924,9 +883,9 @@ paths:
 
   /api/v1/robots/{id}:
     delete:
-      tags: [角色与机器人]
+      tags: [机器人]
       summary: 吊销机器人
-      description: 删除记录、解除角色绑定，并将该机器人 JWT 的 jti 加入黑名单。
+      description: 删除记录、清理 `user:robot:<id>` 的全部直接策略，并将该机器人 JWT 的 jti 加入黑名单。
       security:
         - platformJWT: []
       parameters:
@@ -945,7 +904,7 @@ paths:
 
   /api/v1/robots/{id}/kubeconfig:
     get:
-      tags: [角色与机器人]
+      tags: [机器人]
       summary: 下载机器人 kubeconfig
       security:
         - platformJWT: []
@@ -1090,32 +1049,61 @@ components:
         expires_at: {type: string, format: date-time, nullable: true}
         created_at: {type: string, format: date-time}
 
-    PolicyRow:
-      type: array
-      items: {type: string}
-      description: '[sub, dom, obj, act]'
+    PolicyDTO:
+      type: object
+      properties:
+        subject_type: {type: string, enum: [org, user, legacy]}
+        subject: {type: string}
+        cluster: {type: string}
+        namespace: {type: string, description: "* 表示全部命名空间；cluster-scoped 为空"}
+        resource: {type: string}
+        subresource: {type: string}
+        verbs: {type: array, items: {type: string}}
+        sub: {type: string, description: '原始 Casbin 主体（org:/user: 前缀）'}
+        dom: {type: string}
+        obj: {type: string}
+        act: {type: string}
 
-    BindingRow:
-      type: array
-      items: {type: string}
-      description: '[user, role, dom]'
+    PolicyRuleInput:
+      type: object
+      required: [resource, verbs]
+      properties:
+        namespace: {type: string, description: "* 或具体 namespace；cluster-scoped 留空"}
+        resource: {type: string, example: pods}
+        subresource: {type: string, example: exec}
+        namespaced: {type: boolean}
+        verbs:
+          type: array
+          items: {type: string}
+          example: [get, list, watch]
 
-    AddPolicyRequest:
+    CreatePolicyRequest:
+      type: object
+      required: [subject_type, subject, cluster, rules]
+      properties:
+        subject_type: {type: string, enum: [org, user]}
+        subject: {type: string, example: dev-team}
+        cluster: {type: string, example: prod-bj}
+        rules:
+          type: array
+          items: {$ref: '#/components/schemas/PolicyRuleInput'}
+
+    RemovePolicyRequest:
       type: object
       required: [sub, dom, obj, act]
       properties:
-        sub: {type: string, example: role:developer}
-        dom: {type: string, example: cluster-a, description: 集群 ID；策略支持 * 通配}
-        obj: {type: string, example: dev/*, description: 语义资源串（§5.1）}
-        act: {type: string, example: get|list|watch, description: K8s verb 正则片段（匹配时锚定）}
+        sub: {type: string, example: 'org:dev-team'}
+        dom: {type: string, example: prod-bj}
+        obj: {type: string, example: '*/pods'}
+        act: {type: string, example: 'get|list'}
 
-    AddBindingRequest:
+    CreatePolicyResult:
       type: object
-      required: [user, role, dom]
       properties:
-        user: {type: string, example: bob}
-        role: {type: string, example: role:developer}
-        dom: {type: string, example: cluster-a}
+        created: {type: integer}
+        policies:
+          type: array
+          items: {$ref: '#/components/schemas/PolicyDTO'}
 
     AuditEvent:
       type: object
@@ -1153,22 +1141,34 @@ components:
         db_wait_count: {type: integer, format: int64}
         db_max_open_connections: {type: integer}
 
-    Role:
+    DirectoryOption:
       type: object
       properties:
-        name: {type: string, example: 'role:developer'}
-        desc: {type: string}
-        policy_count: {type: integer}
-        binding_count: {type: integer}
-        managed: {type: boolean, description: 是否在 roles 表显式创建}
-        created_at: {type: string, format: date-time, nullable: true}
+        value: {type: string}
+        label: {type: string}
 
-    CreateRoleRequest:
+    ClusterResource:
       type: object
-      required: [name]
       properties:
-        name: {type: string, maxLength: 256, example: 'role:developer'}
-        desc: {type: string, maxLength: 512}
+        group: {type: string}
+        version: {type: string}
+        resource: {type: string}
+        subresource: {type: string}
+        gvr: {type: string, example: apps/v1/deployments}
+        kind: {type: string}
+        namespaced: {type: boolean}
+        verbs: {type: array, items: {type: string}}
+
+    ClusterResourcesResponse:
+      type: object
+      properties:
+        cluster_id: {type: string}
+        namespaces: {type: array, items: {type: string}}
+        resources: {type: array, items: {$ref: '#/components/schemas/ClusterResource'}}
+        partial: {type: boolean}
+        failed_group_versions: {type: array, items: {type: string}}
+        cached: {type: boolean}
+        discovered_at: {type: string, format: date-time}
 
     Robot:
       type: object
@@ -1177,7 +1177,6 @@ components:
         name: {type: string, example: ci-deployer}
         cluster_id: {type: string, example: prod-bj}
         sub: {type: string, example: 'robot:robot-1a2b3c4d5e6f7a8b'}
-        role: {type: string, example: 'role:developer'}
         status: {type: string, enum: [active, expired]}
         issued_at: {type: string, format: date-time}
         expires_at: {type: string, format: date-time}
@@ -1185,11 +1184,10 @@ components:
 
     CreateRobotRequest:
       type: object
-      required: [name, cluster_id, role]
+      required: [name, cluster_id]
       properties:
         name: {type: string, maxLength: 128, example: ci-deployer}
         cluster_id: {type: string, example: prod-bj}
-        role: {type: string, example: 'role:developer'}
 
     RobotKubeconfigResponse:
       type: object

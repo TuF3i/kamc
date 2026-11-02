@@ -72,6 +72,10 @@ web/                 管理前端（React 18 + Ant Design 5 + Vite + TypeScript�
 | `AM_PASSWORD_LOGIN_USER` | `sysadmin` | 内置管理员账号（生产必须覆盖） |
 | `AM_PASSWORD_LOGIN_PASSWORD` | `sysadmin123` | 内置管理员密码（生产必须覆盖） |
 | `AM_ROBOT_TOKEN_TTL` | `8760h` | Robot 长期 JWT 有效期（Go duration，默认 365 天） |
+| `AUTHENTIK_API_URL` | 从 `OIDC_ISSUER` origin 推导 | Authentik API 地址（策略页组织/用户下拉） |
+| `AUTHENTIK_API_TOKEN` | — | Authentik API Token（读取 core users/groups） |
+| `AUTHENTIK_USER_SUB_FIELD` | `uid` | Authentik 用户字段映射到 JWT sub（uid/username/pk） |
+| `AUTHENTIK_CACHE_TTL` | `60s` | 目录查询缓存时间 |
 | `AM_DEV_ISSUE_TOKEN` | — | 开发直签 Token 开关（`/auth/dev-token`，生产勿开） |
 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_REDIRECT_URL` | — | Authentik OIDC（未配置则 /auth/login 503） |
 | `APISERVER_URL`（Agent） | in-cluster 探测 | 上游 kube-apiserver 显式覆盖（开发/测试） |
@@ -140,14 +144,14 @@ KAMC_API=http://127.0.0.1:8080 npm run dev
 - [x] Prometheus 指标（§12.3）：/metrics（平台侧；Agent 侧无 HTTP 端口属后续）
 - [x] 部署产物：deploy/（nginx、平台/Agent manifests、NetworkPolicy、README
       含上线前人工验收清单——真实集群演练属上线前人工项）
-- [x] 角色与机器人（§5/§4.4 扩展）：`roles` 表显式角色 + 派生角色合并；
-      `/api/v1/roles` CRUD；`/api/v1/robots` 签发长期 Robot kubeconfig
-      （static JWT，默认 365 天，自动建立 robot → role @ cluster 绑定），
-      列表/重新下载/吊销（jti 黑名单）。Web「权限」页按角色 → 用户 → 策略组织，
-      「机器人」页管理 CICD 机器人。
+- [x] 权限策略重构：移除用户/角色/绑定体系，策略主体直接为
+      `user:<sub>` 或 `org:<Authentik group>`；策略匹配集群、namespace、
+      资源（GVR）与动作。Authentik API 提供组织/用户下拉；集群 GVR/动词
+      通过 Agent 隧道实时 discovery（5 分钟缓存）。Robot 作为 `user:<sub>`
+      主体直接授权，删除时清理其策略。
 - [x] Web 前端（web/，React 18 + Ant Design 5 + TypeScript + Vite）：
-      登录（SSO + 用户名密码）、概览、集群/Token 管理、Casbin 权限、机器人、
-      审计、kubeconfig 下载、exec 终端（xterm + v5.channel.k8s.io WS，
+      登录（SSO + 用户名密码）、概览、集群/Token 管理、权限策略编辑器、
+      机器人、审计、kubeconfig 下载、exec 终端（xterm + v5.channel.k8s.io WS，
       access_token 查询参数凭证——仅 WS 升级接受）。浏览器接入后端配合：
       /auth/callback 浏览器导航返回桥接页（写 localStorage['kamc_token'] 后跳
       SPA）。开发：KAMC_API=… npm run dev；生产构建 dist/ + 同源反代

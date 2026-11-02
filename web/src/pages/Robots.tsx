@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Alert,
   App,
-  AutoComplete,
   Button,
   Card,
   Form,
   Input,
   Modal,
+  Select,
   Space,
   Table,
   Tag,
@@ -19,11 +20,11 @@ import {
   DeleteOutlined,
   PlusOutlined,
   RobotOutlined,
+  SettingOutlined,
 } from '@ant-design/icons';
 import { createRobot, deleteRobot, downloadRobotKubeconfig, listRobots } from '@/api/robots';
-import { listRoles } from '@/api/roles';
 import { listClusters } from '@/api/clusters';
-import type { Cluster, CreateRobotResponse, Robot, RoleDTO } from '@/api/types';
+import type { Cluster, CreateRobotResponse, Robot } from '@/api/types';
 import { PageHeader } from '@/components/PageHeader';
 import { CopyButton } from '@/components/CopyButton';
 import { fmtTime } from '@/utils/format';
@@ -32,7 +33,6 @@ import { downloadTextFile } from '@/utils/download';
 interface RobotForm {
   name: string;
   cluster_id: string;
-  role: string;
 }
 
 function RobotStatusTag({ status }: { status: Robot['status'] }) {
@@ -41,9 +41,9 @@ function RobotStatusTag({ status }: { status: Robot['status'] }) {
 
 export function Robots() {
   const { message } = App.useApp();
+  const navigate = useNavigate();
   const [robots, setRobots] = useState<Robot[]>([]);
   const [clusters, setClusters] = useState<Cluster[]>([]);
-  const [roles, setRoles] = useState<RoleDTO[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -56,14 +56,9 @@ export function Robots() {
     setLoading(true);
     setError(null);
     try {
-      const [robotList, clusterList, roleList] = await Promise.all([
-        listRobots(),
-        listClusters(),
-        listRoles(),
-      ]);
+      const [robotList, clusterList] = await Promise.all([listRobots(), listClusters()]);
       setRobots(robotList);
       setClusters(clusterList);
-      setRoles(roleList);
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载机器人列表失败');
     } finally {
@@ -75,18 +70,12 @@ export function Robots() {
     void load();
   }, []);
 
-  const roleOptions = useMemo(
-    () => roles.map((r) => ({ value: r.name, label: `${r.name}${r.desc ? ` · ${r.desc}` : ''}` })),
-    [roles],
-  );
-
   const submit = async (values: RobotForm) => {
     setCreating(true);
     try {
       const result = await createRobot({
         name: values.name.trim(),
         cluster_id: values.cluster_id,
-        role: values.role.trim(),
       });
       setCreateOpen(false);
       form.resetFields();
@@ -112,7 +101,7 @@ export function Robots() {
   const remove = (robot: Robot) => {
     Modal.confirm({
       title: `吊销机器人「${robot.name}」？`,
-      content: '删除后该机器人的 Token 立即失效，角色绑定一并移除，操作不可撤销。',
+      content: '删除后该机器人的 Token 立即失效，其全部直接策略一并清理，操作不可撤销。',
       okText: '吊销',
       okButtonProps: { danger: true },
       cancelText: '取消',
@@ -131,12 +120,16 @@ export function Robots() {
     });
   };
 
+  const configurePolicy = (robot: Robot) => {
+    navigate(`/access?subjectType=user&subject=${encodeURIComponent(robot.sub)}`);
+  };
+
   const columns: TableColumnsType<Robot> = [
     {
       title: '名称',
       dataIndex: 'name',
       key: 'name',
-      width: 200,
+      width: 180,
       sorter: (a, b) => a.name.localeCompare(b.name),
       render: (name: string) => (
         <Space size={8}>
@@ -149,15 +142,15 @@ export function Robots() {
       title: '集群',
       dataIndex: 'cluster_id',
       key: 'cluster_id',
-      width: 200,
+      width: 180,
       render: (value: string) => <code className="mono">{value}</code>,
     },
     {
-      title: '角色',
-      dataIndex: 'role',
-      key: 'role',
-      width: 200,
-      render: (value: string) => <Tag color="blue">{value}</Tag>,
+      title: '主体',
+      dataIndex: 'sub',
+      key: 'sub',
+      width: 260,
+      render: (value: string) => <code className="mono">{value}</code>,
     },
     {
       title: '状态',
@@ -185,9 +178,17 @@ export function Robots() {
     {
       title: '操作',
       key: 'actions',
-      width: 220,
+      width: 300,
       render: (_, record) => (
         <Space size={0}>
+          <Button
+            type="link"
+            size="small"
+            icon={<SettingOutlined />}
+            onClick={() => configurePolicy(record)}
+          >
+            配置策略
+          </Button>
           <Button
             type="link"
             size="small"
@@ -216,7 +217,7 @@ export function Robots() {
     <div>
       <PageHeader
         title="机器人"
-        subtitle="为 CICD 机器人签发长期 kubeconfig；机器人以独立身份访问指定集群。"
+        subtitle="为 CICD 机器人签发长期 kubeconfig；机器人以 user:<sub> 主体在权限页配置策略。"
         extra={
           <Button
             type="primary"
@@ -253,12 +254,12 @@ export function Robots() {
           dataSource={robots}
           loading={loading}
           pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 个机器人` }}
-          scroll={{ x: 1200 }}
+          scroll={{ x: 1300 }}
           locale={{
             emptyText: (
               <div style={{ padding: '28px 0' }}>
                 <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-                  尚未签发机器人。先创建角色并配置策略，再为机器人选择该角色。
+                  尚未签发机器人。创建后请在权限页为机器人主体配置策略。
                 </Typography.Paragraph>
                 <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
                   签发第一个机器人
@@ -297,30 +298,16 @@ export function Robots() {
             name="cluster_id"
             label="集群"
             rules={[{ required: true, message: '请选择集群' }]}
+            extra="创建后请到权限页为 user:<sub> 配置资源策略。"
           >
-            <AutoComplete
+            <Select
+              showSearch
+              placeholder="选择集群"
               options={clusters.map((c) => ({
                 value: c.id,
                 label: `${c.id} · ${c.name}`,
               }))}
-              placeholder="选择集群"
-              filterOption={(input, option) =>
-                String(option?.value ?? '').toLowerCase().includes(input.toLowerCase())
-              }
-            />
-          </Form.Item>
-          <Form.Item
-            name="role"
-            label="角色"
-            rules={[{ required: true, message: '请选择角色' }]}
-            extra="机器人会自动绑定到该角色；权限由角色策略决定。"
-          >
-            <AutoComplete
-              options={roleOptions}
-              placeholder="选择角色"
-              filterOption={(input, option) =>
-                String(option?.value ?? '').toLowerCase().includes(input.toLowerCase())
-              }
+              optionFilterProp="label"
             />
           </Form.Item>
         </Form>
@@ -360,10 +347,21 @@ export function Robots() {
                 集群：<code className="mono">{created.robot.cluster_id}</code>
               </span>
               <span>
-                角色：<Tag color="blue">{created.robot.role}</Tag>
+                主体：<code className="mono">{created.robot.sub}</code>
               </span>
               <span>到期：{fmtTime(created.robot.expires_at)}</span>
             </div>
+            <Alert
+              type="info"
+              showIcon
+              message="机器人目前还没有权限"
+              description={
+                <span>
+                  请到权限页为 <code className="mono">user:{created.robot.sub}</code>{' '}
+                  配置策略，或点击机器人列表中的「配置策略」。
+                </span>
+              }
+            />
             <pre className="code-block">{created.kubeconfig}</pre>
             <Space>
               <CopyButton text={created.kubeconfig} label="复制 YAML" type="primary" />

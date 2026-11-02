@@ -28,7 +28,8 @@ import (
 )
 
 // modelText Casbin 模型（§5.2）：
-//   - dom 支持 "*" 通配（跨集群角色）；
+//   - 主体为 user:<sub> 或 org:<group>（由 Enforce 逐候选匹配）；
+//   - dom = 集群 ID，精确匹配；
 //   - act 正则经 matcher 内联锚定 "^(" + p.act + ")$"，策略侧书写裸片段。
 const modelText = `
 [request_definition]
@@ -37,14 +38,11 @@ r = sub, dom, obj, act
 [policy_definition]
 p = sub, dom, obj, act
 
-[role_definition]
-g = _, _, _
-
 [policy_effect]
 e = some(where (p.eft == allow))
 
 [matchers]
-m = g(r.sub, p.sub, r.dom) && (r.dom == p.dom || p.dom == "*") && keyMatch2(r.obj, p.obj) && regexMatch(r.act, "^(" + p.act + ")$")
+m = r.sub == p.sub && r.dom == p.dom && keyMatch2(r.obj, p.obj) && regexMatch(r.act, "^(" + p.act + ")$")
 `
 
 // Enforcer 鉴权入口（封装 SyncedEnforcer 与 DB 适配器）
@@ -116,9 +114,26 @@ func (en *Enforcer) Release() {
 	}
 }
 
-// Enforce 判定 (sub, dom, obj, act) 是否放行。错误向上抛（调用方 fail-closed）。
-func (en *Enforcer) Enforce(sub, dom, obj, act string) (bool, error) {
-	return en.e.Enforce(sub, dom, obj, act)
+// Enforce 判定主体是否放行：用户主体 user:<sub>，或任一组织主体 org:<group>。
+// 任一候选命中即放行；任一 Enforce 报错即返回错误（调用方 fail-closed）。
+func (en *Enforcer) Enforce(sub string, groups []string, dom, obj, act string) (bool, error) {
+	candidates := make([]string, 0, len(groups)+1)
+	candidates = append(candidates, "user:"+sub)
+	for _, g := range groups {
+		if g != "" {
+			candidates = append(candidates, "org:"+g)
+		}
+	}
+	for _, candidate := range candidates {
+		ok, err := en.e.Enforce(candidate, dom, obj, act)
+		if err != nil {
+			return false, fmt.Errorf("authz -> enforce %s: %w", candidate, err)
+		}
+		if ok {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // AddPolicy 增加策略行（AutoSave 落库 + 广播其他副本重载）
@@ -164,35 +179,6 @@ func (en *Enforcer) HasPolicy(sub, dom, obj, act string) (bool, error) {
 	return false, nil
 }
 
-// AddBinding 用户-角色绑定（g, user, role, dom）
-func (en *Enforcer) AddBinding(user, role, dom string) (bool, error) {
-	added, err := en.e.AddGroupingPolicy(user, role, dom)
-	if err != nil {
-		return false, fmt.Errorf("authz -> add binding: %w", err)
-	}
-	if added {
-		en.notifyWatchers()
-	}
-	return added, nil
-}
-
-// RemoveBinding 删除绑定（不存在返回 false）
-func (en *Enforcer) RemoveBinding(user, role, dom string) (bool, error) {
-	removed, err := en.e.RemoveGroupingPolicy(user, role, dom)
-	if err != nil {
-		return false, fmt.Errorf("authz -> remove binding: %w", err)
-	}
-	if removed {
-		en.notifyWatchers()
-	}
-	return removed, nil
-}
-
-// ListBindings 全量绑定
-func (en *Enforcer) ListBindings() ([][]string, error) {
-	return en.e.GetGroupingPolicy()
-}
-
 // dbAdapter casbin persist.Adapter 的 DB 实现（AutoSave 生效于 Add/Remove；
 // SavePolicy 全量写不启用——策略管理全部走增量 API）
 type dbAdapter struct {
@@ -206,6 +192,11 @@ func (a *dbAdapter) LoadPolicy(m model.Model) error {
 		return fmt.Errorf("authz -> adapter load: %w", err)
 	}
 	for _, r := range rules {
+		// 旧版本的角色绑定行（ptype=g）在新模型下没有 role_definition，
+		// 跳过以避免启动失败；迁移脚本会清理这些行。
+		if r.Ptype != "p" {
+			continue
+		}
 		if err := loadPolicyLine(r.Ptype, ruleValues(&r), m); err != nil {
 			return err
 		}
@@ -242,9 +233,10 @@ var reqResolver = &request.RequestInfoFactory{
 }
 
 // ParseRequest 把已 strip 前缀的 API 路径解析为 Casbin 的 (obj, act)（§5.1）。
+// rawQuery 用于识别 ?watch=true（否则 watch 会被解析成 list）。
 // 非 K8s 资源请求（/version、/openapi 等）解析为 nonresource 对象。
-func ParseRequest(method, path string) (obj, act string, err error) {
-	r := &http.Request{Method: method, URL: &url.URL{Path: path}}
+func ParseRequest(method, path, rawQuery string) (obj, act string, err error) {
+	r := &http.Request{Method: method, URL: &url.URL{Path: path, RawQuery: rawQuery}}
 	info, err := reqResolver.NewRequestInfo(r)
 	if err != nil {
 		return "", "", fmt.Errorf("authz -> parse request: %w", err)
@@ -259,6 +251,9 @@ func ParseRequest(method, path string) (obj, act string, err error) {
 		}
 	} else {
 		obj = "cluster/" + info.Resource
+		if info.Subresource != "" {
+			obj += "/" + info.Subresource
+		}
 	}
 	return obj, info.Verb, nil
 }

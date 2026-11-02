@@ -4,7 +4,6 @@ import type { CreateRobotResponse, Robot } from './types';
 export interface CreateRobotInput {
   name: string;
   cluster_id: string;
-  role: string;
 }
 
 export function listRobots(): Promise<Robot[]> {

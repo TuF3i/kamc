@@ -32,15 +32,8 @@ func TestAuditE2E(t *testing.T) {
 	if resp := callRaw(t, rt, http.MethodGet, "/proxy/"+id+"/api/v1/pods", viewer); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("viewer: want 403, got %d", resp.StatusCode)
 	}
-	// 授权绑定 → 允许（allowed 事件；集群无 Agent → 503，但事件已产生）
-	if _, ar = call(t, rt, http.MethodPost, "/api/v1/policies",
-		map[string]string{"sub": "role:a", "dom": id, "obj": "*", "act": ".*"}, tok); ar.Status != errcode.CodeSuccess {
-		t.Fatalf("policy: %+v", ar)
-	}
-	if _, ar = call(t, rt, http.MethodPost, "/api/v1/bindings",
-		map[string]string{"user": "audit-viewer", "role": "role:a", "dom": id}, tok); ar.Status != errcode.CodeSuccess {
-		t.Fatalf("binding: %+v", ar)
-	}
+	// 授权用户 → 允许（allowed 事件；集群无 Agent → 503，但事件已产生）
+	seedUserPolicy(t, rt, tok, "audit-viewer", id)
 	if resp := callRaw(t, rt, http.MethodGet, "/proxy/"+id+"/api/v1/pods", viewer); resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("no-agent cluster: want 503, got %d", resp.StatusCode)
 	}

@@ -30,7 +30,9 @@ import (
 	"github.com/TuF3i/kamc/internal/auth"
 	"github.com/TuF3i/kamc/internal/platform/audit"
 	"github.com/TuF3i/kamc/internal/platform/authz"
+	"github.com/TuF3i/kamc/internal/platform/catalog"
 	"github.com/TuF3i/kamc/internal/platform/dao"
+	"github.com/TuF3i/kamc/internal/platform/directory"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
 	"github.com/TuF3i/kamc/internal/platform/handler"
 	mw "github.com/TuF3i/kamc/internal/platform/middleware"
@@ -133,9 +135,6 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	if err := d.SetupAudit(context.Background()); err != nil {
 		return nil, fmt.Errorf("platform -> setup audit table: %w", err)
 	}
-	if err := d.SetupRole(context.Background()); err != nil {
-		return nil, fmt.Errorf("platform -> setup role table: %w", err)
-	}
 	if err := d.SetupRobot(context.Background()); err != nil {
 		return nil, fmt.Errorf("platform -> setup robot table: %w", err)
 	}
@@ -195,6 +194,7 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	if o.tunnels != nil {
 		proxies = proxy.NewPool(o.tunnels.Service.Open)
 	}
+	catalogSvc := catalog.New(svc, proxies)
 
 	// kubeconfig 生成配置：平台 CA（可选嵌入）与 exec 插件参数
 	var caData []byte
@@ -223,6 +223,12 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	auditWriter := audit.NewWriter(d, envDefault("AM_AUDIT_SPILL_FILE", "/tmp/kamc-audit-spill.jsonl"))
 	auditWriter.Start()
 
+	// Authentik 用户/组织目录（策略编辑器下拉；未配置时端点返回 503）
+	directoryClient := directory.NewFromEnv()
+	if directoryClient == nil {
+		log.Printf("[platform] Authentik directory not configured (AUTHENTIK_API_URL/AUTHENTIK_API_TOKEN)")
+	}
+
 	h := handler.NewHandler(svc, handler.Deps{
 		Auth:          authSvc,
 		OIDC:          oidcClient,
@@ -235,6 +241,8 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		RateLimitN:    rateLimitN,
 		Audit:         auditWriter,
 		RobotTokenTTL: envDuration("AM_ROBOT_TOKEN_TTL", 365*24*time.Hour),
+		Directory:     directoryClient,
+		Catalog:       catalogSvc,
 	})
 	h.SetPolicy(envDefault("AM_ADMIN_GROUP", "am:admin"), os.Getenv("AM_DEV_ISSUE_TOKEN") == "1")
 	passwordUser := envDefault("AM_PASSWORD_LOGIN_USER", "sysadmin")

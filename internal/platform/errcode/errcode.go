@@ -18,19 +18,18 @@ import (
 
 // 业务码段规划：0 成功；1xxxx 通用；2xxxx 集群域；3xxxx Token 域；4xxxx 策略域；5xxxx 系统（≥50000 走 HTTP 500）
 const (
-	CodeSuccess         = 0
-	CodeInvalidParam    = 10001
-	CodeClusterNotFound = 20001
-	CodeClusterExists   = 20002
-	CodeTokenNotFound   = 30001
-	CodeRobotExists     = 30002
-	CodeRobotNotFound   = 30003
-	CodeRobotExpired    = 30004
-	CodePolicyNotFound  = 40001
-	CodeRoleNotFound    = 40003
-	CodeRoleExists      = 40004
-	CodeRoleInUse       = 40005
-	CodeServerInternal  = 50000
+	CodeSuccess            = 0
+	CodeInvalidParam       = 10001
+	CodeClusterNotFound    = 20001
+	CodeClusterExists      = 20002
+	CodeClusterUnreachable = 20003
+	CodeDiscoveryFailed    = 20004
+	CodeTokenNotFound      = 30001
+	CodeRobotExists        = 30002
+	CodeRobotNotFound      = 30003
+	CodeRobotExpired       = 30004
+	CodePolicyNotFound     = 40001
+	CodeServerInternal     = 50000
 )
 
 // Response 统一响应体；实现 error 接口供层间元组上抛。
@@ -46,18 +45,17 @@ func (r *Response) Error() string {
 
 // 业务错误码（包级 var，禁止运行期修改）
 var (
-	OperationSuccess   = &Response{Status: CodeSuccess, Message: "success"}
-	ErrInvalidParam    = &Response{Status: CodeInvalidParam, Message: "invalid parameter"}
-	ErrClusterNotFound = &Response{Status: CodeClusterNotFound, Message: "cluster not found"}
-	ErrClusterExists   = &Response{Status: CodeClusterExists, Message: "cluster already exists"}
-	ErrTokenNotFound   = &Response{Status: CodeTokenNotFound, Message: "token not found"}
-	ErrRobotExists     = &Response{Status: CodeRobotExists, Message: "robot already exists"}
-	ErrRobotNotFound   = &Response{Status: CodeRobotNotFound, Message: "robot not found"}
-	ErrRobotExpired    = &Response{Status: CodeRobotExpired, Message: "robot token expired"}
-	ErrPolicyNotFound  = &Response{Status: CodePolicyNotFound, Message: "policy not found"}
-	ErrRoleNotFound    = &Response{Status: CodeRoleNotFound, Message: "role not found"}
-	ErrRoleExists      = &Response{Status: CodeRoleExists, Message: "role already exists"}
-	ErrRoleInUse       = &Response{Status: CodeRoleInUse, Message: "role is still in use"}
+	OperationSuccess      = &Response{Status: CodeSuccess, Message: "success"}
+	ErrInvalidParam       = &Response{Status: CodeInvalidParam, Message: "invalid parameter"}
+	ErrClusterNotFound    = &Response{Status: CodeClusterNotFound, Message: "cluster not found"}
+	ErrClusterExists      = &Response{Status: CodeClusterExists, Message: "cluster already exists"}
+	ErrClusterUnreachable = &Response{Status: CodeClusterUnreachable, Message: "cluster unreachable"}
+	ErrDiscoveryFailed    = &Response{Status: CodeDiscoveryFailed, Message: "resource discovery failed"}
+	ErrTokenNotFound      = &Response{Status: CodeTokenNotFound, Message: "token not found"}
+	ErrRobotExists        = &Response{Status: CodeRobotExists, Message: "robot already exists"}
+	ErrRobotNotFound      = &Response{Status: CodeRobotNotFound, Message: "robot not found"}
+	ErrRobotExpired       = &Response{Status: CodeRobotExpired, Message: "robot token expired"}
+	ErrPolicyNotFound     = &Response{Status: CodePolicyNotFound, Message: "policy not found"}
 )
 
 // ServerInternal 系统内部错误：携带底层 err 详情，仅 handler 出口构造

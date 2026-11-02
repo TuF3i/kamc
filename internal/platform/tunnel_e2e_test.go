@@ -104,17 +104,8 @@ func TestTunnelEndToEnd(t *testing.T) {
 		t.Fatalf("decode issued: %v", err)
 	}
 
-	// 策略种子：管理员角色绑定（Casbin 数据面鉴权）
-	resp, ar = call(t, rt, http.MethodPost, "/api/v1/policies",
-		map[string]string{"sub": "role:cluster-admin", "dom": clusterID, "obj": "*", "act": ".*"}, tok)
-	if ar.Status != errcode.CodeSuccess {
-		t.Fatalf("seed policy: %+v", ar)
-	}
-	resp, ar = call(t, rt, http.MethodPost, "/api/v1/bindings",
-		map[string]string{"user": "admin-test", "role": "role:cluster-admin", "dom": clusterID}, tok)
-	if ar.Status != errcode.CodeSuccess {
-		t.Fatalf("seed binding: %+v", ar)
-	}
+	// 策略种子：管理员直接用户策略（Casbin 数据面鉴权）
+	seedUserPolicy(t, rt, tok, "admin-test", clusterID)
 
 	// Agent：真实拨号（默认 dialFn）+ 显式注入上游
 	tokenFile := filepath.Join(t.TempDir(), "token")

@@ -14,6 +14,8 @@ import (
 	mw "github.com/TuF3i/kamc/internal/platform/middleware"
 
 	"github.com/TuF3i/kamc/internal/auth"
+	"github.com/TuF3i/kamc/internal/platform/catalog"
+	"github.com/TuF3i/kamc/internal/platform/directory"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
 	"github.com/TuF3i/kamc/internal/platform/modules"
 	"github.com/TuF3i/kamc/internal/platform/oidc"
@@ -25,17 +27,19 @@ import (
 
 // Deps Handler 的可空依赖（nil 即功能降级：对应端点返回 503/501）
 type Deps struct {
-	Auth          *auth.Service   // JWT 签发/校验（nil = 认证未装配）
-	OIDC          *oidc.Client    // OIDC 登录（nil = 未配置 → /auth/login 503）
-	Tunnels       *tunnel.Service // 隧道模块（nil = 未启用 → /tunnel 返回 503）
-	Proxies       *proxy.Pool     // API 代理池（nil = 未装配 → /proxy 返回 501）
-	CAData        []byte          // kubeconfig 嵌入的平台 CA（AM_KUBECONFIG_CA_FILE，可选）
-	OIDCIssuer    string          // exec 插件参数（kubeconfig 生成用）
-	OIDCClientID  string          // exec 插件参数
-	RateLimiter   mw.RateLimiter  // 数据面限流器（nil 或 RateLimit<=0 不启用）
-	RateLimitN    int             // 窗口内最大请求数
-	Audit         *audit.Writer   // 审计异步写出器（nil = 不审计）
-	RobotTokenTTL time.Duration   // Robot 长期 JWT 有效期（默认 365 天）
+	Auth          *auth.Service     // JWT 签发/校验（nil = 认证未装配）
+	OIDC          *oidc.Client      // OIDC 登录（nil = 未配置 → /auth/login 503）
+	Tunnels       *tunnel.Service   // 隧道模块（nil = 未启用 → /tunnel 返回 503）
+	Proxies       *proxy.Pool       // API 代理池（nil = 未装配 → /proxy 返回 501）
+	CAData        []byte            // kubeconfig 嵌入的平台 CA（AM_KUBECONFIG_CA_FILE，可选）
+	OIDCIssuer    string            // exec 插件参数（kubeconfig 生成用）
+	OIDCClientID  string            // exec 插件参数
+	RateLimiter   mw.RateLimiter    // 数据面限流器（nil 或 RateLimit<=0 不启用）
+	RateLimitN    int               // 窗口内最大请求数
+	Audit         *audit.Writer     // 审计异步写出器（nil = 不审计）
+	RobotTokenTTL time.Duration     // Robot 长期 JWT 有效期（默认 365 天）
+	Directory     *directory.Client // Authentik 用户/组织目录（nil = 未配置）
+	Catalog       *catalog.Service  // 集群 GVR 资源目录（nil = 未装配）
 }
 
 // Handler 平台 HTTP 处理器（业务下沉 Service；依赖可空，对应降级行为）
@@ -53,7 +57,9 @@ type Handler struct {
 	rateLimiter   mw.RateLimiter // 数据面限流器（nil 或 rateLimitN<=0 不启用）
 	rateLimitN    int            // 窗口内最大请求数
 	audit         *audit.Writer
-	robotTokenTTL time.Duration // Robot 长期 JWT 有效期
+	robotTokenTTL time.Duration     // Robot 长期 JWT 有效期
+	directory     *directory.Client // Authentik 用户/组织目录
+	catalog       *catalog.Service  // 集群 GVR 资源目录
 
 	adminGroup      string    // 管理面用户组（AM_ADMIN_GROUP）
 	devTokenEnabled bool      // 开发用直签 Token 开关（AM_DEV_ISSUE_TOKEN）
@@ -70,7 +76,7 @@ func NewHandler(svc *service.Service, deps Deps) *Handler {
 		svc: svc, auth: deps.Auth, oidc: deps.OIDC, tunnels: deps.Tunnels, proxies: deps.Proxies,
 		caData: deps.CAData, oidcIssuer: deps.OIDCIssuer, oidcClientID: deps.OIDCClientID,
 		rateLimiter: deps.RateLimiter, rateLimitN: deps.RateLimitN, audit: deps.Audit,
-		robotTokenTTL: deps.RobotTokenTTL, startedAt: time.Now(),
+		robotTokenTTL: deps.RobotTokenTTL, directory: deps.Directory, catalog: deps.Catalog, startedAt: time.Now(),
 	}
 }
 
@@ -138,7 +144,8 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			admin.Post("/auth/revoke", h.AuthRevokeUser)
 			admin.Get("/audit", h.ListAudit)
 			policiesRoutes(admin, h)
-			rolesRoutes(admin, h)
+			directoryRoutes(admin, h)
+			clusterResourcesRoutes(admin, h)
 			robotsRoutes(admin, h)
 			admin.Get("/system", h.SystemInfo)
 		})
