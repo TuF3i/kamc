@@ -12,6 +12,7 @@ import {
   Tag,
   Typography,
   type TableColumnsType,
+  type TableProps,
 } from 'antd';
 import { DeleteOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons';
 import { deletePolicy, listPolicies } from '@/api/access';
@@ -20,6 +21,7 @@ import { listRobots } from '@/api/robots';
 import type { Cluster, PolicyDTO, Robot } from '@/api/types';
 import { PageHeader } from '@/components/PageHeader';
 import { PolicyEditor } from '@/components/PolicyEditor';
+import { summarizeBatch } from '@/utils/batch';
 
 function subjectLabel(record: PolicyDTO): string {
   if (record.subject_type === 'org') return '组织';
@@ -33,7 +35,7 @@ function resourceLabel(record: PolicyDTO): string {
 }
 
 export function Access() {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const [searchParams, setSearchParams] = useSearchParams();
   const [policies, setPolicies] = useState<PolicyDTO[]>([]);
   const [clusters, setClusters] = useState<Cluster[]>([]);
@@ -41,6 +43,7 @@ export function Access() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
   const [editorOpen, setEditorOpen] = useState(false);
   const [initialSubjectType, setInitialSubjectType] = useState<'org' | 'user'>('user');
   const [initialSubject, setInitialSubject] = useState<string>();
@@ -96,6 +99,23 @@ export function Access() {
     );
   }, [policies, search]);
 
+  const policyKey = (record: PolicyDTO) => `${record.sub}|${record.dom}|${record.obj}|${record.act}`;
+
+  const policyByKey = useMemo(() => {
+    const map = new Map<string, PolicyDTO>();
+    for (const record of policies) map.set(policyKey(record), record);
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [policies]);
+
+  const selectedPolicies = useMemo(
+    () =>
+      selectedKeys
+        .map((key) => policyByKey.get(String(key)))
+        .filter((record): record is PolicyDTO => Boolean(record)),
+    [selectedKeys, policyByKey],
+  );
+
   const remove = async (record: PolicyDTO) => {
     try {
       await deletePolicy({
@@ -105,10 +125,53 @@ export function Access() {
         act: record.act,
       });
       message.success('策略已删除');
+      setSelectedKeys((keys) => keys.filter((key) => key !== policyKey(record)));
       await loadAll();
     } catch (err) {
       message.error(err instanceof Error ? err.message : '删除策略失败');
     }
+  };
+
+  const batchRemove = () => {
+    const targets = selectedPolicies;
+    if (targets.length === 0) return;
+    modal.confirm({
+      title: `批量删除 ${targets.length} 条策略？`,
+      content: '删除立即生效，对应主体马上失去这些资源的访问权限。',
+      okText: '批量删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        const outcome = summarizeBatch(
+          await Promise.allSettled(
+            targets.map((record) =>
+              deletePolicy({
+                sub: record.sub,
+                dom: record.dom,
+                obj: record.obj,
+                act: record.act,
+              }),
+            ),
+          ),
+        );
+        if (outcome.failed === 0) {
+          message.success(`已删除 ${outcome.succeeded} 条策略`);
+        } else {
+          message.error(
+            `已删除 ${outcome.succeeded} 条策略，${outcome.failed} 条失败：${outcome.firstError}`,
+          );
+        }
+        setSelectedKeys([]);
+        await loadAll();
+      },
+    });
+  };
+
+  const rowSelection: TableProps<PolicyDTO>['rowSelection'] = {
+    selectedRowKeys: selectedKeys,
+    onChange: (keys) => setSelectedKeys([...keys]),
+    selections: [Table.SELECTION_ALL, Table.SELECTION_INVERT, Table.SELECTION_NONE],
+    preserveSelectedRowKeys: true,
   };
 
   const columns: TableColumnsType<PolicyDTO> = [
@@ -238,11 +301,27 @@ export function Access() {
       ) : null}
 
       <Card className="soft-card" styles={{ body: { padding: 0 } }}>
+        {selectedKeys.length > 0 ? (
+          <div className="batch-bar">
+            <Space size={12}>
+              <Typography.Text>
+                已选择 <span className="batch-count">{selectedKeys.length}</span> 条策略
+              </Typography.Text>
+              <Button type="link" size="small" onClick={() => setSelectedKeys([])}>
+                清空
+              </Button>
+            </Space>
+            <Button danger size="small" icon={<DeleteOutlined />} onClick={batchRemove}>
+              批量删除
+            </Button>
+          </div>
+        ) : null}
         <Table<PolicyDTO>
-          rowKey={(record) => `${record.sub}|${record.dom}|${record.obj}|${record.act}`}
+          rowKey={policyKey}
           columns={columns}
           dataSource={filtered}
           loading={loading}
+          rowSelection={rowSelection}
           pagination={{ pageSize: 10, showTotal: (total) => `共 ${total} 条策略` }}
           scroll={{ x: 1100 }}
           locale={{
@@ -267,7 +346,10 @@ export function Access() {
         initialSubjectType={initialSubjectType}
         initialSubject={initialSubject}
         onClose={() => setEditorOpen(false)}
-        onCreated={() => void loadAll()}
+        onCreated={() => {
+          setSelectedKeys([]);
+          void loadAll();
+        }}
       />
     </div>
   );

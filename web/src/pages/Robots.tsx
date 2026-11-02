@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Alert,
@@ -14,6 +14,7 @@ import {
   Tag,
   Typography,
   type TableColumnsType,
+  type TableProps,
 } from 'antd';
 import {
   CloudDownloadOutlined,
@@ -29,6 +30,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { CopyButton } from '@/components/CopyButton';
 import { fmtTime } from '@/utils/format';
 import { downloadTextFile } from '@/utils/download';
+import { summarizeBatch } from '@/utils/batch';
 
 interface RobotForm {
   name: string;
@@ -40,12 +42,13 @@ function RobotStatusTag({ status }: { status: Robot['status'] }) {
 }
 
 export function Robots() {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const navigate = useNavigate();
   const [robots, setRobots] = useState<Robot[]>([]);
   const [clusters, setClusters] = useState<Cluster[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<CreateRobotResponse | null>(null);
@@ -99,7 +102,7 @@ export function Robots() {
   };
 
   const remove = (robot: Robot) => {
-    Modal.confirm({
+    modal.confirm({
       title: `吊销机器人「${robot.name}」？`,
       content: '删除后该机器人的 Token 立即失效，其全部直接策略一并清理，操作不可撤销。',
       okText: '吊销',
@@ -110,6 +113,7 @@ export function Robots() {
         try {
           await deleteRobot(robot.id);
           message.success(`机器人 ${robot.name} 已吊销`);
+          setSelectedKeys((keys) => keys.filter((key) => key !== robot.id));
           await load();
         } catch (err) {
           message.error(err instanceof Error ? err.message : '吊销机器人失败');
@@ -118,6 +122,44 @@ export function Robots() {
         }
       },
     });
+  };
+
+  const selectedRobots = useMemo(
+    () => robots.filter((r) => selectedKeys.includes(r.id)),
+    [robots, selectedKeys],
+  );
+
+  const batchRevoke = () => {
+    const targets = selectedRobots;
+    if (targets.length === 0) return;
+    modal.confirm({
+      title: `批量吊销 ${targets.length} 个机器人？`,
+      content: '吊销后对应 Token 立即失效，其全部直接策略一并清理，操作不可撤销。',
+      okText: '批量吊销',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        const outcome = summarizeBatch(
+          await Promise.allSettled(targets.map((r) => deleteRobot(r.id))),
+        );
+        if (outcome.failed === 0) {
+          message.success(`已吊销 ${outcome.succeeded} 个机器人`);
+        } else {
+          message.error(
+            `已吊销 ${outcome.succeeded} 个机器人，${outcome.failed} 个失败：${outcome.firstError}`,
+          );
+        }
+        setSelectedKeys([]);
+        await load();
+      },
+    });
+  };
+
+  const rowSelection: TableProps<Robot>['rowSelection'] = {
+    selectedRowKeys: selectedKeys,
+    onChange: (keys) => setSelectedKeys([...keys]),
+    selections: [Table.SELECTION_ALL, Table.SELECTION_INVERT, Table.SELECTION_NONE],
+    preserveSelectedRowKeys: true,
   };
 
   const configurePolicy = (robot: Robot) => {
@@ -248,11 +290,27 @@ export function Robots() {
       ) : null}
 
       <Card className="soft-card" styles={{ body: { padding: 0 } }}>
+        {selectedKeys.length > 0 ? (
+          <div className="batch-bar">
+            <Space size={12}>
+              <Typography.Text>
+                已选择 <span className="batch-count">{selectedKeys.length}</span> 个机器人
+              </Typography.Text>
+              <Button type="link" size="small" onClick={() => setSelectedKeys([])}>
+                清空
+              </Button>
+            </Space>
+            <Button danger size="small" icon={<DeleteOutlined />} onClick={batchRevoke}>
+              批量吊销
+            </Button>
+          </div>
+        ) : null}
         <Table<Robot>
           rowKey="id"
           columns={columns}
           dataSource={robots}
           loading={loading}
+          rowSelection={rowSelection}
           pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 个机器人` }}
           scroll={{ x: 1300 }}
           locale={{

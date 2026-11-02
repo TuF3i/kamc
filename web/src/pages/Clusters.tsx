@@ -12,6 +12,7 @@ import {
   Table,
   Typography,
   type TableColumnsType,
+  type TableProps,
 } from 'antd';
 import { DeleteOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons';
 import { createCluster, deleteCluster, listClusters } from '@/api/clusters';
@@ -19,6 +20,7 @@ import type { Cluster } from '@/api/types';
 import { PageHeader } from '@/components/PageHeader';
 import { ClusterStatusTag } from '@/components/StatusTag';
 import { fmtTime } from '@/utils/format';
+import { summarizeBatch } from '@/utils/batch';
 
 interface CreateFormValues {
   id: string;
@@ -27,12 +29,13 @@ interface CreateFormValues {
 }
 
 export function Clusters() {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const navigate = useNavigate();
   const [clusters, setClusters] = useState<Cluster[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Cluster | null>(null);
@@ -98,6 +101,7 @@ export function Clusters() {
     try {
       await deleteCluster(deleteTarget.id);
       message.success(`集群 ${deleteTarget.id} 已注销`);
+      setSelectedKeys((keys) => keys.filter((k) => k !== deleteTarget.id));
       setDeleteTarget(null);
       await load();
     } catch (err) {
@@ -105,6 +109,44 @@ export function Clusters() {
     } finally {
       setDeleting(false);
     }
+  };
+
+  const selectedClusters = useMemo(
+    () => clusters.filter((c) => selectedKeys.includes(c.id)),
+    [clusters, selectedKeys],
+  );
+
+  const batchDelete = () => {
+    const targets = selectedClusters;
+    if (targets.length === 0) return;
+    modal.confirm({
+      title: `批量注销 ${targets.length} 个集群？`,
+      content: '仅删除集群记录，该操作不可撤销；已签发的 Agent Token、Casbin 策略不会自动清理，需要另行处理。',
+      okText: '批量注销',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        const outcome = summarizeBatch(
+          await Promise.allSettled(targets.map((c) => deleteCluster(c.id))),
+        );
+        if (outcome.failed === 0) {
+          message.success(`已注销 ${outcome.succeeded} 个集群`);
+        } else {
+          message.error(
+            `已注销 ${outcome.succeeded} 个集群，${outcome.failed} 个失败：${outcome.firstError}`,
+          );
+        }
+        setSelectedKeys([]);
+        await load();
+      },
+    });
+  };
+
+  const rowSelection: TableProps<Cluster>['rowSelection'] = {
+    selectedRowKeys: selectedKeys,
+    onChange: (keys) => setSelectedKeys([...keys]),
+    selections: [Table.SELECTION_ALL, Table.SELECTION_INVERT, Table.SELECTION_NONE],
+    preserveSelectedRowKeys: true,
   };
 
   const columns: TableColumnsType<Cluster> = [
@@ -212,14 +254,33 @@ export function Clusters() {
       ) : null}
 
       <Card className="soft-card" styles={{ body: { padding: 0 } }}>
+        {selectedKeys.length > 0 ? (
+          <div className="batch-bar">
+            <Space size={12}>
+              <Typography.Text>
+                已选择 <span className="batch-count">{selectedKeys.length}</span> 个集群
+              </Typography.Text>
+              <Button type="link" size="small" onClick={() => setSelectedKeys([])}>
+                清空
+              </Button>
+            </Space>
+            <Button danger size="small" icon={<DeleteOutlined />} onClick={batchDelete}>
+              批量注销
+            </Button>
+          </div>
+        ) : null}
         <Table<Cluster>
           rowKey="id"
           className="clickable-table"
           columns={columns}
           dataSource={filtered}
           loading={loading}
+          rowSelection={rowSelection}
           onRow={(record) => ({
-            onClick: () => navigate(`/clusters/${encodeURIComponent(record.id)}`),
+            onClick: (event) => {
+              if ((event.target as HTMLElement).closest('.ant-table-selection-column')) return;
+              navigate(`/clusters/${encodeURIComponent(record.id)}`);
+            },
           })}
           pagination={{
             pageSize: 10,

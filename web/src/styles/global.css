@@ -931,6 +931,21 @@ body {
   cursor: pointer;
 }
 
+.batch-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--kamc-border-soft);
+  background: rgba(76, 154, 255, 0.08);
+}
+
+.batch-count {
+  color: var(--kamc-primary);
+  font-weight: 600;
+}
+
 .ant-table-thead > tr > th {
   font-weight: 600;
   font-size: 13px;
