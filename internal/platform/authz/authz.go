@@ -150,6 +150,20 @@ func (en *Enforcer) ListPolicies() ([][]string, error) {
 	return en.e.GetPolicy()
 }
 
+// HasPolicy 精确匹配策略行是否存在（Lua 桥接的"组是否存在则新建"语义）
+func (en *Enforcer) HasPolicy(sub, dom, obj, act string) (bool, error) {
+	rules, err := en.e.GetPolicy()
+	if err != nil {
+		return false, fmt.Errorf("authz -> has policy: %w", err)
+	}
+	for _, r := range rules {
+		if len(r) == 4 && r[0] == sub && r[1] == dom && r[2] == obj && r[3] == act {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // AddBinding 用户-角色绑定（g, user, role, dom）
 func (en *Enforcer) AddBinding(user, role, dom string) (bool, error) {
 	added, err := en.e.AddGroupingPolicy(user, role, dom)
