@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { useRouter } from 'vue-router';
 import Card from '@/components/Card.vue';
 import LabeledInput from '@/components/LabeledInput.vue';
 import LabeledSelect from '@/components/LabeledSelect.vue';
@@ -11,7 +10,6 @@ import { fmtExpiresIn, fmtTime } from '@/utils/format';
 
 const auth = useAuthStore();
 const growl = useGrowlStore();
-const router = useRouter();
 
 // 管理员：从集群列表选择；普通用户：手动输入集群 ID（clusters 列表是管理面端点）
 const clusterOptions = ref<{ label: string; value: string }[]>([]);
@@ -38,8 +36,7 @@ async function doDownload(): Promise<void> {
 }
 
 async function doLogout(): Promise<void> {
-  await auth.signout();
-  router.push('/auth/login');
+  await auth.signout(); // 内部整页跳转，无需再 push
 }
 
 onMounted(async () => {

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 withDefaults(
   defineProps<{
+    open: boolean;
     title?: string;
     width?: string;
   }>(),
-  { width: '520px' },
+  { title: '', width: '520px' },
 );
 
 const emit = defineEmits<{ close: [] }>();
@@ -16,7 +17,7 @@ function onKeydown(e: KeyboardEvent): void {
 
 <template>
   <Teleport to="body">
-    <div class="modal-backdrop" @click.self="emit('close')" @keydown="onKeydown">
+    <div v-if="open" class="modal-backdrop" @click.self="emit('close')" @keydown="onKeydown">
       <div class="modal" :style="{ width }" role="dialog" aria-modal="true">
         <header class="modal-head">
           <h3>{{ title }}</h3>

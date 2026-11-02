@@ -65,6 +65,7 @@ async function devLogin(): Promise<void> {
 
       <Banner v-if="error" type="error" closable @close="error = ''">{{ error }}</Banner>
       <Banner v-if="route.query.expired" type="warning">登录已过期，请重新登录</Banner>
+      <Banner v-if="route.query.logged_out" type="info">已退出登录</Banner>
 
       <button class="btn btn-primary sso-btn" :disabled="busy" @click="ssoLogin">
         使用 SSO 登录（OIDC）

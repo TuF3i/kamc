@@ -1,8 +1,12 @@
 <script setup lang="ts">
+import { useId } from 'vue';
+
 export interface SelectOption {
   label: string;
   value: string;
 }
+
+const selectId = useId();
 
 withDefaults(
   defineProps<{
@@ -21,11 +25,12 @@ defineEmits<{ 'update:modelValue': [value: string] }>();
 
 <template>
   <div class="field">
-    <label class="field-label">
+    <label class="field-label" :for="selectId">
       {{ label }}
       <span v-if="required" class="req">*</span>
     </label>
     <select
+      :id="selectId"
       class="select"
       :value="modelValue"
       :required="required"

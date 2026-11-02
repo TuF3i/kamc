@@ -66,7 +66,10 @@ async function runDry(): Promise<void> {
       dryRun: !dryRealMode.value,
       sub: drySub.value.trim() || undefined,
       email: dryEmail.value.trim() || undefined,
-      groups: dryGroups.value.trim() || undefined,
+      groups: dryGroups.value
+        .split(/[,\s]+/)
+        .map((g) => g.trim())
+        .filter(Boolean),
     });
     growl.success(dryResult.value.dry_run ? 'dry-run 执行成功（未落地）' : '执行成功（已真实落地）');
   } catch (e) {

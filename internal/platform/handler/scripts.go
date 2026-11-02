@@ -5,6 +5,8 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -87,7 +89,12 @@ func (h *Handler) ExecuteAuthScript(w http.ResponseWriter, r *http.Request) {
 		Email  string   `json:"email"`
 		Groups []string `json:"groups"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req) // body 可选
+	// body 可选（空 body=EOF 用调用者身份）；但畸形 JSON 必须显式拒绝，
+	// 否则静默回退调用者身份会让"注入 mock claims"变成假成功
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
+		return
+	}
 
 	if req.Sub == "" {
 		if claims, ok := middleware.ClaimsFromCtx(r.Context()); ok {

@@ -37,8 +37,8 @@ export function setToken(token: string): void {
 /** 未认证统一处理：清凭证回登录页（携带 redirect 供回跳） */
 function onUnauthorized(): void {
   setToken('');
-  if (!location.pathname.startsWith('/auth/login')) {
-    location.assign('/auth/login?expired=1&redirect=' + encodeURIComponent(location.pathname + location.search));
+  if (!location.pathname.startsWith('/login')) {
+    location.assign('/login?expired=1&redirect=' + encodeURIComponent(location.pathname + location.search));
   }
 }
 

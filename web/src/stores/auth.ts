@@ -79,6 +79,7 @@ export const useAuthStore = defineStore('auth', {
       return !!this.token;
     },
 
+    /** 登出：吊销当前 jti → 清本地 → 整页跳回登录页（硬导航，SPA 状态全部重建） */
     async signout(): Promise<void> {
       try {
         await authApi.logout();
@@ -86,6 +87,7 @@ export const useAuthStore = defineStore('auth', {
         // 吊销失败也照常清理本地（token 可能已过期）
       }
       this.clearLocal();
+      location.assign('/login?logged_out=1');
     },
 
     clearLocal(): void {

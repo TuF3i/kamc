@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
@@ -168,6 +168,8 @@ onBeforeUnmount(() => {
   term?.dispose();
   term = null;
 });
+
+onMounted(loadNamespaces);
 </script>
 
 <template>

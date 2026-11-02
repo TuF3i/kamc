@@ -5,7 +5,9 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     {
-      path: '/auth/login',
+      // 注意：不能叫 /auth/login——/auth 前缀在代理/nginx 层转发给后端，
+      // 直接刷新会打到 OIDC 端点而非 SPA（SSO 按钮跳的后端端点不受影响）
+      path: '/login',
       name: 'login',
       component: () => import('@/pages/Login.vue'),
       meta: { public: true, title: '登录' },

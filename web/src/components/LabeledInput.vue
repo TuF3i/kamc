@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import { useId } from 'vue';
+
+const inputId = useId();
+
 withDefaults(
   defineProps<{
     label: string;
@@ -18,11 +22,12 @@ defineEmits<{ 'update:modelValue': [value: string] }>();
 
 <template>
   <div class="field">
-    <label class="field-label">
+    <label class="field-label" :for="inputId">
       {{ label }}
       <span v-if="required" class="req">*</span>
     </label>
     <input
+      :id="inputId"
       class="input"
       :class="{ mono }"
       :type="type"

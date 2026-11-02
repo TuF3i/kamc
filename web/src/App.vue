@@ -10,6 +10,8 @@ const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 
+const isPublic = computed(() => !!route.meta.public);
+
 const collapsed = ref(localStorage.getItem('kamc_nav_collapsed') === '1');
 const userMenuOpen = ref(false);
 
@@ -62,13 +64,15 @@ function toggleNav(): void {
 
 async function onLogout(): Promise<void> {
   userMenuOpen.value = false;
-  await auth.signout();
-  router.push('/auth/login');
+  await auth.signout(); // 内部整页跳转
 }
 </script>
 
 <template>
-  <div class="shell">
+  <!-- 公开路由（登录页）裸渲染，不套应用壳（对齐 Rancher 全屏登录） -->
+  <RouterView v-if="isPublic" />
+
+  <div v-else class="shell">
     <header class="topbar">
       <div class="topbar-left">
         <button class="icon-btn" title="折叠/展开导航" @click="toggleNav">☰</button>
