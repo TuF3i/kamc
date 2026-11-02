@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -28,7 +29,9 @@ func (h *Handler) AuthLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 // AuthCallback GET /auth/callback —— 授权码兑换，签发平台 JWT。
-// 返回 JSON（CLI/调试友好）；浏览器直连场景的前端跳转属路线图。
+// 非浏览器客户端（CLI/exec plugin/e2e）返回 JSON 信封；浏览器导航
+// （Accept: text/html）返回桥接页：JWT 写入同源 localStorage 后跳回 SPA 根
+// 路径（web/ 前端约定，见 web/README.md）。
 func (h *Handler) AuthCallback(w http.ResponseWriter, r *http.Request) {
 	if h.oidc == nil || h.auth == nil {
 		http.Error(w, "oidc not configured", http.StatusServiceUnavailable)
@@ -41,7 +44,7 @@ func (h *Handler) AuthCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "login failed", http.StatusUnauthorized)
 		return
 	}
-	h.issueAfterBinding(w, r, user.Sub, user.Email, user.Groups, "/auth/callback")
+	h.issueAfterBinding(w, r, user.Sub, user.Email, user.Groups, "/auth/callback", wantsHTML(r))
 }
 
 // AuthMe GET /auth/me —— 回显当前 JWT claims（调试与客户端自检）
@@ -70,7 +73,7 @@ func (h *Handler) AuthDevToken(w http.ResponseWriter, r *http.Request) {
 		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
 		return
 	}
-	h.issueAfterBinding(w, r, req.Sub, req.Email, req.Groups, "/auth/dev-token")
+	h.issueAfterBinding(w, r, req.Sub, req.Email, req.Groups, "/auth/dev-token", false)
 }
 
 // AuthTokenExchange POST /auth/token-exchange —— OIDC ID Token 兑换平台 JWT
@@ -94,7 +97,7 @@ func (h *Handler) AuthTokenExchange(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	h.issueAfterBinding(w, r, user.Sub, user.Email, user.Groups, "/auth/token-exchange")
+	h.issueAfterBinding(w, r, user.Sub, user.Email, user.Groups, "/auth/token-exchange", false)
 }
 
 // AuthRevokeUser POST /api/v1/auth/revoke —— 踢出用户（管理面）：
@@ -150,11 +153,18 @@ func (h *Handler) JWKS(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write(b)
 }
 
+// wantsHTML 浏览器导航检测：顶层导航的 Accept 首选 text/html；
+// fetch/XHR 默认 Accept: */*，CLI 客户端一般不携带——均走 JSON 分支
+func wantsHTML(r *http.Request) bool {
+	return strings.Contains(r.Header.Get("Accept"), "text/html")
+}
+
 // issueAfterBinding 登录挂载点（§5 扩展，fail-closed）：
 // 执行启用的权限绑定脚本（Authentik claims → Casbin 绑定/策略），
 // 任何脚本错误拒绝签发（403 + 审计告警）——权限没算出来不放行；
 // 管理员禁用脚本即可恢复登录。脚本未启用（nil 引擎/无脚本）直接签发。
-func (h *Handler) issueAfterBinding(w http.ResponseWriter, r *http.Request, sub, email string, groups []string, source string) {
+// browser=true 时以桥接 HTML 输出（仅 /auth/callback 浏览器导航使用）。
+func (h *Handler) issueAfterBinding(w http.ResponseWriter, r *http.Request, sub, email string, groups []string, source string, browser bool) {
 	if h.luaAuth != nil {
 		if err := h.luaAuth.Execute(r.Context(), luaauth.ClaimsOf(sub, email, groups)); err != nil {
 			log.Printf("[platform] binding script failed for %s: %v", sub, err)
@@ -164,14 +174,13 @@ func (h *Handler) issueAfterBinding(w http.ResponseWriter, r *http.Request, sub,
 		}
 	}
 	h.auditSimple(r, sub, "", source, "login-success", true)
-	h.issueAndRespond(w, sub, email, groups)
-}
-
-// issueAndRespond 签发平台 JWT 并输出（callback 与 dev-token 共用出口）
-func (h *Handler) issueAndRespond(w http.ResponseWriter, sub, email string, groups []string) {
 	token, exp, err := h.auth.Sign(sub, email, groups)
 	if err != nil {
 		http.Error(w, "sign error", http.StatusInternalServerError)
+		return
+	}
+	if browser {
+		writeLoginBridge(w, token)
 		return
 	}
 	errcode.GenFinalResponse(w, map[string]any{
@@ -179,4 +188,21 @@ func (h *Handler) issueAndRespond(w http.ResponseWriter, sub, email string, grou
 		"expires_at": exp.UTC().Format(time.RFC3339),
 		"token_type": "Bearer",
 	}, nil)
+}
+
+// writeLoginBridge 浏览器登录桥接页：OIDC 回调落在后端路径上，SPA 需要拿到
+// JWT 才能继续——桥接页写入同源 localStorage 后跳回根路径。token 经
+// json.Marshal 转义为字符串字面量嵌入脚本，避免注入。
+func writeLoginBridge(w http.ResponseWriter, token string) {
+	literal, err := json.Marshal(token)
+	if err != nil {
+		http.Error(w, "sign error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = fmt.Fprintf(w, `<!doctype html><html><body><script>
+try{localStorage.setItem('kamc_token',%s);}catch(e){}
+location.replace('/');
+</script></body></html>`, literal)
 }

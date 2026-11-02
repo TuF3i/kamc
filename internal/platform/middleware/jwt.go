@@ -70,6 +70,11 @@ func bearerToken(r *http.Request) string {
 	if len(h) > 7 && strings.EqualFold(h[:7], "Bearer ") {
 		return strings.TrimSpace(h[7:])
 	}
+	// 浏览器 WebSocket 无法携带自定义头（exec 终端直连 /proxy 升级）：
+	// 仅对 WS 升级请求接受 access_token 查询参数（TLS 传输，浏览器不落历史明文日志约定见 web/README）
+	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		return r.URL.Query().Get("access_token")
+	}
 	return ""
 }
 

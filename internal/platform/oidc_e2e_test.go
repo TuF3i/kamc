@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -162,6 +163,52 @@ func TestOIDCLoginFlowE2E(t *testing.T) {
 	// 5. 该身份可访问管理面（含 am:admin 组）
 	if meResp := callRaw(t, rt, http.MethodGet, "/api/v1/clusters", issued.Token); meResp.StatusCode != http.StatusOK {
 		t.Fatalf("admin access with idp-admin identity: %d", meResp.StatusCode)
+	}
+}
+
+// TestOIDCBrowserBridgeE2E 浏览器导航（Accept: text/html）走桥接页：
+// 回调 HTML 携带平台 JWT 写入 localStorage 后跳回 SPA 根路径；
+// fetch/CLI（无 text/html Accept）仍为 JSON 信封（上方用例已覆盖）。
+func TestOIDCBrowserBridgeE2E(t *testing.T) {
+	idp := newFakeIDP(t)
+	t.Setenv("OIDC_ISSUER", idp.srv.URL)
+	t.Setenv("OIDC_CLIENT_ID", "kamc-test")
+	t.Setenv("OIDC_CLIENT_SECRET", "s3cret")
+	t.Setenv("OIDC_REDIRECT_URL", "http://localhost:8080/auth/callback")
+	rt := newTestRuntime(t)
+
+	resp := callRaw(t, rt, http.MethodGet, "/auth/login")
+	state := func() string {
+		t.Helper()
+		loc, err := url.Parse(resp.Header.Get("Location"))
+		if err != nil {
+			t.Fatalf("parse location: %v", err)
+		}
+		return loc.Query().Get("state")
+	}()
+	if state == "" {
+		t.Fatal("missing state")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/auth/callback?code=good-code&state="+state, nil)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	rec := httptest.NewRecorder()
+	rt.Engine().ServeHTTP(rec, req)
+	br := rec.Result()
+	defer br.Body.Close()
+	if br.StatusCode != http.StatusOK {
+		t.Fatalf("bridge: want 200, got %d", br.StatusCode)
+	}
+	if ct := br.Header.Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Fatalf("content-type: %s", ct)
+	}
+	raw, err := io.ReadAll(br.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	body := string(raw)
+	if !strings.Contains(body, `localStorage.setItem('kamc_token',"`) || !strings.Contains(body, `location.replace('/')`) {
+		t.Fatalf("bridge page malformed: %s", body)
 	}
 }
 
