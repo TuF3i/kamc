@@ -33,6 +33,7 @@ docs/
   design.md          设计文档 v2.0（架构权威来源）
 api/
   openapi.yaml       平台 HTTP API 的 OpenAPI 3.0 规范（与代码包分离）
+internal/platform/luaauth/  登录期权限绑定脚本引擎（Lua 沙箱 + kamc 桥接）
 deploy/              部署产物（nginx/manifests/README，见其内部说明）
 ```
 
@@ -129,3 +130,6 @@ make vet
 - [x] Prometheus 指标（§12.3）：/metrics（平台侧；Agent 侧无 HTTP 端口属后续）
 - [x] 部署产物：deploy/（nginx、平台/Agent manifests、NetworkPolicy、README
       含上线前人工验收清单——真实集群演练属上线前人工项）
+- [x] 登录期权限绑定脚本（Lua，§5 扩展）：Authentik claims → 沙箱脚本 →
+      kamc 桥接计算绑定/策略（组不存在则新建）；fail-closed（脚本错误拒绝
+      登录）；管理面 CRUD + 手动执行/dry-run；沙箱白名单库 + 2s 超时
