@@ -29,16 +29,16 @@ defineEmits<{ 'update:modelValue': [value: string] }>();
       {{ label }}
       <span v-if="required" class="req">*</span>
     </label>
-    <select
+    <el-select
       :id="selectId"
-      class="select"
-      :value="modelValue"
-      :required="required"
+      :model-value="modelValue"
       :disabled="disabled"
-      @change="$emit('update:modelValue', ($event.target as HTMLSelectElement).value)"
+      :teleported="false"
+      style="width: 100%"
+      @update:model-value="$emit('update:modelValue', $event as string)"
     >
-      <option v-for="o in options" :key="o.value" :value="o.value">{{ o.label }}</option>
-    </select>
+      <el-option v-for="o in options" :key="o.value" :label="o.label" :value="o.value" />
+    </el-select>
     <div v-if="hint" class="field-hint">{{ hint }}</div>
   </div>
 </template>
@@ -53,10 +53,11 @@ defineEmits<{ 'update:modelValue': [value: string] }>();
   font-size: 13px;
   font-weight: 600;
   margin-bottom: 5px;
+  color: $text;
 }
 
 .req {
-  color: $error;
+  color: var(--el-color-danger);
 }
 
 .field-hint {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import { CopyDocument, Check } from '@element-plus/icons-vue';
 import { useGrowlStore } from '@/stores/growl';
 
 const props = defineProps<{
@@ -30,25 +31,14 @@ async function copy(): Promise<void> {
 </script>
 
 <template>
-  <button class="copy-btn" type="button" :title="copied ? '已复制' : '复制'" @click="copy">
-    {{ copied ? '✓' : '⧉' }}
-  </button>
+  <el-button text size="small" class="copy-btn" :title="copied ? '已复制' : '复制'" @click="copy">
+    <el-icon><component :is="copied ? Check : CopyDocument" /></el-icon>
+  </el-button>
 </template>
 
 <style lang="scss" scoped>
 .copy-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: $text-muted;
-  font-size: 14px;
-  padding: 2px 6px;
-  border-radius: 3px;
-  line-height: 1.2;
-
-  &:hover {
-    color: $brand;
-    background: rgba(43, 125, 201, 0.08);
-  }
+  padding: 4px 6px;
+  color: var(--el-text-color-secondary);
 }
 </style>

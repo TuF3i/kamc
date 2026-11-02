@@ -36,7 +36,7 @@ async function doDownload(): Promise<void> {
 }
 
 async function doLogout(): Promise<void> {
-  await auth.signout(); // 内部整页跳转，无需再 push
+  await auth.signout(); // 内部整页跳转
 }
 
 onMounted(async () => {
@@ -69,7 +69,9 @@ onMounted(async () => {
         <dd>{{ auth.claims?.email || '—' }}</dd>
         <dt>组</dt>
         <dd>
-          <span v-for="g in auth.claims?.groups || []" :key="g" class="group-chip">{{ g }}</span>
+          <el-tag v-for="g in auth.claims?.groups || []" :key="g" size="small" class="group-chip" disable-transitions>
+            {{ g }}
+          </el-tag>
           <span v-if="!auth.claims?.groups?.length">—</span>
         </dd>
         <dt>签发时间</dt>
@@ -80,7 +82,11 @@ onMounted(async () => {
           <span class="muted-note">（剩余 {{ expiresIn }}，过期后请重新登录）</span>
         </dd>
         <dt>管理员</dt>
-        <dd>{{ auth.isAdmin ? '是（am-admin 组）' : '否' }}</dd>
+        <dd>
+          <el-tag :type="auth.isAdmin ? 'success' : 'info'" size="small" disable-transitions>
+            {{ auth.isAdmin ? '是' : '否' }}
+          </el-tag>
+        </dd>
         <dt>jti</dt>
         <dd class="mono">{{ auth.claims?.jti }}</dd>
       </dl>
@@ -112,18 +118,16 @@ onMounted(async () => {
           />
         </div>
         <div style="padding-top: 24px">
-          <button class="btn btn-primary" :disabled="kubeBusy" @click="doDownload">
-            {{ kubeBusy ? '生成中…' : '下载' }}
-          </button>
+          <el-button type="primary" :loading="kubeBusy" @click="doDownload">下载</el-button>
         </div>
       </div>
     </Card>
 
     <Card title="会话">
-      <button class="btn btn-danger" @click="doLogout">退出登录</button>
-      <span class="muted-note" style="margin-left: 12px">
-        当前 Token 的 jti 进入黑名单，立即失效；不影响其他已登录会话
-      </span>
+      <div class="session-row">
+        <el-button type="danger" @click="doLogout">退出登录</el-button>
+        <span class="muted-note">当前 Token 的 jti 进入黑名单，立即失效；不影响其他已登录会话</span>
+      </div>
     </Card>
   </div>
 </template>
@@ -136,12 +140,6 @@ onMounted(async () => {
 }
 
 .group-chip {
-  display: inline-block;
-  background: rgba(43, 125, 201, 0.09);
-  color: #1e5d99;
-  border-radius: 10px;
-  padding: 1px 10px;
-  font-size: 12px;
   margin: 0 6px 6px 0;
 }
 
@@ -155,5 +153,11 @@ onMounted(async () => {
   font-size: 13px;
   line-height: 1.7;
   margin: 0 0 12px;
+}
+
+.session-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 </style>

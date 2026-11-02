@@ -4,7 +4,6 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import Banner from '@/components/Banner.vue';
-import LabeledSelect from '@/components/LabeledSelect.vue';
 import { apiRaw, getToken } from '@/api/http';
 import { buildExecUrl, EXEC_SUBPROTOCOL, parseFrame, resizeFrame, stdinFrame } from '@/terminal/exec';
 import { useGrowlStore } from '@/stores/growl';
@@ -176,27 +175,28 @@ onMounted(loadNamespaces);
   <div>
     <div class="terminal-pickers">
       <div class="picker">
-        <LabeledSelect v-model="ns" label="命名空间" :options="[{ label: '选择…', value: '' }, ...namespaces]" />
+        <div class="picker-label">命名空间</div>
+        <el-select v-model="ns" placeholder="选择…" style="width: 100%">
+          <el-option v-for="o in namespaces" :key="o.value" :label="o.label" :value="o.value" />
+        </el-select>
       </div>
       <div class="picker">
-        <LabeledSelect v-model="pod" label="Pod（仅 Running）" :options="[{ label: '选择…', value: '' }, ...pods]" />
+        <div class="picker-label">Pod（仅 Running）</div>
+        <el-select v-model="pod" placeholder="选择…" style="width: 100%">
+          <el-option v-for="o in pods" :key="o.value" :label="o.label" :value="o.value" />
+        </el-select>
       </div>
       <div class="picker">
-        <LabeledSelect
-          v-model="container"
-          label="容器"
-          :options="[{ label: '选择…', value: '' }, ...containers]"
-          :disabled="!containers.length"
-        />
+        <div class="picker-label">容器</div>
+        <el-select v-model="container" placeholder="选择…" :disabled="!containers.length" style="width: 100%">
+          <el-option v-for="o in containers" :key="o.value" :label="o.label" :value="o.value" />
+        </el-select>
       </div>
       <div class="picker picker-actions">
-        <label class="field-label">&nbsp;</label>
-        <div style="display: flex; gap: 8px">
-          <button class="btn btn-primary" :disabled="connState === 'open' || connState === 'connecting'" @click="connect">
-            {{ connState === 'connecting' ? '连接中…' : connState === 'open' ? '已连接' : '连接' }}
-          </button>
-          <button v-if="connState === 'open'" class="btn btn-secondary" @click="disconnect">断开</button>
-        </div>
+        <el-button type="primary" :disabled="connState === 'open' || connState === 'connecting'" @click="connect">
+          {{ connState === 'connecting' ? '连接中…' : connState === 'open' ? '已连接' : '连接' }}
+        </el-button>
+        <el-button v-if="connState === 'open'" @click="disconnect">断开</el-button>
       </div>
     </div>
 
@@ -218,14 +218,23 @@ onMounted(loadNamespaces);
   gap: 14px;
   margin-bottom: 12px;
   flex-wrap: wrap;
+  align-items: flex-end;
 }
 
 .picker {
   width: 220px;
 }
 
+.picker-label {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 5px;
+  color: $text;
+}
+
 .picker-actions {
   width: auto;
+  padding-bottom: 1px;
 }
 
 .terminal-frame {

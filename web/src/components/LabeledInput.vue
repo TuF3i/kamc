@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// 表单字段：Element el-form-item + 对应控件（label 唯一键由表单上下文处理）
 import { useId } from 'vue';
 
 const inputId = useId();
@@ -26,16 +27,15 @@ defineEmits<{ 'update:modelValue': [value: string] }>();
       {{ label }}
       <span v-if="required" class="req">*</span>
     </label>
-    <input
+    <el-input
       :id="inputId"
-      class="input"
-      :class="{ mono }"
-      :type="type"
-      :value="modelValue"
+      :model-value="modelValue"
+      :type="type === 'password' ? 'password' : 'text'"
       :placeholder="placeholder"
-      :required="required"
       :disabled="disabled"
-      @input="$emit('update:modelValue', ($event.target as HTMLInputElement).value)"
+      :class="{ mono }"
+      :rows="type === 'textarea' ? 3 : undefined"
+      @update:model-value="$emit('update:modelValue', $event)"
     />
     <div v-if="hint" class="field-hint">{{ hint }}</div>
   </div>
@@ -51,10 +51,11 @@ defineEmits<{ 'update:modelValue': [value: string] }>();
   font-size: 13px;
   font-weight: 600;
   margin-bottom: 5px;
+  color: $text;
 }
 
 .req {
-  color: $error;
+  color: var(--el-color-danger);
 }
 
 .field-hint {
@@ -62,5 +63,11 @@ defineEmits<{ 'update:modelValue': [value: string] }>();
   color: $text-muted;
   margin-top: 4px;
   line-height: 1.5;
+}
+
+.mono :deep(input),
+.mono :deep(textarea) {
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 12.5px;
 }
 </style>

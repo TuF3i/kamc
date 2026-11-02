@@ -1,6 +1,6 @@
 # kamc-web
 
-kamc 平台管理前端（Vue 3 + TypeScript + Vite + Pinia），交互风格对齐 Rancher Dashboard（深色壳 + 浅色内容区、卡片数据表、状态徽章、Growl 通知），主题自绘、无 Rancher 代码依赖。
+kamc 平台管理前端（Vue 3 + TypeScript + Vite + Pinia + **Element Plus**），蓝灰配色主题（钢蓝主色 + 深蓝灰壳层 + 浅蓝灰内容区）。
 
 ## 快速开始
 
@@ -74,14 +74,30 @@ token 存储于同源 localStorage（XSS 面与 Rancher 的 cookie 方案相当�
 ```
 web/src/
 ├── api/          # fetch 封装：信封解包（HTTP 200 + status 业务码）、ApiError、401 统一回登录
-├── stores/       # Pinia：auth（restore/probeAdmin/signout）、growl（通知）
-├── components/   # Card/DataTable/Modal/Banner/StatusBadge/Tabs/GrowlStack/
-│                 # LabeledInput/LabeledSelect/CopyButton/EmptyState/CodeEditor/ExecTerminal
+├── stores/       # Pinia：auth（restore/probeAdmin/signout）、growl（ElMessage 薄封装）
+├── components/   # Card/DataTable/Modal/Banner/StatusBadge/Tabs/LabeledInput/
+│                 # LabeledSelect/CopyButton/EmptyState/CodeEditor/ExecTerminal
 ├── pages/        # Login/Home/Clusters/ClusterDetail/Access/Scripts/ScriptEdit/Audit/Account
 ├── terminal/     # exec WS 帧协议（buildExecUrl/stdinFrame/resizeFrame/parseFrame）
-└── styles/       # 主题变量（variables.scss 经 vite additionalData 全局注入）+ 基础样式
+└── styles/       # variables.scss（蓝灰变量，vite 注入）+ element.scss（Element 主题覆盖）+ base.scss
 ```
 
 路由守卫（`src/router.ts`）：`meta.public` 免登录；`meta.admin` 需管理员——
 管理员判定不是解析 claims（平台无法感知 AM_ADMIN_GROUP 取值），而是 restore 时以
-`GET /api/v1/clusters` 探测（403 = 普通用户）。
+`GET /api/v1/clusters` 探测（403 = 普通用户）；restore 非认证类失败（如后端暂不可达）
+放行导航由页面自行报错，避免卡死空壳。
+
+## Element Plus 集成要点（踩坑记录）
+
+- **主题**：不重编译 Element SCSS（构建慢），用 `styles/element.scss` 覆盖官方 CSS 变量
+  （`--el-color-primary` 等）实现蓝灰配色；壳层自有变量在 `variables.scss` 经 vite
+  `additionalData` 注入每个 SFC（Element 走预编译 CSS 不受影响）。
+- **DataTable 单元格禁止跨组件插槽透传**：在 `el-table-column` 的 `#default` 里嵌
+  `<slot>`（哪怕函数式调用）会把父作用域插槽 vnode 带进 el-table 的编译缓冲，
+  patch 期触发 `Cannot read properties of null (reading 'parentNode')` 并白屏
+  （组件 subTree.el 为 null）。单元格一律走**配置驱动 `cellType`**
+  （text/status/time/code，status 支持 labelMap 前缀映射与 boolean 语义）；
+  操作列是唯一插槽（el-table 官方路径，无缓冲问题）。
+- 反馈统一 ElMessage（`stores/growl.ts` 保持 push/success/error 接口）；
+  危险确认用 ElMessageBox（吊销 Token、踢出用户）或输入确认弹窗（注销集群）。
+- el-select 在弹窗内需 `:teleported="false"` 以免 dropdown 定位偏移。

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
+import { Monitor, CircleCheckFilled, WarningFilled } from '@element-plus/icons-vue';
 import Card from '@/components/Card.vue';
 import StatusBadge from '@/components/StatusBadge.vue';
 import { listClusters } from '@/api/clusters';
@@ -37,49 +38,60 @@ onMounted(async () => {
     </div>
 
     <template v-if="auth.isAdmin">
-      <div class="stat-row">
-        <div class="stat">
-          <div class="stat-num">{{ clusters.length }}</div>
-          <div class="stat-label">已注册集群</div>
-        </div>
-        <div class="stat">
-          <div class="stat-num online">{{ clusters.filter((c) => c.status === 'online').length }}</div>
-          <div class="stat-label">隧道在线</div>
-        </div>
-        <div class="stat">
-          <div class="stat-num warn">{{ clusters.filter((c) => c.status === 'pending').length }}</div>
-          <div class="stat-label">待接入</div>
-        </div>
-        <div class="stat" v-if="ver">
-          <div class="stat-num ver">{{ ver.version }}</div>
-          <div class="stat-label">平台版本（{{ ver.commit }}）</div>
-        </div>
-      </div>
+      <el-row :gutter="16" class="stat-row">
+        <el-col :span="6" :xs="12">
+          <div class="stat">
+            <div class="stat-num">{{ clusters.length }}</div>
+            <div class="stat-label">已注册集群</div>
+          </div>
+        </el-col>
+        <el-col :span="6" :xs="12">
+          <div class="stat">
+            <div class="stat-num online">{{ clusters.filter((c) => c.status === 'online').length }}</div>
+            <div class="stat-label"><el-icon><CircleCheckFilled /></el-icon> 隧道在线</div>
+          </div>
+        </el-col>
+        <el-col :span="6" :xs="12">
+          <div class="stat">
+            <div class="stat-num warn">{{ clusters.filter((c) => c.status === 'pending').length }}</div>
+            <div class="stat-label"><el-icon><WarningFilled /></el-icon> 待接入</div>
+          </div>
+        </el-col>
+        <el-col v-if="ver" :span="6" :xs="12">
+          <div class="stat">
+            <div class="stat-num ver">{{ ver.version }}</div>
+            <div class="stat-label">平台版本（{{ ver.commit }}）</div>
+          </div>
+        </el-col>
+      </el-row>
 
       <Card title="集群">
-        <div v-if="!loaded" class="muted-line">加载中…</div>
-        <template v-else-if="clusters.length">
-          <div class="cluster-grid">
-            <RouterLink v-for="c in clusters" :key="c.id" :to="`/clusters/${encodeURIComponent(c.id)}`" class="cluster-card">
-              <div class="cluster-head">
-                <span class="cluster-name">{{ c.name }}</span>
-                <StatusBadge :status="c.status" />
-              </div>
-              <div class="cluster-id mono">{{ c.id }}</div>
-              <div class="cluster-desc">{{ c.desc || '—' }}</div>
-            </RouterLink>
-          </div>
+        <template #actions>
+          <RouterLink to="/clusters"><el-button size="small" text type="primary">全部集群 →</el-button></RouterLink>
         </template>
-        <div v-else class="muted-line">尚无注册集群 —— 前往「集群」页注册第一个目标集群。</div>
+        <div v-if="!loaded" v-loading="true" style="height: 80px" />
+        <template v-else-if="clusters.length">
+          <el-row :gutter="12" class="cluster-grid">
+            <el-col v-for="c in clusters" :key="c.id" :xs="24" :sm="12" :md="8" :lg="6">
+              <RouterLink :to="`/clusters/${encodeURIComponent(c.id)}`" class="cluster-card">
+                <div class="cluster-head">
+                  <span class="cluster-name">{{ c.name }}</span>
+                  <StatusBadge :status="c.status" />
+                </div>
+                <div class="cluster-id mono">{{ c.id }}</div>
+                <div class="cluster-desc">{{ c.desc || '—' }}</div>
+              </RouterLink>
+            </el-col>
+          </el-row>
+        </template>
+        <el-empty v-else description="尚无注册集群 —— 前往「集群」页注册第一个目标集群" :image-size="72" />
       </Card>
     </template>
 
     <template v-else>
       <Card title="快速开始">
         <ol class="steps">
-          <li>
-            在<b>个人中心</b>按集群 ID 下载 kubeconfig（推荐 exec 模式，凭证不过期）。
-          </li>
+          <li>在<b>个人中心</b>按集群 ID 下载 kubeconfig（推荐 exec 模式，凭证不过期）。</li>
           <li>用 <code class="mono">kubectl --kubeconfig</code> 或 <code class="mono">k8s-am-login</code> 直接访问目标集群；数据面请求经平台 Casbin 资源级鉴权。</li>
           <li>如需开通权限，联系管理员配置角色绑定（或由登录期绑定脚本自动分配）。</li>
         </ol>
@@ -92,7 +104,9 @@ onMounted(async () => {
           <dd>{{ auth.claims?.email || '—' }}</dd>
           <dt>组</dt>
           <dd>
-            <span v-for="g in auth.claims?.groups || []" :key="g" class="group-chip">{{ g }}</span>
+            <el-tag v-for="g in auth.claims?.groups || []" :key="g" size="small" class="group-chip" disable-transitions>
+              {{ g }}
+            </el-tag>
             <span v-if="!auth.claims?.groups?.length">—</span>
           </dd>
         </dl>
@@ -103,28 +117,25 @@ onMounted(async () => {
 
 <style lang="scss" scoped>
 .stat-row {
-  display: flex;
-  gap: 16px;
   margin-bottom: 16px;
-  flex-wrap: wrap;
 }
 
 .stat {
-  flex: 1;
-  min-width: 140px;
   background: $card-bg;
   border: 1px solid $border;
   border-radius: 6px;
   padding: 14px 18px;
   box-shadow: $shadow;
+  height: 100%;
 }
 
 .stat-num {
   font-size: 26px;
   font-weight: 700;
+  color: $text;
 
-  &.online { color: $success; }
-  &.warn { color: $warning; }
+  &.online { color: var(--el-color-success); }
+  &.warn { color: var(--el-color-warning); }
   &.ver { font-size: 18px; padding: 4px 0; }
 }
 
@@ -132,25 +143,24 @@ onMounted(async () => {
   color: $text-muted;
   font-size: 12.5px;
   margin-top: 2px;
-}
-
-.cluster-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .cluster-card {
+  display: block;
   border: 1px solid $border;
   border-radius: 6px;
   padding: 12px 14px;
+  margin-bottom: 12px;
   text-decoration: none;
   color: $text;
   transition: border-color 0.12s, box-shadow 0.12s;
 
   &:hover {
-    border-color: $brand;
-    box-shadow: 0 2px 10px rgba(43, 125, 201, 0.12);
+    border-color: var(--el-color-primary);
+    box-shadow: var(--el-box-shadow-light);
     text-decoration: none;
   }
 }
@@ -184,10 +194,10 @@ onMounted(async () => {
   white-space: nowrap;
 }
 
-.muted-line {
-  color: $text-muted;
-  font-size: 13px;
-  padding: 8px 0;
+.cluster-grid {
+  // el-row gutter 负 margin 会让卡片网格撑破父容器产生横向滚动
+  overflow: hidden;
+  padding-bottom: 2px;
 }
 
 .steps {
@@ -198,12 +208,6 @@ onMounted(async () => {
 }
 
 .group-chip {
-  display: inline-block;
-  background: rgba(43, 125, 201, 0.09);
-  color: #1e5d99;
-  border-radius: 10px;
-  padding: 1px 10px;
-  font-size: 12px;
   margin: 0 6px 6px 0;
 }
 </style>

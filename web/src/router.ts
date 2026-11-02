@@ -68,13 +68,20 @@ router.beforeEach(async (to) => {
   const auth = useAuthStore();
   if (!auth.checked) {
     auth.adoptExistingToken();
-    await auth.restore();
+    try {
+      await auth.restore();
+    } catch (e) {
+      // 后端暂时不可达等非认证错误：不清 token（可能只是抖动），
+      // 但放行导航并标记已检查，避免卡死在空壳——页面自身会展示请求错误
+      auth.checked = true;
+      console.error('[router] restore failed:', e);
+    }
   }
   if (to.meta.public) {
     return auth.loggedIn ? { path: '/' } : true;
   }
   if (!auth.loggedIn) {
-    return { path: '/auth/login', query: { redirect: to.fullPath } };
+    return { path: '/login', query: { redirect: to.fullPath } };
   }
   if (to.meta.admin && !auth.isAdmin) {
     return { path: '/' };

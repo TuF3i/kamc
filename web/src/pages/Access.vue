@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
+import { ElMessageBox } from 'element-plus';
 import Banner from '@/components/Banner.vue';
-import Card from '@/components/Card.vue';
 import DataTable from '@/components/DataTable.vue';
-import LabeledInput from '@/components/LabeledInput.vue';
 import Modal from '@/components/Modal.vue';
-import Tabs from '@/components/Tabs.vue';
+import LabeledInput from '@/components/LabeledInput.vue';
 import { addBinding, addPolicy, listBindings, listPolicies, removeBinding, removePolicy, revokeUser } from '@/api/access';
 import type { BindingRow, PolicyRow } from '@/api/types';
 import { useGrowlStore } from '@/stores/growl';
@@ -121,12 +120,21 @@ async function delPolicy(): Promise<void> {
 }
 
 async function doRevoke(): Promise<void> {
-  if (!revokeSub.value.trim()) return;
-  if (!confirm(`确认踢出用户「${revokeSub.value.trim()}」？其此前签发的全部 Token 立即失效。`)) return;
+  const sub = revokeSub.value.trim();
+  if (!sub) return;
+  try {
+    await ElMessageBox.confirm(
+      `确认踢出用户「${sub}」？其此前签发的全部 Token 立即失效。`,
+      '踢出用户',
+      { type: 'warning' },
+    );
+  } catch {
+    return;
+  }
   revoking.value = true;
   try {
-    await revokeUser(revokeSub.value.trim());
-    growl.success(`用户 ${revokeSub.value.trim()} 已踢出`);
+    await revokeUser(sub);
+    growl.success(`用户 ${sub} 已踢出`);
     revokeSub.value = '';
   } catch (e) {
     growl.error(e instanceof Error ? e.message : String(e));
@@ -155,62 +163,59 @@ onMounted(() => {
 
     <Banner v-if="error" type="error" closable @close="error = ''">{{ error }}</Banner>
 
-    <Tabs v-model="tab" :tabs="tabs" />
+    <el-tabs v-model="tab">
+      <el-tab-pane label="用户绑定（user → role）" name="bindings">
+        <div class="table-head-row">
+          <span class="muted-note">共 {{ bindings.length }} 条绑定</span>
+          <el-button type="primary" @click="bAddOpen = true">＋ 添加绑定</el-button>
+        </div>
+        <DataTable
+          :rows="bindings"
+          :cols="[
+            { key: '0', label: '用户', sortable: true },
+            { key: '1', label: '角色', sortable: true },
+            { key: '2', label: '集群（dom）', sortable: true },
+          ]"
+          :loading="bLoading"
+          :search-keys="['0', '1', '2']"
+          empty-text="尚无绑定 —— 用户没有任何集群权限"
+        >
+          <template #actions="{ row }">
+            <el-button size="small" type="danger" text @click="bDeleting = row as BindingRow">删除</el-button>
+          </template>
+        </DataTable>
+      </el-tab-pane>
 
-    <template v-if="tab === 'bindings'">
-      <div class="table-head-row">
-        <span class="muted-note">共 {{ bindings.length }} 条绑定</span>
-        <button class="btn btn-primary" @click="bAddOpen = true">＋ 添加绑定</button>
-      </div>
-      <DataTable
-        :rows="bindings"
-        :cols="[
-          { key: '0', label: '用户', sortable: true },
-          { key: '1', label: '角色', sortable: true },
-          { key: '2', label: '集群（dom）', sortable: true },
-        ]"
-        :loading="bLoading"
-        :search-keys="['0', '1', '2']"
-        empty-text="尚无绑定 —— 用户没有任何集群权限"
-      >
-        <template #actions="{ row }">
-          <button class="btn btn-danger-ghost btn-sm" @click="bDeleting = row as BindingRow">删除</button>
-        </template>
-      </DataTable>
-    </template>
-
-    <template v-else>
-      <div class="table-head-row">
-        <span class="muted-note">共 {{ policies.length }} 条策略</span>
-        <button class="btn btn-primary" @click="pAddOpen = true">＋ 添加策略</button>
-      </div>
-      <DataTable
-        :rows="policies"
-        :cols="[
-          { key: '0', label: '主体（role）', sortable: true },
-          { key: '1', label: '集群（dom）', sortable: true },
-          { key: '2', label: '资源（obj）' },
-          { key: '3', label: '动词（act）' },
-        ]"
-        :loading="pLoading"
-        :search-keys="['0', '1', '2', '3']"
-        empty-text="尚无策略"
-      >
-        <template #col-3="{ row }">
-          <code class="mono">{{ (row as PolicyRow)[3] }}</code>
-        </template>
-        <template #actions="{ row }">
-          <button class="btn btn-danger-ghost btn-sm" @click="pDeleting = row as PolicyRow">删除</button>
-        </template>
-      </DataTable>
-    </template>
+      <el-tab-pane label="角色策略（role → 权限）" name="policies">
+        <div class="table-head-row">
+          <span class="muted-note">共 {{ policies.length }} 条策略</span>
+          <el-button type="primary" @click="pAddOpen = true">＋ 添加策略</el-button>
+        </div>
+        <DataTable
+          :rows="policies"
+          :cols="[
+            { key: '0', label: '主体（role）', sortable: true },
+            { key: '1', label: '集群（dom）', sortable: true },
+            { key: '2', label: '资源（obj）' },
+            { key: '3', label: '动词（act）', cellType: 'code' },
+          ]"
+          :loading="pLoading"
+          :search-keys="['0', '1', '2', '3']"
+          empty-text="尚无策略"
+        >
+          <template #actions="{ row }">
+            <el-button size="small" type="danger" text @click="pDeleting = row as PolicyRow">删除</el-button>
+          </template>
+        </DataTable>
+      </el-tab-pane>
+    </el-tabs>
 
     <Card title="踢出用户" style="margin-top: 20px">
       <div class="revoke-row">
-        <input v-model="revokeSub" class="input" style="max-width: 320px" placeholder="用户 sub（如 alice）" />
-        <button class="btn btn-danger" :disabled="revoking || !revokeSub.trim()" @click="doRevoke">
-          {{ revoking ? '执行中…' : '立即吊销全部 Token' }}
-        </button>
+        <el-input v-model="revokeSub" style="max-width: 320px" placeholder="用户 sub（如 alice）" />
+        <el-button type="danger" :loading="revoking" :disabled="!revokeSub.trim()" @click="doRevoke">
+          立即吊销全部 Token
+        </el-button>
         <span class="muted-note">epoch 递增：该用户已签发 Token 全部即时失效；同秒重新登录获得的新 Token 不受影响</span>
       </div>
     </Card>
@@ -221,8 +226,8 @@ onMounted(() => {
       <LabeledInput v-model="bForm.role" label="角色" required mono placeholder="role:developer" />
       <LabeledInput v-model="bForm.dom" label="集群（dom；* 为全部集群）" required mono placeholder="prod-bj" />
       <template #footer>
-        <button class="btn btn-secondary" @click="bAddOpen = false">取消</button>
-        <button class="btn btn-primary" @click="submitBinding">添加</button>
+        <el-button @click="bAddOpen = false">取消</el-button>
+        <el-button type="primary" @click="submitBinding">添加</el-button>
       </template>
     </Modal>
 
@@ -247,8 +252,8 @@ onMounted(() => {
         hint="K8s verb 正则片段，匹配时锚定：delete 不会命中 deletecollection"
       />
       <template #footer>
-        <button class="btn btn-secondary" @click="pAddOpen = false">取消</button>
-        <button class="btn btn-primary" @click="submitPolicy">添加</button>
+        <el-button @click="pAddOpen = false">取消</el-button>
+        <el-button type="primary" @click="submitPolicy">添加</el-button>
       </template>
     </Modal>
 
@@ -260,8 +265,8 @@ onMounted(() => {
         >？该用户将立即失去对应集群内该角色的全部权限。
       </p>
       <template #footer>
-        <button class="btn btn-secondary" @click="bDeleting = null">取消</button>
-        <button class="btn btn-danger" @click="delBinding">删除</button>
+        <el-button @click="bDeleting = null">取消</el-button>
+        <el-button type="danger" @click="delBinding">删除</el-button>
       </template>
     </Modal>
 
@@ -269,8 +274,8 @@ onMounted(() => {
       <p style="margin-top: 0">确认删除策略：</p>
       <code class="mono policy-preview">{{ pDeleting?.join(', ') }}</code>
       <template #footer>
-        <button class="btn btn-secondary" @click="pDeleting = null">取消</button>
-        <button class="btn btn-danger" @click="delPolicy">删除</button>
+        <el-button @click="pDeleting = null">取消</el-button>
+        <el-button type="danger" @click="delPolicy">删除</el-button>
       </template>
     </Modal>
   </div>
@@ -298,7 +303,7 @@ onMounted(() => {
 
 .policy-preview {
   display: block;
-  background: #f4f6f9;
+  background: var(--el-fill-color-light);
   border: 1px solid $border;
   border-radius: 4px;
   padding: 10px 12px;

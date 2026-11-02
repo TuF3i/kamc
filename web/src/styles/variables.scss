@@ -1,47 +1,31 @@
-// Rancher Dashboard 风格调色板（自绘，非拷贝资产）
-// 顶栏/侧栏深蓝灰，内容区浅灰底白卡片，品牌蓝为主操作色
+// 蓝灰配色主题（Element Plus 覆盖 + 自绘壳层变量）
+// 整体基调：钢蓝主色 + 蓝灰中性色阶；壳层深蓝灰，内容区浅蓝灰
 
-// 布局
-$header-h: 52px;
-$nav-w: 232px;
-$nav-w-collapsed: 56px;
-
-// 色板
-$header-bg: #1a222d;
-$nav-bg: #222b37;
-$nav-fg: #a3b1bf;
+// ===== 壳层（顶栏/侧栏）=====
+$header-bg: #1f2d3d; // 深蓝灰顶栏
+$nav-bg: #243447; // 侧栏（比顶栏略浅一档）
+$nav-fg: #94a7bd;
 $nav-fg-active: #ffffff;
-$nav-active-bg: rgba(64, 141, 217, 0.22);
-$brand: #2b7dc9;
-$brand-hover: #256cb0;
-$content-bg: #f4f6f9;
-$card-bg: #ffffff;
-$border: #dde4ec;
-$input-border: #c3cddb;
-$text: #2a3441;
-$text-muted: #76838f;
+$nav-active-bg: rgba(74, 137, 202, 0.28);
+$brand: #4a89ca; // 钢蓝主色
+$brand-hover: #3a76b5;
 
-// 语义色
-$success: #2e9e5b;
-$warning: #d08700;
-$error: #d44a32;
+// ===== 内容区 =====
+$content-bg: #eef1f6; // 浅蓝灰底
+$card-bg: #ffffff;
+$border: #d9e0ea;
+$input-border: #c2ccd9;
+$text: #2f3a47;
+$text-muted: #7c8a9c;
+
+// ===== 语义色（降饱和，贴合蓝灰基调）=====
+$success: #4d9e6f;
+$warning: #c98a2e;
+$error: #c25543;
 $info: $brand;
 
 $radius: 4px;
-$shadow: 0 1px 2px rgba(16, 28, 41, 0.08);
+$shadow: 0 1px 2px rgba(31, 45, 61, 0.08);
 
-// 状态色映射（StatusBadge 用，键与 class 名一致）
-$status-colors: (
-  online: $success,
-  active: $success,
-  enabled: $success,
-  allowed: $success,
-  success: $success,
-  offline: #8a97a3,
-  pending: $warning,
-  rotating: $warning,
-  warning: $warning,
-  denied: $error,
-  error: $error,
-  info: $info,
-);
+// ===== Element Plus 主题覆盖（SCSS 变量在 vite 配置注入）=====
+// 注意：走 CSS 覆盖而非重新编译 Element（避免 sass 编译其全量源码拖慢构建）

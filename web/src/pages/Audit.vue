@@ -4,7 +4,6 @@ import Banner from '@/components/Banner.vue';
 import DataTable from '@/components/DataTable.vue';
 import LabeledInput from '@/components/LabeledInput.vue';
 import LabeledSelect from '@/components/LabeledSelect.vue';
-import StatusBadge from '@/components/StatusBadge.vue';
 import { listAudit } from '@/api/audit';
 import type { AuditEvent } from '@/api/types';
 import { fmtTime } from '@/utils/format';
@@ -43,7 +42,7 @@ onMounted(load);
         <h1>审计日志</h1>
         <div class="subtitle">数据面访问与登录事件（时间倒序，含拒绝原因；异步批量落库）</div>
       </div>
-      <button class="btn btn-secondary" :disabled="loading" @click="load">↻ 刷新</button>
+      <el-button :loading="loading" @click="load">↻ 刷新</el-button>
     </div>
 
     <div class="filter-bar">
@@ -66,7 +65,7 @@ onMounted(load);
         />
       </div>
       <div style="padding-top: 24px">
-        <button class="btn btn-primary" :disabled="loading" @click="load">{{ loading ? '查询中…' : '查询' }}</button>
+        <el-button type="primary" :loading="loading" @click="load">查询</el-button>
       </div>
     </div>
 
@@ -75,13 +74,14 @@ onMounted(load);
     <DataTable
       :rows="rows"
       :cols="[
-        { key: 'timestamp', label: '时间', sortable: true, width: '170px' },
-        { key: 'user', label: '用户', sortable: true },
+        { key: 'timestamp', label: '时间', sortable: true, width: '170px', cellType: 'time' },
+        { key: 'user', label: '用户', sortable: true, cellType: 'code' },
         { key: 'cluster', label: '集群', sortable: true, width: '120px' },
         { key: 'verb', label: '动词', width: '110px' },
-        { key: 'path', label: '资源' },
-        { key: 'allowed', label: '结果', width: '90px' },
-        { key: 'reason', label: '原因', width: '140px' },
+        { key: 'path', label: '资源', cellType: 'code' },
+        { key: 'allowed', label: '结果', width: '90px', cellType: 'status',
+          labelMap: { allowed: '允许', denied: '拒绝' } },
+        { key: 'reason', label: '原因', width: '150px', cellType: 'code' },
         { key: 'latency_ms', label: '耗时', sortable: true, width: '80px', align: 'right' },
       ]"
       row-key="id"
@@ -90,21 +90,6 @@ onMounted(load);
       search-placeholder="过滤（客户端）"
       empty-text="暂无审计事件"
     >
-      <template #col-timestamp="{ row }">
-        <span :title="fmtTime((row as AuditEvent).timestamp)">{{ fmtTime((row as AuditEvent).timestamp) }}</span>
-      </template>
-      <template #col-user="{ row }">
-        <span class="mono">{{ (row as AuditEvent).user || '—' }}</span>
-      </template>
-      <template #col-path="{ row }">
-        <span class="mono">{{ (row as AuditEvent).path }}</span>
-      </template>
-      <template #col-allowed="{ row }">
-        <StatusBadge :status="(row as AuditEvent).allowed ? 'allowed' : 'denied'" :label="(row as AuditEvent).allowed ? '允许' : '拒绝'" />
-      </template>
-      <template #col-reason="{ row }">
-        <span class="mono reason">{{ (row as AuditEvent).reason }}</span>
-      </template>
     </DataTable>
   </div>
 </template>

@@ -15,8 +15,10 @@ export default defineConfig({
   css: {
     preprocessorOptions: {
       scss: {
-        // 每个 scss 编译单元（含 SFC style 块）自动获得主题变量
+        // 每个 scss 编译单元（含 SFC style 块）自动获得主题变量；
+        // Element Plus 走预编译 CSS（dist/index.css），不受此注入影响
         additionalData: `@use "${fileURLToPath(new URL('./src/styles/variables.scss', import.meta.url))}" as *;\n`,
+        silenceDeprecations: ['legacy-js-api'],
       },
     },
   },

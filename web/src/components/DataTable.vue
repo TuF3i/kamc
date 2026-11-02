@@ -1,15 +1,27 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 
+/** 单元格渲染类型（配置驱动，不做跨层插槽透传） */
+export type CellType =
+  /** 默认：原样文本（null → —） */
+  | 'text'
+  /** StatusBadge（值须为状态串；label 从 labelMap 取或原样） */
+  | 'status'
+  /** fmtTime 时间格式化 */
+  | 'time'
+  /** 等宽 code 展示 */
+  | 'code';
+
 export interface Column {
-  /** 字段键（行对象属性名；嵌套用 'a.b'） */
+  /** 字段键（行对象属性名；嵌套用 'a.b'；数组索引用 '0'/'1'…） */
   key: string;
   label: string;
   sortable?: boolean;
-  width?: string;
-  align?: 'left' | 'right';
-  /** 原样渲染（不转义），配合受控内容使用 */
-  raw?: boolean;
+  width?: string | number;
+  align?: 'left' | 'center' | 'right';
+  cellType?: CellType;
+  /** status 徽章的显示文案映射（值前缀匹配） */
+  labelMap?: Record<string, string>;
 }
 
 const props = withDefaults(
@@ -19,7 +31,7 @@ const props = withDefaults(
     /** 行唯一键（属性名或取值函数） */
     rowKey?: string | ((row: unknown) => string | number);
     loading?: boolean;
-    /** 提供即启用客户端搜索（在前几列文本中 includes 匹配） */
+    /** 提供即启用客户端搜索（在指定列文本中 includes 匹配） */
     searchKeys?: string[];
     searchPlaceholder?: string;
     emptyText?: string;
@@ -35,8 +47,6 @@ const props = withDefaults(
 const emit = defineEmits<{ 'row-click': [row: unknown] }>();
 
 const search = ref('');
-const sortKey = ref('');
-const sortAsc = ref(true);
 
 function field(row: unknown, path: string): unknown {
   let v: unknown = row;
@@ -47,107 +57,120 @@ function field(row: unknown, path: string): unknown {
   return v;
 }
 
-function keyOf(row: unknown, idx: number): string | number {
-  if (typeof props.rowKey === 'function') return props.rowKey(row);
-  if (props.rowKey) return String(field(row, props.rowKey) ?? idx);
-  return idx;
+// 中文locale排序（el-table 内建排序，比较函数按列生成）
+function makeSorter(path: string) {
+  return (a: unknown, b: unknown) => {
+    const va = field(a, path);
+    const vb = field(b, path);
+    if (va == null) return -1;
+    if (vb == null) return 1;
+    if (typeof va === 'number' && typeof vb === 'number') return va - vb;
+    return String(va).localeCompare(String(vb), 'zh-CN');
+  };
 }
 
 const view = computed(() => {
-  let out = props.rows;
   const q = search.value.trim().toLowerCase();
-  if (q && props.searchKeys?.length) {
-    out = out.filter((r) =>
-      props.searchKeys!.some((k) => String(field(r, k) ?? '').toLowerCase().includes(q)),
-    );
-  }
-  if (sortKey.value) {
-    const dir = sortAsc.value ? 1 : -1;
-    const key = sortKey.value;
-    out = [...out].sort((a, b) => {
-      const va = field(a, key);
-      const vb = field(b, key);
-      if (va == null) return -dir;
-      if (vb == null) return dir;
-      if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
-      return String(va).localeCompare(String(vb), 'zh-CN') * dir;
-    });
-  }
-  return out;
+  if (!q || !props.searchKeys?.length) return props.rows;
+  return props.rows.filter((r) =>
+    props.searchKeys!.some((k) => String(field(r, k) ?? '').toLowerCase().includes(q)),
+  );
 });
 
-function toggleSort(col: Column): void {
-  if (!col.sortable) return;
-  if (sortKey.value === col.key) {
-    if (sortAsc.value) {
-      sortAsc.value = false;
-    } else {
-      sortKey.value = '';
+const tagType = (raw: string): 'success' | 'warning' | 'danger' | 'info' => {
+  const s = raw.toLowerCase();
+  if (['online', 'active', 'enabled', 'allowed', 'success', 'true'].some((p) => s.startsWith(p))) return 'success';
+  if (['pending', 'rotating', 'warning'].some((p) => s.startsWith(p))) return 'warning';
+  if (s.startsWith('denied') || s.startsWith('false')) return 'danger';
+  return 'info';
+};
+
+function badgeLabel(col: Column, raw: string): string {
+  if (col.labelMap) {
+    for (const [prefix, label] of Object.entries(col.labelMap)) {
+      if (raw.toLowerCase().startsWith(prefix.toLowerCase())) return label;
     }
-  } else {
-    sortKey.value = col.key;
-    sortAsc.value = true;
   }
+  return raw;
+}
+
+/** status 列统一转字符串（boolean → allowed/denied 语义由 labelMap 决定） */
+function statusText(col: Column, v: unknown): string {
+  if (typeof v === 'boolean') return v ? 'allowed' : 'denied';
+  return String(v ?? '');
+}
+
+import { fmtTime } from '@/utils/format';
+
+function onRowClick(row: unknown): void {
+  emit('row-click', row);
 }
 </script>
 
 <template>
   <div class="table-wrap">
     <div v-if="searchKeys?.length || $slots.toolbar" class="table-toolbar">
-      <input
+      <el-input
         v-if="searchKeys?.length"
         v-model="search"
-        class="input search"
-        type="search"
+        class="search"
         :placeholder="searchPlaceholder"
+        clearable
+        style="max-width: 260px"
       />
       <slot name="toolbar" />
     </div>
 
-    <div class="table-scroll">
-      <table>
-        <thead>
-          <tr>
-            <th
-              v-for="col in cols"
-              :key="col.key"
-              :style="{ width: col.width, textAlign: col.align ?? 'left' }"
-              :class="{ sortable: col.sortable, sorted: sortKey === col.key }"
-              @click="toggleSort(col)"
+    <el-table :data="view" v-loading="loading" stripe @row-click="onRowClick">
+      <el-table-column
+        v-for="col in cols"
+        :key="col.key"
+        :prop="col.key"
+        :label="col.label"
+        :width="col.width"
+        :align="col.align ?? 'left'"
+        :sortable="!!col.sortable"
+        :sort-method="col.sortable ? makeSorter(col.key) : undefined"
+      >
+        <template #default="{ row }">
+          <template v-if="(col.cellType ?? 'text') === 'status'">
+            <el-tag
+              :type="tagType(statusText(col, field(row, col.key)))"
+              effect="light"
+              round
+              size="small"
+              disable-transitions
             >
-              {{ col.label }}
-              <span v-if="col.sortable" class="sort-mark">
-                {{ sortKey === col.key ? (sortAsc ? '↑' : '↓') : '⇅' }}
-              </span>
-            </th>
-            <th v-if="$slots.actions" class="actions-col">操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-if="loading">
-            <td :colspan="cols.length + ($slots.actions ? 1 : 0)" class="empty">加载中…</td>
-          </tr>
-          <tr v-else-if="!view.length">
-            <td :colspan="cols.length + ($slots.actions ? 1 : 0)" class="empty">{{ emptyText }}</td>
-          </tr>
-          <tr
-            v-for="(row, i) in view"
-            :key="keyOf(row, i)"
-            :class="{ clickable: $attrs['onRowClick'] !== undefined }"
-            @click="emit('row-click', row)"
-          >
-            <td v-for="col in cols" :key="col.key" :style="{ textAlign: col.align ?? 'left' }">
-              <slot :name="'col-' + col.key" :row="row" :value="field(row, col.key)">
-                {{ field(row, col.key) ?? '—' }}
-              </slot>
-            </td>
-            <td v-if="$slots.actions" class="actions-col" @click.stop>
-              <slot name="actions" :row="row" />
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+              {{ badgeLabel(col, statusText(col, field(row, col.key))) }}
+            </el-tag>
+          </template>
+          <template v-else-if="col.cellType === 'time'">
+            {{ fmtTime(String(field(row, col.key) ?? '')) }}
+          </template>
+          <template v-else-if="col.cellType === 'code'">
+            <code class="mono cell-code">{{ field(row, col.key) ?? '—' }}</code>
+          </template>
+          <template v-else>
+            {{ field(row, col.key) ?? '—' }}
+          </template>
+        </template>
+      </el-table-column>
+      <!--
+        操作列是唯一的插槽：el-table 的 cells 不做父插槽透传（嵌套作用域插槽
+        经 el-table-column 缓冲会在 patch 期触发 "parentNode of null" 崩溃，
+        见 component/DataTable 注释与二分记录）。操作按钮经 slotProps 原样传出。
+      -->
+      <el-table-column v-if="$slots.actions" label="操作" :width="160">
+        <template #default="{ row, $index }">
+          <div class="row-actions" @click.stop>
+            <slot name="actions" :row="row" :index="$index" />
+          </div>
+        </template>
+      </el-table-column>
+      <template #empty>
+        <el-empty :description="emptyText" :image-size="72" />
+      </template>
+    </el-table>
   </div>
 </template>
 
@@ -165,79 +188,20 @@ function toggleSort(col: Column): void {
   gap: 10px;
   padding: 10px 14px;
   border-bottom: 1px solid $border;
-
-  .search {
-    max-width: 260px;
-  }
 }
 
-.table-scroll {
-  overflow-x: auto;
+:deep(.el-table) {
+  --el-table-header-bg-color: #f2f5f9;
 }
 
-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-th {
-  text-align: left;
-  padding: 9px 14px;
-  background: #f7f9fb;
-  border-bottom: 1px solid $border;
-  color: $text-muted;
-  font-weight: 600;
+.cell-code {
   font-size: 12px;
+}
+
+.row-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
   white-space: nowrap;
-  user-select: none;
-
-  &.sortable {
-    cursor: pointer;
-
-    &:hover {
-      color: $brand;
-    }
-  }
-
-  &.sorted {
-    color: $brand;
-  }
-}
-
-.sort-mark {
-  font-size: 10px;
-  margin-left: 2px;
-  opacity: 0.8;
-}
-
-td {
-  padding: 9px 14px;
-  border-bottom: 1px solid #edf1f5;
-  vertical-align: middle;
-  word-break: break-all;
-}
-
-tr:last-child td {
-  border-bottom: none;
-}
-
-tbody tr.clickable {
-  cursor: pointer;
-
-  &:hover {
-    background: #f6f9fd;
-  }
-}
-
-.empty {
-  text-align: center;
-  color: $text-muted;
-  padding: 32px 0 !important;
-}
-
-.actions-col {
-  white-space: nowrap;
-  width: 1%;
 }
 </style>

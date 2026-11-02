@@ -42,7 +42,9 @@ async function load(): Promise<void> {
   }
 }
 
-const dirty = computed(() => original.value !== null && (content.value !== original.value.content || enabled.value !== original.value.enabled));
+const dirty = computed(
+  () => original.value !== null && (content.value !== original.value.content || enabled.value !== original.value.enabled),
+);
 
 async function save(): Promise<void> {
   saving.value = true;
@@ -107,20 +109,17 @@ onMounted(load);
           <StatusBadge
             :status="enabled ? 'enabled' : 'offline'"
             :label="enabled ? '启用' : '禁用'"
-            style="margin-left: 10px; vertical-align: 3px"
+            class="head-badge"
           />
         </h1>
         <div class="subtitle" v-if="original">更新于 {{ fmtTime(original.updated_at) }}</div>
       </div>
-      <div style="display: flex; gap: 8px; align-items: center">
-        <label class="enable-toggle">
-          <input v-model="enabled" type="checkbox" />
-          启用（登录时执行）
-        </label>
-        <button class="btn btn-danger-ghost" @click="remove">删除</button>
-        <button class="btn btn-primary" :disabled="!dirty || saving" @click="save">
-          {{ saving ? '保存中…' : dirty ? '保存' : '已保存' }}
-        </button>
+      <div style="display: flex; gap: 12px; align-items: center">
+        <el-checkbox v-model="enabled">启用（登录时执行）</el-checkbox>
+        <el-button type="danger" text @click="remove">删除</el-button>
+        <el-button type="primary" :disabled="!dirty" :loading="saving" @click="save">
+          {{ dirty ? '保存' : '已保存' }}
+        </el-button>
       </div>
     </div>
 
@@ -153,13 +152,10 @@ onMounted(load);
           <LabeledInput v-model="dryGroups" label="groups（逗号分隔）" placeholder="dev-team, qa-team" />
         </div>
         <div class="dry-run-col">
-          <label class="radio danger">
-            <input v-model="dryRealMode" type="checkbox" />
-            真实执行（落地绑定/策略）
-          </label>
-          <button class="btn btn-primary" :disabled="dryRunning" @click="runDry">
-            {{ dryRunning ? '执行中…' : dryRealMode ? '执行（真实落地）' : '执行（dry-run）' }}
-          </button>
+          <el-checkbox v-model="dryRealMode" class="danger-check">真实执行（落地绑定/策略）</el-checkbox>
+          <el-button type="primary" :loading="dryRunning" @click="runDry">
+            {{ dryRealMode ? '执行（真实落地）' : '执行（dry-run）' }}
+          </el-button>
         </div>
       </div>
 
@@ -173,20 +169,14 @@ onMounted(load);
           />
           <span v-if="dryResult.actions" class="muted-note">动作 {{ dryResult.actions.length }} 条</span>
         </div>
-        <table v-if="dryResult.actions?.length" class="action-table">
-          <thead>
-            <tr>
-              <th style="width: 180px">桥接 API</th>
-              <th>参数</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(a, i) in dryResult.actions" :key="i">
-              <td class="mono">{{ a.api }}</td>
-              <td class="mono">{{ a.args.join(' , ') }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <el-table v-if="dryResult.actions?.length" :data="dryResult.actions" size="small" stripe>
+          <el-table-column label="桥接 API" width="180">
+            <template #default="{ row }"><code class="mono">{{ (row as { api: string }).api }}</code></template>
+          </el-table-column>
+          <el-table-column label="参数">
+            <template #default="{ row }"><code class="mono">{{ (row as { args: string[] }).args.join(' , ') }}</code></template>
+          </el-table-column>
+        </el-table>
         <p v-else class="muted-note" style="margin: 10px 0 0">脚本执行成功，但未产生任何绑定/策略动作。</p>
       </div>
     </Card>
@@ -194,12 +184,9 @@ onMounted(load);
 </template>
 
 <style lang="scss" scoped>
-.enable-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  cursor: pointer;
+.head-badge {
+  margin-left: 10px;
+  vertical-align: 3px;
 }
 
 .editor-foot {
@@ -233,17 +220,13 @@ onMounted(load);
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding-top: 24px;
+  padding-top: 4px;
 }
 
-.radio {
-  font-size: 12.5px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-
-  &.danger {
-    color: $error;
+.danger-check {
+  :deep(.el-checkbox__label) {
+    color: var(--el-color-danger);
+    font-size: 12.5px;
   }
 }
 
@@ -263,26 +246,5 @@ onMounted(load);
 .muted-note {
   color: $text-muted;
   font-size: 12.5px;
-}
-
-.action-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12.5px;
-
-  th {
-    text-align: left;
-    padding: 6px 10px;
-    background: #f7f9fb;
-    border-bottom: 1px solid $border;
-    color: $text-muted;
-    font-size: 12px;
-  }
-
-  td {
-    padding: 6px 10px;
-    border-bottom: 1px solid #edf1f5;
-    word-break: break-all;
-  }
 }
 </style>

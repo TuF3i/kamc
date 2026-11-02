@@ -5,7 +5,6 @@ import Banner from '@/components/Banner.vue';
 import DataTable from '@/components/DataTable.vue';
 import Modal from '@/components/Modal.vue';
 import LabeledInput from '@/components/LabeledInput.vue';
-import StatusBadge from '@/components/StatusBadge.vue';
 import { deleteScript, listScripts, saveScript } from '@/api/scripts';
 import type { AuthScript } from '@/api/types';
 import { fmtTime } from '@/utils/format';
@@ -112,7 +111,7 @@ end
           <b>fail-closed</b>：脚本失败拒绝该次登录（403），禁用脚本即可恢复
         </div>
       </div>
-      <button class="btn btn-primary" @click="createOpen = true">＋ 新建脚本</button>
+      <el-button type="primary" @click="createOpen = true">＋ 新建脚本</el-button>
     </div>
 
     <Banner v-if="error" type="error" closable @close="error = ''">{{ error }}</Banner>
@@ -120,9 +119,10 @@ end
     <DataTable
       :rows="rows"
       :cols="[
-        { key: 'name', label: '脚本名（执行顺序）', sortable: true },
-        { key: 'enabled', label: '状态', width: '110px' },
-        { key: 'updated_at', label: '更新时间', sortable: true, width: '170px' },
+        { key: 'name', label: '脚本名（执行顺序）', sortable: true, cellType: 'code' },
+        { key: 'enabled', label: '状态', width: '110px', cellType: 'status',
+          labelMap: { enabled: '启用', disabled: '禁用', offline: '禁用' } },
+        { key: 'updated_at', label: '更新时间', sortable: true, width: '170px', cellType: 'time' },
       ]"
       row-key="name"
       :loading="loading"
@@ -130,20 +130,11 @@ end
       empty-text="尚无脚本 —— 登录时直接签发，不做绑定计算"
       @row-click="openEdit"
     >
-      <template #col-name="{ row }">
-        <span class="mono">{{ (row as AuthScript).name }}</span>
-      </template>
-      <template #col-enabled="{ row }">
-        <StatusBadge :status="(row as AuthScript).enabled ? 'enabled' : 'disabled'" :label="(row as AuthScript).enabled ? '启用' : '禁用'" />
-      </template>
-      <template #col-updated_at="{ row }">
-        {{ fmtTime((row as AuthScript).updated_at) }}
-      </template>
       <template #actions="{ row }">
-        <button class="btn btn-secondary btn-sm" @click="toggleEnabled(row as AuthScript)">
+        <el-button size="small" @click.stop="toggleEnabled(row as AuthScript)">
           {{ (row as AuthScript).enabled ? '禁用' : '启用' }}
-        </button>
-        <button class="btn btn-danger-ghost btn-sm" @click="deleting = row as AuthScript">删除</button>
+        </el-button>
+        <el-button size="small" type="danger" text @click.stop="deleting = row as AuthScript">删除</el-button>
       </template>
     </DataTable>
 
@@ -158,10 +149,8 @@ end
       />
       <p class="muted-note">创建后进入编辑器，预填示例模板（按 Authentik 组绑定角色）。</p>
       <template #footer>
-        <button class="btn btn-secondary" @click="createOpen = false">取消</button>
-        <button class="btn btn-primary" :disabled="creating" @click="submitCreate">
-          {{ creating ? '创建中…' : '创建' }}
-        </button>
+        <el-button @click="createOpen = false">取消</el-button>
+        <el-button type="primary" :loading="creating" @click="submitCreate">创建</el-button>
       </template>
     </Modal>
 
@@ -171,8 +160,8 @@ end
         >？之后登录不再执行该脚本（已产生的绑定/策略保留）。
       </p>
       <template #footer>
-        <button class="btn btn-secondary" @click="deleting = null">取消</button>
-        <button class="btn btn-danger" @click="submitDelete">删除</button>
+        <el-button @click="deleting = null">取消</el-button>
+        <el-button type="danger" @click="submitDelete">删除</el-button>
       </template>
     </Modal>
   </div>
@@ -180,7 +169,7 @@ end
 
 <style scoped>
 .muted-note {
-  color: #76838f;
+  color: #7c8a9c;
   font-size: 12.5px;
 }
 </style>

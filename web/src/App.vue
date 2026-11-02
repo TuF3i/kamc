@@ -1,61 +1,58 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRoute } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
-
-const NAV_W = 232;
-const NAV_W_COLLAPSED = 56;
+import {
+  Odometer,
+  Monitor,
+  Lock,
+  MagicStick,
+  Document,
+  ArrowDown,
+  Fold,
+  Expand,
+  UserFilled,
+} from '@element-plus/icons-vue';
 
 const route = useRoute();
-const router = useRouter();
 const auth = useAuthStore();
 
 const isPublic = computed(() => !!route.meta.public);
-
 const collapsed = ref(localStorage.getItem('kamc_nav_collapsed') === '1');
-const userMenuOpen = ref(false);
+const navWidth = computed(() => (collapsed.value ? '64px' : '232px'));
 
-const navWidth = computed(() => (collapsed.value ? NAV_W_COLLAPSED : NAV_W));
+const activeMenu = computed(() => {
+  if (route.path === '/') return '/';
+  const hit = ['/clusters', '/access', '/scripts', '/audit'].find(
+    (p) => route.path === p || route.path.startsWith(p + '/'),
+  );
+  return hit ?? '';
+});
 
 interface NavItem {
   label: string;
   to: string;
-  icon: string;
+  icon: typeof Monitor;
   admin?: boolean;
 }
 
-// 分组导航（Rancher 侧栏形态）；icon 用内联 emoji 占位，避免引图标库
 const groups = computed(() => {
   const all: { title: string; items: NavItem[] }[] = [
-    {
-      title: '',
-      items: [{ label: '概览', to: '/', icon: '⌂' }],
-    },
+    { title: '', items: [{ label: '概览', to: '/', icon: Odometer }] },
     {
       title: '资源',
       items: [
-        { label: '集群', to: '/clusters', icon: '◈', admin: true },
-        { label: '权限', to: '/access', icon: '⚿', admin: true },
+        { label: '集群', to: '/clusters', icon: Monitor, admin: true },
+        { label: '权限', to: '/access', icon: Lock, admin: true },
       ],
     },
-    {
-      title: '自动化',
-      items: [{ label: '绑定脚本', to: '/scripts', icon: 'λ', admin: true }],
-    },
-    {
-      title: '运维',
-      items: [{ label: '审计日志', to: '/audit', icon: '≡', admin: true }],
-    },
+    { title: '自动化', items: [{ label: '绑定脚本', to: '/scripts', icon: MagicStick, admin: true }] },
+    { title: '运维', items: [{ label: '审计日志', to: '/audit', icon: Document, admin: true }] },
   ];
   return all
     .map((g) => ({ ...g, items: g.items.filter((i) => !i.admin || auth.isAdmin) }))
     .filter((g) => g.items.length > 0);
 });
-
-function isActive(to: string): boolean {
-  if (to === '/') return route.path === '/';
-  return route.path === to || route.path.startsWith(to + '/');
-}
 
 function toggleNav(): void {
   collapsed.value = !collapsed.value;
@@ -63,59 +60,65 @@ function toggleNav(): void {
 }
 
 async function onLogout(): Promise<void> {
-  userMenuOpen.value = false;
   await auth.signout(); // 内部整页跳转
 }
 </script>
 
 <template>
-  <!-- 公开路由（登录页）裸渲染，不套应用壳（对齐 Rancher 全屏登录） -->
+  <!-- 公开路由（登录页）裸渲染，不套应用壳 -->
   <RouterView v-if="isPublic" />
 
   <div v-else class="shell">
     <header class="topbar">
       <div class="topbar-left">
-        <button class="icon-btn" title="折叠/展开导航" @click="toggleNav">☰</button>
+        <el-button text class="fold-btn" :icon="collapsed ? Expand : Fold" @click="toggleNav" />
         <RouterLink to="/" class="brand">
           <span class="brand-mark">K</span>
           <span v-if="!collapsed" class="brand-name">kamc <small>访问管理中心</small></span>
         </RouterLink>
       </div>
       <div class="topbar-right">
-        <div v-if="auth.claims" class="user-box" @click="userMenuOpen = !userMenuOpen">
-          <span class="avatar">{{ (auth.claims.sub || '?')[0].toUpperCase() }}</span>
-          <span class="user-name">{{ auth.claims.sub }}</span>
-          <span class="caret">▾</span>
-          <div v-if="userMenuOpen" class="user-menu" @click.stop>
-            <div class="user-menu-head">
-              <div>{{ auth.claims.sub }}</div>
-              <div class="muted">{{ auth.claims.email || '—' }}</div>
-            </div>
-            <RouterLink to="/account" class="user-menu-item" @click="userMenuOpen = false">个人中心</RouterLink>
-            <button class="user-menu-item danger" @click="onLogout">退出登录</button>
-          </div>
-        </div>
+        <el-dropdown v-if="auth.claims" trigger="click">
+          <span class="user-box">
+            <el-avatar :size="26" class="avatar">{{ (auth.claims.sub || '?')[0].toUpperCase() }}</el-avatar>
+            <span class="user-name">{{ auth.claims.sub }}</span>
+            <el-icon class="caret"><ArrowDown /></el-icon>
+          </span>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item disabled>
+                <div class="dd-identity">
+                  <div class="dd-sub">{{ auth.claims.sub }}</div>
+                  <div class="dd-email">{{ auth.claims.email || '—' }}</div>
+                </div>
+              </el-dropdown-item>
+              <el-dropdown-item divided :icon="UserFilled" @click="$router.push('/account')">个人中心</el-dropdown-item>
+              <el-dropdown-item divided class="dd-danger" @click="onLogout">退出登录</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
     </header>
 
-    <aside class="sidenav" :style="{ width: navWidth + 'px' }" @click="userMenuOpen = false">
-      <nav v-for="g in groups" :key="g.title" class="nav-group">
-        <div v-if="g.title && !collapsed" class="nav-title">{{ g.title }}</div>
-        <RouterLink
-          v-for="item in g.items"
-          :key="item.to"
-          :to="item.to"
-          class="nav-item"
-          :class="{ active: isActive(item.to) }"
-          :title="collapsed ? item.label : undefined"
-        >
-          <span class="nav-icon">{{ item.icon }}</span>
-          <span v-if="!collapsed">{{ item.label }}</span>
-        </RouterLink>
-      </nav>
+    <aside class="sidenav" :style="{ width: navWidth }">
+      <el-menu
+        :default-active="activeMenu"
+        :collapse="collapsed"
+        :collapse-transition="false"
+        router
+        class="side-menu"
+      >
+        <template v-for="g in groups" :key="g.title">
+          <div v-if="g.title && !collapsed" class="nav-title">{{ g.title }}</div>
+          <el-menu-item v-for="item in g.items" :key="item.to" :index="item.to">
+            <el-icon><component :is="item.icon" /></el-icon>
+            <template #title>{{ item.label }}</template>
+          </el-menu-item>
+        </template>
+      </el-menu>
     </aside>
 
-    <main class="content" :style="{ marginLeft: navWidth + 'px', paddingTop: '52px' }">
+    <main class="content" :style="{ marginLeft: navWidth, paddingTop: '52px' }">
       <RouterView />
     </main>
   </div>
@@ -123,7 +126,7 @@ async function onLogout(): Promise<void> {
 
 <style lang="scss" scoped>
 .shell {
-  min-height: 100%;
+  min-height: 100vh;
 }
 
 .topbar {
@@ -147,18 +150,12 @@ async function onLogout(): Promise<void> {
   gap: 8px;
 }
 
-.icon-btn {
-  background: transparent;
-  border: none;
-  color: #c4cfda;
-  font-size: 16px;
-  cursor: pointer;
-  padding: 6px 8px;
-  border-radius: 4px;
+.fold-btn {
+  color: #b8c6d6;
 
   &:hover {
-    background: rgba(255, 255, 255, 0.08);
     color: #fff;
+    background: rgba(255, 255, 255, 0.08);
   }
 }
 
@@ -178,12 +175,13 @@ async function onLogout(): Promise<void> {
   width: 26px;
   height: 26px;
   border-radius: 6px;
-  background: linear-gradient(135deg, #2b7dc9, #45b5a4);
+  background: linear-gradient(135deg, #4a89ca, #4d9e9b);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
   font-size: 15px;
+  color: #fff;
 }
 
 .brand-name {
@@ -192,7 +190,7 @@ async function onLogout(): Promise<void> {
 
   small {
     font-weight: 400;
-    color: #9fb0c0;
+    color: #8ba0b8;
     margin-left: 6px;
     font-size: 12px;
   }
@@ -204,13 +202,13 @@ async function onLogout(): Promise<void> {
 }
 
 .user-box {
-  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
   cursor: pointer;
-  padding: 5px 10px;
+  padding: 4px 10px;
   border-radius: 4px;
+  outline: none;
 
   &:hover {
     background: rgba(255, 255, 255, 0.08);
@@ -218,74 +216,40 @@ async function onLogout(): Promise<void> {
 }
 
 .avatar {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  background: #45b5a4;
-  color: #fff;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  background: #4d9e9b;
   font-size: 13px;
   font-weight: 600;
 }
 
 .user-name {
   font-size: 13px;
+  color: #fff;
   max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .caret {
-  color: #9fb0c0;
-  font-size: 11px;
+  color: #8ba0b8;
+  font-size: 12px;
 }
 
-.user-menu {
-  position: absolute;
-  top: 42px;
-  right: 0;
-  width: 220px;
-  background: #fff;
-  color: $text;
-  border-radius: 6px;
-  box-shadow: 0 6px 24px rgba(16, 28, 41, 0.18);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.user-menu-head {
-  padding: 10px 14px;
-  border-bottom: 1px solid $border;
-  font-size: 13px;
-  font-weight: 600;
-
-  .muted {
-    color: $text-muted;
-    font-weight: 400;
+.dd-identity {
+  .dd-sub {
+    font-weight: 600;
+  }
+  .dd-email {
     font-size: 12px;
-    margin-top: 2px;
+    color: var(--el-text-color-secondary);
   }
 }
 
-.user-menu-item {
-  padding: 9px 14px;
-  font-size: 13px;
-  text-align: left;
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: $text;
+.dd-danger {
+  color: var(--el-color-danger) !important;
 
   &:hover {
-    background: $content-bg;
-    text-decoration: none;
-  }
-
-  &.danger {
-    color: $error;
+    color: var(--el-color-danger) !important;
+    background: rgba(194, 85, 67, 0.08) !important;
   }
 }
 
@@ -297,51 +261,54 @@ async function onLogout(): Promise<void> {
   background: $nav-bg;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 10px 0;
   transition: width 0.15s;
   z-index: 90;
 }
 
-.nav-group {
-  margin-bottom: 14px;
+.side-menu {
+  border-right: none;
+  background: transparent;
+
+  &.el-menu {
+    background: transparent;
+  }
+
+  :deep(.el-menu-item) {
+    color: $nav-fg;
+    height: 44px;
+    margin: 2px 8px;
+    border-radius: 4px;
+
+    .el-icon {
+      color: $nav-fg;
+    }
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.05);
+      color: #fff;
+
+      .el-icon {
+        color: #fff;
+      }
+    }
+
+    &.is-active {
+      background: $nav-active-bg;
+      color: $nav-fg-active;
+
+      .el-icon {
+        color: $nav-fg-active;
+      }
+    }
+  }
 }
 
 .nav-title {
-  padding: 6px 16px 4px;
+  padding: 12px 20px 4px;
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #6d7f90;
-}
-
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 16px;
-  color: $nav-fg;
-  font-size: 13.5px;
-  text-decoration: none;
-  white-space: nowrap;
-
-  &:hover {
-    color: $nav-fg-active;
-    background: rgba(255, 255, 255, 0.05);
-    text-decoration: none;
-  }
-
-  &.active {
-    color: $nav-fg-active;
-    background: $nav-active-bg;
-    box-shadow: inset 3px 0 0 $brand;
-  }
-}
-
-.nav-icon {
-  width: 18px;
-  text-align: center;
-  font-size: 14px;
-  flex-shrink: 0;
+  color: #5f748c;
 }
 
 .content {

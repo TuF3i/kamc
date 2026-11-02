@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// 内容卡片：Element el-card 轻封装（head 插槽带操作区）
 defineProps<{
   title?: string;
   pad?: boolean;
@@ -6,25 +7,23 @@ defineProps<{
 </script>
 
 <template>
-  <section class="card" :class="{ pad: pad !== false }">
-    <header v-if="title || $slots.actions" class="card-head">
-      <h3>{{ title }}</h3>
-      <div class="card-actions"><slot name="actions" /></div>
-    </header>
+  <el-card class="card" :class="{ 'no-pad': pad === false }" shadow="never">
+    <template v-if="title || $slots.actions" #header>
+      <div class="card-head">
+        <h3>{{ title }}</h3>
+        <div class="card-actions"><slot name="actions" /></div>
+      </div>
+    </template>
     <slot />
-  </section>
+  </el-card>
 </template>
 
 <style lang="scss" scoped>
 .card {
-  background: $card-bg;
-  border: 1px solid $border;
-  border-radius: 6px;
-  box-shadow: $shadow;
   margin-bottom: 16px;
 
-  &.pad {
-    padding: 16px;
+  &.no-pad :deep(.el-card__body) {
+    padding: 0;
   }
 }
 
@@ -32,7 +31,7 @@ defineProps<{
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 12px;
+  gap: 8px;
 
   h3 {
     margin: 0;
@@ -41,11 +40,9 @@ defineProps<{
   }
 }
 
-.card:has(.card-head) {
-  .card-actions {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-  }
+.card-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 </style>
