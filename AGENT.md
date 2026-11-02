@@ -35,6 +35,7 @@ api/
   openapi.yaml       平台 HTTP API 的 OpenAPI 3.0 规范（与代码包分离）
 internal/platform/luaauth/  登录期权限绑定脚本引擎（Lua 沙箱 + kamc 桥接）
 deploy/              部署产物（nginx/manifests/README，见其内部说明）
+web/                 管理前端（Vite+Vue3+TS+Pinia，Rancher 风格；见 web/README.md）
 ```
 
 ## 架构约定（摘要）
@@ -91,7 +92,7 @@ make vet
 
 ## 路线图（对应设计文档章节）
 
-> 除 Web 前端外全部完成。上线前须完成 deploy/README.md 的人工验收清单（真实集群演练）。
+> 全部完成（含 Web 前端）。上线前须完成 deploy/README.md 的人工验收清单（真实集群演练）。
 
 - [x] 基础框架：目录结构、装配层、健康检查、集群注册 CRUD、wsconn 适配器、隧道管理器、Agent 连接循环
 - [x] Agent Token 管理：签发/列表/吊销、SHA256 哈希、轮换宽限期、注册 Token 1h TTL
@@ -133,3 +134,10 @@ make vet
 - [x] 登录期权限绑定脚本（Lua，§5 扩展）：Authentik claims → 沙箱脚本 →
       kamc 桥接计算绑定/策略（组不存在则新建）；fail-closed（脚本错误拒绝
       登录）；管理面 CRUD + 手动执行/dry-run；沙箱白名单库 + 2s 超时
+- [x] Web 前端（web/，Rancher Dashboard 风格自绘主题）：登录（SSO 跳转 +
+      dev-token）、概览、集群/Token 管理、Casbin 权限、Lua 脚本编辑与
+      dry-run、审计、kubeconfig 下载、exec 终端（xterm + v4.channel.k8s.io
+      WS，access_token 查询参数凭证——仅 WS 升级接受，见 middleware/jwt.go）。
+      技术栈 Vite+Vue3+TS+Pinia；浏览器接入后端配合：/auth/callback 浏览器
+      导航返回桥接页（写 localStorage 后跳 SPA）。开发：KAMC_API=… npm run dev；
+      生产构建 dist/ + 同源反代（web/README.md）
