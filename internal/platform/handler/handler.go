@@ -15,6 +15,7 @@ import (
 
 	"github.com/TuF3i/kamc/internal/auth"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
+	"github.com/TuF3i/kamc/internal/platform/luaauth"
 	"github.com/TuF3i/kamc/internal/platform/modules"
 	"github.com/TuF3i/kamc/internal/platform/oidc"
 	"github.com/TuF3i/kamc/internal/platform/proxy"
@@ -35,6 +36,7 @@ type Deps struct {
 	RateLimiter  mw.RateLimiter  // 数据面限流器（nil 或 RateLimit<=0 不启用）
 	RateLimitN   int             // 窗口内最大请求数
 	Audit        *audit.Writer   // 审计异步写出器（nil = 不审计）
+	LuaAuth      *luaauth.Engine // 登录期权限绑定脚本引擎（nil = 不启用）
 }
 
 // Handler 平台 HTTP 处理器（业务下沉 Service；依赖可空，对应降级行为）
@@ -52,6 +54,7 @@ type Handler struct {
 	rateLimiter mw.RateLimiter // 数据面限流器（nil 或 rateLimitN<=0 不启用）
 	rateLimitN  int            // 窗口内最大请求数
 	audit       *audit.Writer
+	luaAuth     *luaauth.Engine
 
 	adminGroup      string // 管理面用户组（AM_ADMIN_GROUP）
 	devTokenEnabled bool   // 开发用直签 Token 开关（AM_DEV_ISSUE_TOKEN）
@@ -63,6 +66,7 @@ func NewHandler(svc *service.Service, deps Deps) *Handler {
 		svc: svc, auth: deps.Auth, oidc: deps.OIDC, tunnels: deps.Tunnels, proxies: deps.Proxies,
 		caData: deps.CAData, oidcIssuer: deps.OIDCIssuer, oidcClientID: deps.OIDCClientID,
 		rateLimiter: deps.RateLimiter, rateLimitN: deps.RateLimitN, audit: deps.Audit,
+		luaAuth: deps.LuaAuth,
 	}
 }
 
@@ -121,6 +125,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			admin.Delete("/clusters/{id}/tokens/{kind}", h.RevokeToken)
 			admin.Post("/auth/revoke", h.AuthRevokeUser)
 			admin.Get("/audit", h.ListAudit)
+			authScriptsRoutes(admin, h)
 			policiesRoutes(admin, h)
 		})
 	})

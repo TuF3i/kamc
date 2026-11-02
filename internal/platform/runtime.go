@@ -33,6 +33,7 @@ import (
 	"github.com/TuF3i/kamc/internal/platform/dao"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
 	"github.com/TuF3i/kamc/internal/platform/handler"
+	"github.com/TuF3i/kamc/internal/platform/luaauth"
 	mw "github.com/TuF3i/kamc/internal/platform/middleware"
 	"github.com/TuF3i/kamc/internal/platform/modules"
 	"github.com/TuF3i/kamc/internal/platform/oidc"
@@ -133,6 +134,9 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	if err := d.SetupAudit(context.Background()); err != nil {
 		return nil, fmt.Errorf("platform -> setup audit table: %w", err)
 	}
+	if err := d.SetupAuthScript(context.Background()); err != nil {
+		return nil, fmt.Errorf("platform -> setup auth script table: %w", err)
+	}
 	// Redis 客户端（配置存在时）：策略同步 watcher 与 Token 吊销共用；
 	// 归 Runtime 所有（Release 关闭）。未配置 = 单副本语义（无跨副本同步）。
 	var sharedRedisCli goredis.UniversalClient
@@ -217,6 +221,9 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	auditWriter := audit.NewWriter(d, envDefault("AM_AUDIT_SPILL_FILE", "/tmp/kamc-audit-spill.jsonl"))
 	auditWriter.Start()
 
+	// 登录期权限绑定脚本引擎（Lua；沙箱 + fail-closed，§5 扩展）
+	luaEngine := luaauth.New(d, authzEn, d)
+
 	h := handler.NewHandler(svc, handler.Deps{
 		Auth:         authSvc,
 		OIDC:         oidcClient,
@@ -228,6 +235,7 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		RateLimiter:  limiter,
 		RateLimitN:   rateLimitN,
 		Audit:        auditWriter,
+		LuaAuth:      luaEngine,
 	})
 	h.SetPolicy(envDefault("AM_ADMIN_GROUP", "am:admin"), os.Getenv("AM_DEV_ISSUE_TOKEN") == "1")
 

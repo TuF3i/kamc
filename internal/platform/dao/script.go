@@ -29,6 +29,11 @@ func (d *Dao) UpsertAuthScript(ctx context.Context, s *modules.AuthScript) error
 	return nil
 }
 
+// Get 取脚本（luaauth.ScriptStore 接口）
+func (d *Dao) Get(ctx context.Context, name string) (*modules.AuthScript, error) {
+	return d.GetAuthScript(ctx, name)
+}
+
 // GetAuthScript 按 name 取脚本（未找到返回 gorm.ErrRecordNotFound）
 func (d *Dao) GetAuthScript(ctx context.Context, name string) (*modules.AuthScript, error) {
 	var s modules.AuthScript
@@ -36,6 +41,26 @@ func (d *Dao) GetAuthScript(ctx context.Context, name string) (*modules.AuthScri
 		return nil, fmt.Errorf("dao -> get auth script %s: %w", name, err)
 	}
 	return &s, nil
+}
+
+// ListAll 全量脚本（luaauth.ScriptStore 接口）
+func (d *Dao) ListAll(ctx context.Context) ([]modules.AuthScript, error) {
+	return d.ListAuthScripts(ctx, false)
+}
+
+// ListEnabled 启用脚本（luaauth.ScriptStore 接口；按 name 排序 = 执行顺序）
+func (d *Dao) ListEnabled(ctx context.Context) ([]modules.AuthScript, error) {
+	return d.ListAuthScripts(ctx, true)
+}
+
+// Upsert 保存脚本（luaauth.ScriptStore 接口）
+func (d *Dao) Upsert(ctx context.Context, s *modules.AuthScript) error {
+	return d.UpsertAuthScript(ctx, s)
+}
+
+// Delete 删除脚本（luaauth.ScriptStore 接口）
+func (d *Dao) Delete(ctx context.Context, name string) (int64, error) {
+	return d.DeleteAuthScript(ctx, name)
 }
 
 // ListAuthScripts 脚本列表（enabledOnly=true 仅启用的，按 name 排序——执行顺序）

@@ -9,6 +9,7 @@ import (
 
 	"github.com/TuF3i/kamc/internal/metrics"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
+	"github.com/TuF3i/kamc/internal/platform/luaauth"
 	"github.com/TuF3i/kamc/internal/platform/middleware"
 )
 
@@ -40,8 +41,7 @@ func (h *Handler) AuthCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "login failed", http.StatusUnauthorized)
 		return
 	}
-	h.auditSimple(r, user.Sub, "", "/auth/callback", "login-success", true)
-	h.issueAndRespond(w, user.Sub, user.Email, user.Groups)
+	h.issueAfterBinding(w, r, user.Sub, user.Email, user.Groups, "/auth/callback")
 }
 
 // AuthMe GET /auth/me —— 回显当前 JWT claims（调试与客户端自检）
@@ -70,7 +70,7 @@ func (h *Handler) AuthDevToken(w http.ResponseWriter, r *http.Request) {
 		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
 		return
 	}
-	h.issueAndRespond(w, req.Sub, req.Email, req.Groups)
+	h.issueAfterBinding(w, r, req.Sub, req.Email, req.Groups, "/auth/dev-token")
 }
 
 // AuthTokenExchange POST /auth/token-exchange —— OIDC ID Token 兑换平台 JWT
@@ -94,7 +94,7 @@ func (h *Handler) AuthTokenExchange(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	h.issueAndRespond(w, user.Sub, user.Email, user.Groups)
+	h.issueAfterBinding(w, r, user.Sub, user.Email, user.Groups, "/auth/token-exchange")
 }
 
 // AuthRevokeUser POST /api/v1/auth/revoke —— 踢出用户（管理面）：
@@ -148,6 +148,23 @@ func (h *Handler) JWKS(w http.ResponseWriter, _ *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(b)
+}
+
+// issueAfterBinding 登录挂载点（§5 扩展，fail-closed）：
+// 执行启用的权限绑定脚本（Authentik claims → Casbin 绑定/策略），
+// 任何脚本错误拒绝签发（403 + 审计告警）——权限没算出来不放行；
+// 管理员禁用脚本即可恢复登录。脚本未启用（nil 引擎/无脚本）直接签发。
+func (h *Handler) issueAfterBinding(w http.ResponseWriter, r *http.Request, sub, email string, groups []string, source string) {
+	if h.luaAuth != nil {
+		if err := h.luaAuth.Execute(r.Context(), luaauth.ClaimsOf(sub, email, groups)); err != nil {
+			log.Printf("[platform] binding script failed for %s: %v", sub, err)
+			h.auditSimple(r, sub, "", source, "binding-script-failed", false)
+			http.Error(w, "binding script failed", http.StatusForbidden)
+			return
+		}
+	}
+	h.auditSimple(r, sub, "", source, "login-success", true)
+	h.issueAndRespond(w, sub, email, groups)
 }
 
 // issueAndRespond 签发平台 JWT 并输出（callback 与 dev-token 共用出口）

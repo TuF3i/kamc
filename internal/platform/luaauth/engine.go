@@ -32,6 +32,9 @@ import (
 type ScriptStore interface {
 	ListEnabled(ctx context.Context) ([]modules.AuthScript, error)
 	Get(ctx context.Context, name string) (*modules.AuthScript, error)
+	ListAll(ctx context.Context) ([]modules.AuthScript, error)
+	Upsert(ctx context.Context, s *modules.AuthScript) error
+	Delete(ctx context.Context, name string) (int64, error)
 }
 
 // AuthzBridge 权限桥接（authz.Enforcer 实现满足；测试注入 fake）
@@ -128,6 +131,41 @@ func SyntaxCheck(content string) error {
 		return fmt.Errorf("luaauth -> compile: %w", err)
 	}
 	return nil
+}
+
+// ── 脚本管理（管理面 API 的业务层）──
+
+// UpsertScript 保存脚本（先语法校验；校验失败不落库）
+func (e *Engine) UpsertScript(ctx context.Context, name, content string, enabled bool) error {
+	if strings.TrimSpace(name) == "" || len(name) > 128 {
+		return errors.New("luaauth -> script name invalid")
+	}
+	if err := SyntaxCheck(content); err != nil {
+		return err
+	}
+	return e.scripts.Upsert(ctx, &modules.AuthScript{Name: name, Content: content, Enabled: enabled})
+}
+
+// DeleteScript 删除脚本
+func (e *Engine) DeleteScript(ctx context.Context, name string) (bool, error) {
+	rows, err := e.scripts.Delete(ctx, name)
+	if err != nil {
+		return false, fmt.Errorf("luaauth -> delete script: %w", err)
+	}
+	return rows > 0, nil
+}
+
+// ListScripts 脚本列表（includeDisabled=false 仅启用的）
+func (e *Engine) ListScripts(ctx context.Context, includeDisabled bool) ([]modules.AuthScript, error) {
+	if includeDisabled {
+		return e.scripts.ListAll(ctx)
+	}
+	return e.scripts.ListEnabled(ctx)
+}
+
+// GetScript 脚本详情
+func (e *Engine) GetScript(ctx context.Context, name string) (*modules.AuthScript, error) {
+	return e.scripts.Get(ctx, name)
 }
 
 // runScript 编译 → 沙箱构造 → 桥接注册 → 超时执行。

@@ -24,6 +24,7 @@ const (
 	CodeClusterExists   = 20002
 	CodeTokenNotFound   = 30001
 	CodePolicyNotFound  = 40001
+	CodeScriptNotFound  = 40002
 	CodeServerInternal  = 50000
 )
 
@@ -40,12 +41,13 @@ func (r *Response) Error() string {
 
 // 业务错误码（包级 var，禁止运行期修改）
 var (
-	OperationSuccess   = &Response{Status: CodeSuccess, Message: "success"}
-	ErrInvalidParam    = &Response{Status: CodeInvalidParam, Message: "invalid parameter"}
-	ErrClusterNotFound = &Response{Status: CodeClusterNotFound, Message: "cluster not found"}
-	ErrClusterExists   = &Response{Status: CodeClusterExists, Message: "cluster already exists"}
-	ErrTokenNotFound   = &Response{Status: CodeTokenNotFound, Message: "token not found"}
-	ErrPolicyNotFound  = &Response{Status: CodePolicyNotFound, Message: "policy not found"}
+	OperationSuccess      = &Response{Status: CodeSuccess, Message: "success"}
+	ErrInvalidParam       = &Response{Status: CodeInvalidParam, Message: "invalid parameter"}
+	ErrClusterNotFound    = &Response{Status: CodeClusterNotFound, Message: "cluster not found"}
+	ErrClusterExists      = &Response{Status: CodeClusterExists, Message: "cluster already exists"}
+	ErrTokenNotFound      = &Response{Status: CodeTokenNotFound, Message: "token not found"}
+	ErrPolicyNotFound     = &Response{Status: CodePolicyNotFound, Message: "policy not found"}
+	ErrAuthScriptNotFound = &Response{Status: CodeScriptNotFound, Message: "auth script not found"}
 )
 
 // ServerInternal 系统内部错误：携带底层 err 详情，仅 handler 出口构造

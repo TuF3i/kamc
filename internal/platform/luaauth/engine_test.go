@@ -55,6 +55,33 @@ func (f *fakeScriptStore) Get(_ context.Context, name string) (*modules.AuthScri
 	return nil, errors.New("not found")
 }
 
+func (f *fakeScriptStore) ListAll(_ context.Context) ([]modules.AuthScript, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]modules.AuthScript, 0, len(f.scripts))
+	for _, sc := range f.scripts {
+		out = append(out, sc)
+	}
+	return out, nil
+}
+
+func (f *fakeScriptStore) Upsert(_ context.Context, sc *modules.AuthScript) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.scripts[sc.Name] = *sc
+	return nil
+}
+
+func (f *fakeScriptStore) Delete(_ context.Context, name string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.scripts[name]; !ok {
+		return 0, nil
+	}
+	delete(f.scripts, name)
+	return 1, nil
+}
+
 type fakeAuthz struct {
 	mu       sync.Mutex
 	bindings [][3]string
