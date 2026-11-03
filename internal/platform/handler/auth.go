@@ -11,7 +11,10 @@ import (
 
 	"github.com/TuF3i/kamc/internal/metrics"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
+	"github.com/TuF3i/kamc/internal/platform/luaauth"
 	"github.com/TuF3i/kamc/internal/platform/middleware"
+	"github.com/TuF3i/kamc/internal/platform/modules"
+	"github.com/TuF3i/kamc/internal/platform/service"
 )
 
 // AuthLogin GET /auth/login —— 发起 OIDC 登录（302 到 Provider）
@@ -44,7 +47,10 @@ func (h *Handler) AuthCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "login failed", http.StatusUnauthorized)
 		return
 	}
-	h.issueJWT(w, r, user.Sub, user.Email, user.Groups, "/auth/callback", wantsHTML(r))
+	h.issueJWTWithSync(w, r, &service.Identity{
+		Username: user.Sub, Email: user.Email, Nickname: user.Sub, Avatar: user.Picture,
+		Groups: user.Groups, Source: modules.UserSourceSSO,
+	}, "/auth/callback", wantsHTML(r))
 }
 
 // AuthMe GET /auth/me —— 回显当前 JWT claims（调试与客户端自检）
@@ -73,7 +79,36 @@ func (h *Handler) AuthDevToken(w http.ResponseWriter, r *http.Request) {
 		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
 		return
 	}
-	h.issueJWT(w, r, req.Sub, req.Email, req.Groups, "/auth/dev-token", false)
+	h.issueJWTWithSync(w, r, &service.Identity{
+		Username: req.Sub, Email: req.Email, Groups: req.Groups, Source: modules.UserSourceLocal,
+	}, "/auth/dev-token", false)
+}
+
+// AuthLdapLogin POST /auth/ldap-login —— LDAP 直登（LDAP_URL 未配置时 503）。
+// 认证通过后与 SSO 一致：同步平台用户/组 → 跑映射脚本 → 签发 JWT。
+func (h *Handler) AuthLdapLogin(w http.ResponseWriter, r *http.Request) {
+	if h.ldap == nil || h.auth == nil {
+		errcode.GenFinalResponse(w, nil, errcode.ErrLDAPDisabled)
+		return
+	}
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
+		return
+	}
+	user, err := h.ldap.Authenticate(strings.TrimSpace(req.Username), req.Password)
+	if err != nil {
+		h.auditSimple(r, req.Username, "", "/auth/ldap-login", "login-failed", false)
+		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
+		return
+	}
+	h.issueJWTWithSync(w, r, &service.Identity{
+		Username: user.Username, Email: user.Email, Nickname: user.Nickname,
+		Groups: user.Groups, Source: modules.UserSourceLDAP,
+	}, "/auth/ldap-login", false)
 }
 
 // AuthPasswordLogin POST /auth/password-login —— 内置管理员账号密码登录。
@@ -104,7 +139,9 @@ func (h *Handler) AuthPasswordLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	h.issueJWT(w, r, username, "", []string{h.adminGroup}, "/auth/password-login", false)
+	h.issueJWTWithSync(w, r, &service.Identity{
+		Username: username, Groups: []string{h.adminGroup}, Source: modules.UserSourceLocal,
+	}, "/auth/password-login", false)
 }
 
 // AuthTokenExchange POST /auth/token-exchange —— OIDC ID Token 兑换平台 JWT
@@ -128,7 +165,10 @@ func (h *Handler) AuthTokenExchange(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	h.issueJWT(w, r, user.Sub, user.Email, user.Groups, "/auth/token-exchange", false)
+	h.issueJWTWithSync(w, r, &service.Identity{
+		Username: user.Sub, Email: user.Email, Nickname: user.Sub, Avatar: user.Picture,
+		Groups: user.Groups, Source: modules.UserSourceSSO,
+	}, "/auth/token-exchange", false)
 }
 
 // AuthRevokeUser POST /api/v1/auth/revoke —— 踢出用户（管理面）：
@@ -190,7 +230,7 @@ func wantsHTML(r *http.Request) bool {
 	return strings.Contains(r.Header.Get("Accept"), "text/html")
 }
 
-// issueJWT 登录签发挂载点：审计登录成功并签发平台 JWT；
+// issueJWT 登录签发挂载点（不做用户同步——仅测试/特殊场景使用）；
 // browser=true 时以桥接 HTML 输出（仅 /auth/callback 浏览器导航使用）。
 func (h *Handler) issueJWT(w http.ResponseWriter, r *http.Request, sub, email string, groups []string, source string, browser bool) {
 	h.auditSimple(r, sub, "", source, "login-success", true)
@@ -208,6 +248,39 @@ func (h *Handler) issueJWT(w http.ResponseWriter, r *http.Request, sub, email st
 		"expires_at": exp.UTC().Format(time.RFC3339),
 		"token_type": "Bearer",
 	}, nil)
+}
+
+// issueJWTWithSync 登录签发完整链路（SSO/LDAP/dev-token/密码登录统一入口）：
+// 平台用户/组同步（失败仅记录，不阻断登录）→ Lua 映射脚本（fail-closed，
+// 失败拒绝签发 + 审计 script-failed）→ 签发 JWT。
+func (h *Handler) issueJWTWithSync(w http.ResponseWriter, r *http.Request, id *service.Identity, source string, browser bool) {
+	if id == nil || h.auth == nil {
+		http.Error(w, "auth not configured", http.StatusServiceUnavailable)
+		return
+	}
+	// 1) 平台用户目录同步（失败不阻断登录——目录是增强信息）
+	if rsp := h.svc.SyncUserOnLogin(r.Context(), id); rsp != nil {
+		log.Printf("[platform] user sync %s: %s", id.Username, rsp)
+	}
+	// 2) 映射脚本（fail-closed）
+	if h.luaAuth != nil {
+		extra := map[string]string{}
+		if id.Source == modules.UserSourceLDAP {
+			extra["login_method"] = "ldap"
+		}
+		if err := h.luaAuth.Execute(r.Context(), luaauth.Claims{
+			Sub: id.Username, Email: id.Email, Groups: id.Groups,
+			Source: string(id.Source), Extra: extra,
+		}); err != nil {
+			log.Printf("[platform] lua script %s: %v", id.Username, err)
+			h.auditSimple(r, id.Username, "", source, "script-failed", false)
+			errcode.GenFinalResponse(w, map[string]any{
+				"status": 10003, "message": "login rejected by mapping script",
+			}, &errcode.Response{Status: 10003, Message: "login rejected by mapping script: " + err.Error()})
+			return
+		}
+	}
+	h.issueJWT(w, r, id.Username, id.Email, id.Groups, source, browser)
 }
 
 // writeLoginBridge 浏览器登录桥接页：OIDC 回调落在后端路径上，SPA 需要拿到

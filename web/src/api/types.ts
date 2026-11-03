@@ -258,6 +258,39 @@ export interface SystemInfo {
   db_max_open_connections: number;
 }
 
+// ── 平台用户目录（SSO/LDAP 登录自动同步）──
+
+export type UserSource = 'sso' | 'ldap' | 'local';
+
+export interface PlatformUserDTO {
+  uid: string;
+  username: string;
+  nickname: string;
+  avatar_url: string;
+  groups: string[];
+  source: UserSource;
+  email: string;
+  metadata: Record<string, unknown>;
+  last_login?: string | null;
+  created_at: string;
+}
+
+export interface GroupDTO {
+  name: string;
+  desc: string;
+  source: string;
+  members: string[];
+  created_at: string;
+}
+
+export interface UserScript {
+  name: string;
+  content: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface K8sList<T> {
   items: T[];
 }

@@ -14,6 +14,8 @@ interface AuthState {
   restore: () => Promise<void>;
   signInWithDevToken: (input: DevTokenInput) => Promise<void>;
   signInWithPassword: (input: PasswordLoginInput) => Promise<void>;
+  /** 已手动写入 token 后触发状态校验（LDAP 等直接拿 token 的登录方式用） */
+  probeAdmin: () => Promise<void>;
   signOut: () => Promise<void>;
   clearLocal: () => void;
 }
@@ -83,6 +85,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const credential = await passwordLogin(input);
     setToken(credential.token);
     set({ token: credential.token, claims: null, isAdmin: false, checked: false, error: null });
+    await get().restore();
+    if (!get().claims) {
+      throw new Error(get().error ?? '登录状态校验失败');
+    }
+  },
+
+  probeAdmin: async () => {
     await get().restore();
     if (!get().claims) {
       throw new Error(get().error ?? '登录状态校验失败');

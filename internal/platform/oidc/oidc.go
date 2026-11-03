@@ -38,9 +38,11 @@ type Config struct {
 
 // User 兑换得到的用户身份
 type User struct {
-	Sub    string
-	Email  string
-	Groups []string
+	Sub      string
+	Email    string
+	Groups   []string
+	Nickname string // preferred_username（可空）
+	Picture  string // 头像 URL（可空）
 }
 
 // StateStore 授权 state 存储（一次性消费）。默认进程内实现（单副本语义）；
@@ -196,13 +198,18 @@ func (c *Client) verifyIDToken(ctx context.Context, rawID string) (*User, error)
 		return nil, fmt.Errorf("oidc -> verify id_token: %w", err)
 	}
 	var raw struct {
-		Email  string   `json:"email"`
-		Groups []string `json:"groups"`
+		Email             string   `json:"email"`
+		Groups            []string `json:"groups"`
+		PreferredUsername string   `json:"preferred_username"`
+		Picture           string   `json:"picture"`
 	}
 	if err := idToken.Claims(&raw); err != nil {
 		return nil, fmt.Errorf("oidc -> id_token claims: %w", err)
 	}
-	return &User{Sub: idToken.Subject, Email: raw.Email, Groups: raw.Groups}, nil
+	return &User{
+		Sub: idToken.Subject, Email: raw.Email, Groups: raw.Groups,
+		Nickname: raw.PreferredUsername, Picture: raw.Picture,
+	}, nil
 }
 
 // ensure 懒发现 provider（并发安全；失败不缓存，下次重试）

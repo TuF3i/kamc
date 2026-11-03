@@ -29,6 +29,13 @@ const (
 	CodeRobotNotFound      = 30003
 	CodeRobotExpired       = 30004
 	CodePolicyNotFound     = 40001
+	CodeUserNotFound       = 40006
+	CodeGroupExists        = 40007
+	CodeGroupNotFound      = 40008
+	CodeLDAPDisabled       = 10002
+	CodeScriptsDisabled    = 10004
+	CodeScriptFailed       = 10003
+	CodeAuthScriptNotFound = 40009
 	CodeServerInternal     = 50000
 )
 
@@ -56,6 +63,12 @@ var (
 	ErrRobotNotFound      = &Response{Status: CodeRobotNotFound, Message: "robot not found"}
 	ErrRobotExpired       = &Response{Status: CodeRobotExpired, Message: "robot token expired"}
 	ErrPolicyNotFound     = &Response{Status: CodePolicyNotFound, Message: "policy not found"}
+	ErrUserNotFound       = &Response{Status: CodeUserNotFound, Message: "user not found"}
+	ErrGroupExists        = &Response{Status: CodeGroupExists, Message: "group already exists"}
+	ErrGroupNotFound      = &Response{Status: CodeGroupNotFound, Message: "group not found"}
+	ErrLDAPDisabled       = &Response{Status: CodeLDAPDisabled, Message: "ldap not configured"}
+	ErrScriptsDisabled    = &Response{Status: CodeScriptsDisabled, Message: "mapping scripts disabled"}
+	ErrAuthScriptNotFound = &Response{Status: CodeAuthScriptNotFound, Message: "script not found"}
 )
 
 // ServerInternal 系统内部错误：携带底层 err 详情，仅 handler 出口构造

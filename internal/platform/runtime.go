@@ -37,6 +37,8 @@ import (
 	"github.com/TuF3i/kamc/internal/platform/directory"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
 	"github.com/TuF3i/kamc/internal/platform/handler"
+	ldapclient "github.com/TuF3i/kamc/internal/platform/ldapclient"
+	"github.com/TuF3i/kamc/internal/platform/luaauth"
 	mw "github.com/TuF3i/kamc/internal/platform/middleware"
 	"github.com/TuF3i/kamc/internal/platform/modules"
 	"github.com/TuF3i/kamc/internal/platform/oidc"
@@ -140,6 +142,15 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	if err := d.SetupRobot(context.Background()); err != nil {
 		return nil, fmt.Errorf("platform -> setup robot table: %w", err)
 	}
+	if err := d.SetupUser(context.Background()); err != nil {
+		return nil, fmt.Errorf("platform -> setup user table: %w", err)
+	}
+	if err := d.SetupGroup(context.Background()); err != nil {
+		return nil, fmt.Errorf("platform -> setup group table: %w", err)
+	}
+	if err := d.SetupAuthScript(context.Background()); err != nil {
+		return nil, fmt.Errorf("platform -> setup auth script table: %w", err)
+	}
 	// Redis 客户端（配置存在时）：策略同步 watcher 与 Token 吊销共用；
 	// 归 Runtime 所有（Release 关闭）。未配置 = 单副本语义（无跨副本同步）。
 	var sharedRedisCli goredis.UniversalClient
@@ -197,6 +208,20 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		proxies = proxy.NewPool(o.tunnels.Service.Open)
 	}
 	catalogSvc := catalog.New(svc, proxies)
+
+	// LDAP 登录（LDAP_URL 未配置 = /auth/ldap-login 503）
+	var ldapCfg *ldapclient.Config
+	if os.Getenv("LDAP_URL") != "" {
+		ldapCfg = ldapclient.FromEnv()
+		if ldapCfg == nil {
+			log.Printf("[platform] LDAP_URL 已设置但缺少 LDAP_BASE_DN，LDAP 登录未启用")
+		} else {
+			log.Printf("[platform] LDAP login enabled (%s)", ldapCfg.URL)
+		}
+	}
+
+	// 登录期映射脚本引擎（gopher-lua 沙箱；fail-closed）
+	luaEngine := luaauth.New(d, svc, authzEn)
 
 	// kubeconfig 生成配置：平台 CA（可选嵌入）与 exec 插件参数
 	var caData []byte
@@ -276,6 +301,8 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		Catalog:         catalogSvc,
 		AgentImageRepo:  agentImageRepo,
 		Settings:        platSettings,
+		LDAP:            ldapCfg,
+		LuaAuth:         luaEngine,
 	})
 	h.SetPolicy(envDefault("AM_ADMIN_GROUP", "am:admin"), os.Getenv("AM_DEV_ISSUE_TOKEN") == "1")
 	passwordUser := envDefault("AM_PASSWORD_LOGIN_USER", "sysadmin")

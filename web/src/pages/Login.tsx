@@ -1,8 +1,16 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Alert, App, Button, Divider, Form, Input, Spin, Typography } from 'antd';
-import { LockOutlined, LoginOutlined, UserOutlined } from '@ant-design/icons';
+import {
+  KeyOutlined,
+  LockOutlined,
+  LoginOutlined,
+  TeamOutlined,
+  UserOutlined,
+} from '@ant-design/icons';
 import { ApiError } from '@/api/http';
+import { ldapLogin } from '@/api/users';
+import { setToken } from '@/api/http';
 import { useAuthStore } from '@/stores/auth';
 
 interface PasswordForm {
@@ -10,11 +18,13 @@ interface PasswordForm {
   password: string;
 }
 
+type LoginMode = 'sso' | 'password' | 'ldap';
+
 export function Login() {
   const { message } = App.useApp();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [passwordOpen, setPasswordOpen] = useState(false);
+  const [mode, setMode] = useState<LoginMode>('sso');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -23,6 +33,7 @@ export function Login() {
   const checked = useAuthStore((s) => s.checked);
   const restore = useAuthStore((s) => s.restore);
   const signInWithPassword = useAuthStore((s) => s.signInWithPassword);
+  const probeAdmin = useAuthStore((s) => s.probeAdmin);
 
   const rawRedirect = searchParams.get('redirect') || '/';
   const redirect =
@@ -65,6 +76,30 @@ export function Login() {
     }
   };
 
+  const onLdapLogin = async (values: PasswordForm) => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const result = await ldapLogin(values.username.trim(), values.password);
+      setToken(result.token);
+      await probeAdmin();
+      message.success('LDAP 登录成功');
+      navigate(redirect, { replace: true });
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.message.includes('ldap not configured')) {
+          setError('LDAP 登录未启用（平台未配置 LDAP_URL）。');
+        } else {
+          setError('LDAP 用户名或密码错误。');
+        }
+      } else {
+        setError(err instanceof Error ? err.message : '登录失败');
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   if (token && !checked) {
     return (
       <div className="full-center">
@@ -90,7 +125,7 @@ export function Login() {
           <div className="login-card-head">
             <Typography.Title level={3}>登录访问管理中心</Typography.Title>
             <Typography.Text type="secondary">
-              使用组织身份登录，或使用管理员账号密码
+              使用组织身份（SSO / LDAP）或管理员账号密码
             </Typography.Text>
           </div>
 
@@ -121,42 +156,53 @@ export function Login() {
             />
           ) : null}
 
-          <Button
-            type="primary"
-            size="large"
-            block
-            icon={<LoginOutlined />}
-            onClick={() => window.location.assign('/auth/login')}
-          >
-            使用 SSO 登录
-          </Button>
-
-          <Divider plain className="login-divider">
-            或
-          </Divider>
-
-          {!passwordOpen ? (
-            <Button
-              type="default"
-              size="large"
-              block
-              className="login-outline-btn"
-              onClick={() => setPasswordOpen(true)}
-            >
-              使用用户名和密码
-            </Button>
+          {mode === 'sso' ? (
+            <>
+              <Button
+                type="primary"
+                size="large"
+                block
+                icon={<LoginOutlined />}
+                onClick={() => window.location.assign('/auth/login')}
+              >
+                使用 SSO 登录
+              </Button>
+              <Divider plain className="login-divider">
+                或
+              </Divider>
+              <Button
+                type="default"
+                size="large"
+                block
+                className="login-outline-btn"
+                icon={<UserOutlined />}
+                onClick={() => setMode('password')}
+              >
+                使用用户名和密码
+              </Button>
+              <Button
+                type="default"
+                size="large"
+                block
+                className="login-outline-btn"
+                icon={<TeamOutlined />}
+                onClick={() => setMode('ldap')}
+              >
+                使用 LDAP 账号登录
+              </Button>
+            </>
           ) : (
             <Form<PasswordForm>
               layout="vertical"
-              initialValues={{ username: 'sysadmin', password: 'sysadmin123' }}
-              onFinish={onPasswordLogin}
+              onFinish={mode === 'ldap' ? onLdapLogin : onPasswordLogin}
+              initialValues={mode === 'ldap' ? {} : { username: 'sysadmin', password: 'sysadmin123' }}
             >
               <Form.Item
                 name="username"
-                label="用户名"
+                label={mode === 'ldap' ? 'LDAP 用户名' : '用户名'}
                 rules={[{ required: true, message: '请输入用户名' }]}
               >
-                <Input prefix={<UserOutlined />} placeholder="sysadmin" autoComplete="username" />
+                <Input prefix={<UserOutlined />} placeholder={mode === 'ldap' ? 'LDAP uid' : 'sysadmin'} autoComplete="username" />
               </Form.Item>
               <Form.Item
                 name="password"
@@ -165,7 +211,7 @@ export function Login() {
               >
                 <Input.Password
                   prefix={<LockOutlined />}
-                  placeholder="sysadmin123"
+                  placeholder="••••••••"
                   autoComplete="current-password"
                 />
               </Form.Item>
@@ -176,10 +222,11 @@ export function Login() {
                 htmlType="submit"
                 loading={submitting}
                 className="login-outline-btn"
+                icon={mode === 'ldap' ? <TeamOutlined /> : <KeyOutlined />}
               >
-                登录
+                {mode === 'ldap' ? 'LDAP 登录' : '登录'}
               </Button>
-              <Button type="link" block onClick={() => setPasswordOpen(false)}>
+              <Button type="link" block onClick={() => setMode('sso')}>
                 返回 SSO 登录
               </Button>
             </Form>

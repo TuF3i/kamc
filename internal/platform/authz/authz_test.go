@@ -171,3 +171,43 @@ func TestWildcardPolicy(t *testing.T) {
 		t.Fatal("wildcard policy should allow any resource/action")
 	}
 }
+
+// TestUserPolicyShadowsGroupPolicies 用户策略完全遮蔽组策略：
+// 有用户策略时（即使不匹配本次请求），组策略不再参与判定。
+func TestUserPolicyShadowsGroupPolicies(t *testing.T) {
+	e := newMemEnforcer(t, [][]string{
+		{"p", "org:dev-team", "prod-bj", "*/deployments", "get|list"},
+		{"p", "user:alice", "prod-bj", "*/services", "get|list"},
+	})
+	en := &Enforcer{e: e}
+	// 用户策略命中 → 放行
+	if ok, err := en.Enforce("alice", []string{"dev-team"}, "prod-bj", "default/services", "get"); err != nil || !ok {
+		t.Fatalf("user policy should allow services: ok=%v err=%v", ok, err)
+	}
+	// 用户策略存在但未命中本次请求 → 组策略被遮蔽，拒绝
+	if ok, err := en.Enforce("alice", []string{"dev-team"}, "prod-bj", "default/deployments", "get"); err != nil || ok {
+		t.Fatalf("user policy should shadow group policy: ok=%v err=%v", ok, err)
+	}
+	// 无用户策略的其他用户 → 组策略正常生效
+	if ok, err := en.Enforce("bob", []string{"dev-team"}, "prod-bj", "default/deployments", "get"); err != nil || !ok {
+		t.Fatalf("group policy should allow bob: ok=%v err=%v", ok, err)
+	}
+}
+
+// TestGroupPoliciesStack 多组策略叠加：两个组的策略并集生效。
+func TestGroupPoliciesStack(t *testing.T) {
+	e := newMemEnforcer(t, [][]string{
+		{"p", "org:dev-team", "prod-bj", "*/deployments", "get|list"},
+		{"p", "org:qa-team", "prod-bj", "*/services", "get"},
+	})
+	en := &Enforcer{e: e}
+	if ok, err := en.Enforce("bob", []string{"dev-team", "qa-team"}, "prod-bj", "default/deployments", "get"); err != nil || !ok {
+		t.Fatalf("dev-team policy should allow: ok=%v err=%v", ok, err)
+	}
+	if ok, err := en.Enforce("bob", []string{"dev-team", "qa-team"}, "prod-bj", "default/services", "get"); err != nil || !ok {
+		t.Fatalf("qa-team policy should allow: ok=%v err=%v", ok, err)
+	}
+	if ok, err := en.Enforce("carol", []string{"dev-team"}, "prod-bj", "default/services", "get"); err != nil || ok {
+		t.Fatalf("non-member should be denied: ok=%v err=%v", ok, err)
+	}
+}

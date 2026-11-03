@@ -12,7 +12,7 @@ import {
   Tag,
   type TableColumnsType,
 } from 'antd';
-import { ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { FileSearchOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import { listAudit, type AuditQuery } from '@/api/audit';
 import type { AuditEvent } from '@/api/types';
 import { PageHeader } from '@/components/PageHeader';
@@ -131,6 +131,7 @@ export function Audit() {
     <div>
       <PageHeader
         title="审计日志"
+        icon={<FileSearchOutlined />}
         subtitle="数据面访问与登录事件（时间倒序，含拒绝原因；异步批量落库，查询可能有约 0.5s 延迟）。"
         extra={
           <Button

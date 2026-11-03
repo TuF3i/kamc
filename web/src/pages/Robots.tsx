@@ -27,6 +27,7 @@ import { createRobot, deleteRobot, downloadRobotKubeconfig, listRobots } from '@
 import { listClusters } from '@/api/clusters';
 import type { Cluster, CreateRobotResponse, Robot } from '@/api/types';
 import { PageHeader } from '@/components/PageHeader';
+import { PoliciesTab } from '@/components/access/PoliciesTab';
 import { CopyButton } from '@/components/CopyButton';
 import { fmtTime } from '@/utils/format';
 import { downloadTextFile } from '@/utils/download';
@@ -51,6 +52,7 @@ export function Robots() {
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [robotTab, setRobotTab] = useState<'list' | 'policies'>('list');
   const [created, setCreated] = useState<CreateRobotResponse | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
   const [form] = Form.useForm<RobotForm>();
@@ -259,18 +261,42 @@ export function Robots() {
     <div>
       <PageHeader
         title="机器人"
-        subtitle="为 CICD 机器人签发长期 kubeconfig；机器人以 user:<sub> 主体在权限页配置策略。"
+        subtitle="为 CICD 机器人签发长期 kubeconfig；机器人策略独立于用户，在「权限」页签单独管理。"
         extra={
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => {
-              form.resetFields();
-              setCreateOpen(true);
-            }}
-          >
-            签发机器人
-          </Button>
+          <Space size={12}>
+            <div className="subtab-bar" role="tablist" aria-label="机器人子页签">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={robotTab === 'list'}
+                className={`subtab${robotTab === 'list' ? ' active' : ''}`}
+                onClick={() => setRobotTab('list')}
+              >
+                机器人
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={robotTab === 'policies'}
+                className={`subtab${robotTab === 'policies' ? ' active' : ''}`}
+                onClick={() => setRobotTab('policies')}
+              >
+                权限
+              </button>
+            </div>
+            {robotTab === 'list' ? (
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => {
+                  form.resetFields();
+                  setCreateOpen(true);
+                }}
+              >
+                签发机器人
+              </Button>
+            ) : null}
+          </Space>
         }
       />
 
@@ -289,6 +315,9 @@ export function Robots() {
         />
       ) : null}
 
+      {robotTab === 'policies' ? (
+        <PoliciesTab subjectPrefix="robot:" />
+      ) : (
       <Card className="soft-card" styles={{ body: { padding: 0 } }}>
         {selectedKeys.length > 0 ? (
           <div className="batch-bar">
@@ -327,6 +356,7 @@ export function Robots() {
           }}
         />
       </Card>
+      )}
 
       <Modal
         title="签发机器人"

@@ -17,6 +17,8 @@ import (
 	"github.com/TuF3i/kamc/internal/platform/catalog"
 	"github.com/TuF3i/kamc/internal/platform/directory"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
+	ldapclient "github.com/TuF3i/kamc/internal/platform/ldapclient"
+	"github.com/TuF3i/kamc/internal/platform/luaauth"
 	"github.com/TuF3i/kamc/internal/platform/modules"
 	"github.com/TuF3i/kamc/internal/platform/oidc"
 	"github.com/TuF3i/kamc/internal/platform/proxy"
@@ -27,22 +29,24 @@ import (
 
 // Deps Handler 的可空依赖（nil 即功能降级：对应端点返回 503/501）
 type Deps struct {
-	Auth            *auth.Service     // JWT 签发/校验（nil = 认证未装配）
-	OIDC            *oidc.Client      // OIDC 登录（nil = 未配置 → /auth/login 503）
-	Tunnels         *tunnel.Service   // 隧道模块（nil = 未启用 → /tunnel 返回 503）
-	Proxies         *proxy.Pool       // API 代理池（nil = 未装配 → /proxy 返回 501）
-	CAData          []byte            // kubeconfig 嵌入的平台 CA（AM_KUBECONFIG_CA_FILE，可选）
-	OIDCIssuer      string            // exec 插件参数（kubeconfig 生成用）
-	OIDCClientID    string            // exec 插件参数
-	OIDCRedirectURL string            // OIDC 回调地址（平台信息页展示）
-	RateLimiter     mw.RateLimiter    // 数据面限流器（nil 或 RateLimit<=0 不启用）
-	RateLimitN      int               // 窗口内最大请求数
-	Audit           *audit.Writer     // 审计异步写出器（nil = 不审计）
-	RobotTokenTTL   time.Duration     // Robot 长期 JWT 有效期（默认 365 天）
-	Directory       *directory.Client // Authentik 用户/组织目录（nil = 未配置）
-	Catalog         *catalog.Service  // 集群 GVR 资源目录（nil = 未装配）
-	AgentImageRepo  string            // Agent 镜像仓库完整地址（不含 tag，AM_AGENT_IMAGE_REPO）
-	Settings        Settings          // 平台静态配置快照（平台信息页展示，敏感值已在装配层脱敏）
+	Auth            *auth.Service      // JWT 签发/校验（nil = 认证未装配）
+	OIDC            *oidc.Client       // OIDC 登录（nil = 未配置 → /auth/login 503）
+	Tunnels         *tunnel.Service    // 隧道模块（nil = 未启用 → /tunnel 返回 503）
+	Proxies         *proxy.Pool        // API 代理池（nil = 未装配 → /proxy 返回 501）
+	CAData          []byte             // kubeconfig 嵌入的平台 CA（AM_KUBECONFIG_CA_FILE，可选）
+	OIDCIssuer      string             // exec 插件参数（kubeconfig 生成用）
+	OIDCClientID    string             // exec 插件参数
+	OIDCRedirectURL string             // OIDC 回调地址（平台信息页展示）
+	RateLimiter     mw.RateLimiter     // 数据面限流器（nil 或 RateLimit<=0 不启用）
+	RateLimitN      int                // 窗口内最大请求数
+	Audit           *audit.Writer      // 审计异步写出器（nil = 不审计）
+	RobotTokenTTL   time.Duration      // Robot 长期 JWT 有效期（默认 365 天）
+	Directory       *directory.Client  // Authentik 用户/组织目录（nil = 未配置）
+	Catalog         *catalog.Service   // 集群 GVR 资源目录（nil = 未装配）
+	AgentImageRepo  string             // Agent 镜像仓库完整地址（不含 tag，AM_AGENT_IMAGE_REPO）
+	Settings        Settings           // 平台静态配置快照（平台信息页展示，敏感值已在装配层脱敏）
+	LDAP            *ldapclient.Config // LDAP 登录（nil = 未配置 → /auth/ldap-login 503）
+	LuaAuth         *luaauth.Engine    // 登录期映射脚本引擎（nil = 脚本功能关闭）
 }
 
 // Handler 平台 HTTP 处理器（业务下沉 Service；依赖可空，对应降级行为）
@@ -71,6 +75,9 @@ type Handler struct {
 	devTokenEnabled bool      // 开发用直签 Token 开关（AM_DEV_ISSUE_TOKEN）
 	startedAt       time.Time // Handler 装配时间（运行时长统计）
 
+	ldap    *ldapclient.Config // LDAP 登录配置
+	luaAuth *luaauth.Engine    // 登录期映射脚本引擎
+
 	passwordLoginEnabled bool   // 内置账号密码登录开关（AM_PASSWORD_LOGIN）
 	passwordUser         string // 内置账号（AM_PASSWORD_LOGIN_USER）
 	passwordPass         string // 内置密码（AM_PASSWORD_LOGIN_PASSWORD）
@@ -85,6 +92,7 @@ func NewHandler(svc *service.Service, deps Deps) *Handler {
 		rateLimiter:     deps.RateLimiter, rateLimitN: deps.RateLimitN, audit: deps.Audit,
 		robotTokenTTL: deps.RobotTokenTTL, directory: deps.Directory, catalog: deps.Catalog,
 		agentImageRepo: deps.AgentImageRepo, settings: deps.Settings, startedAt: time.Now(),
+		ldap: deps.LDAP, luaAuth: deps.LuaAuth,
 	}
 }
 
@@ -120,6 +128,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/auth/token-exchange", h.AuthTokenExchange)
 	r.Post("/auth/dev-token", h.AuthDevToken)
 	r.Post("/auth/password-login", h.AuthPasswordLogin)
+	r.Post("/auth/ldap-login", h.AuthLdapLogin)
 	r.With(mw.RequireJWT(h.auth)).Get("/auth/me", h.AuthMe)
 	r.With(mw.RequireJWT(h.auth)).Post("/auth/logout", h.AuthLogout)
 
@@ -157,6 +166,9 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			clusterResourcesRoutes(admin, h)
 			clusterInfoRoutes(admin, h)
 			robotsRoutes(admin, h)
+			usersRoutes(admin, h)
+			groupsRoutes(admin, h)
+			scriptsRoutes(admin, h)
 			admin.Get("/system", h.SystemInfo)
 			admin.Get("/platform/info", h.PlatformInfo)
 		})

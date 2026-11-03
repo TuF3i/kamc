@@ -114,26 +114,49 @@ func (en *Enforcer) Release() {
 	}
 }
 
-// Enforce 判定主体是否放行：用户主体 user:<sub>，或任一组织主体 org:<group>。
-// 任一候选命中即放行；任一 Enforce 报错即返回错误（调用方 fail-closed）。
+// Enforce 判定主体是否放行，优先级语义：
+//   - 用户策略存在（user:<sub> 命中或该主体在 dom 下有任何策略行）时，
+//     完全遮蔽组策略——只按用户策略判定；
+//   - 无用户策略时，多个组的策略叠加：任一 org:<group> 命中即放行。
+//
+// 任一步骤报错即返回错误（调用方 fail-closed）。
 func (en *Enforcer) Enforce(sub string, groups []string, dom, obj, act string) (bool, error) {
-	candidates := make([]string, 0, len(groups)+1)
-	candidates = append(candidates, "user:"+sub)
-	for _, g := range groups {
-		if g != "" {
-			candidates = append(candidates, "org:"+g)
-		}
+	userSub := "user:" + sub
+
+	// 用户策略遮蔽：该用户在 dom 下有任何策略行（无论是否命中本次请求）
+	// 即视为"用户策略已定义"，组策略不再参与。
+	hasUserPolicy, err := en.hasSubjectPolicy(userSub, dom)
+	if err != nil {
+		return false, err
 	}
-	for _, candidate := range candidates {
-		ok, err := en.e.Enforce(candidate, dom, obj, act)
+	if hasUserPolicy {
+		return en.e.Enforce(userSub, dom, obj, act)
+	}
+
+	// 组策略叠加：任一组命中即放行
+	for _, g := range groups {
+		if g == "" {
+			continue
+		}
+		ok, err := en.e.Enforce("org:"+g, dom, obj, act)
 		if err != nil {
-			return false, fmt.Errorf("authz -> enforce %s: %w", candidate, err)
+			return false, fmt.Errorf("authz -> enforce org:%s: %w", g, err)
 		}
 		if ok {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+// hasSubjectPolicy 主体在 dom 下是否定义了任何策略行（遮蔽判定用——
+// 即使行不匹配本次 obj/act，只要用户策略存在就整体接管该集群的判定）。
+func (en *Enforcer) hasSubjectPolicy(sub, dom string) (bool, error) {
+	rules, err := en.e.GetFilteredPolicy(0, sub, dom)
+	if err != nil {
+		return false, fmt.Errorf("authz -> filtered policy %s@%s: %w", sub, dom, err)
+	}
+	return len(rules) > 0, nil
 }
 
 // AddPolicy 增加策略行（AutoSave 落库 + 广播其他副本重载）
