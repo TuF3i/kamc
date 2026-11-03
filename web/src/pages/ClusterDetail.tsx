@@ -531,15 +531,6 @@ function AgentInstallTab({ clusterId }: { clusterId: string }) {
   return (
     <div className="tab-stack">
       <Card title="一键安装 Agent" className="soft-card">
-        <Typography.Paragraph>
-          在目标集群执行下面的命令即可完成 Agent 部署（Namespace + RBAC + 双副本 Deployment，
-          Token 经 Secret 挂载）。Agent 通过反向隧道上线后，集群接入状态变为「在线」。
-        </Typography.Paragraph>
-        <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-          镜像仓库由平台启动配置 <code className="mono">AM_AGENT_IMAGE_REPO</code>{' '}
-          决定（未设置默认走 Docker Hub），tag 与平台版本一致。
-        </Typography.Paragraph>
-
         {preview ? (
           <div className="agent-install">
             <Alert
