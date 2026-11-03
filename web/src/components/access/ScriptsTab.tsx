@@ -18,6 +18,44 @@ import { PlayCircleOutlined, SaveOutlined } from '@ant-design/icons';
 import CodeMirror from '@uiw/react-codemirror';
 import { StreamLanguage } from '@codemirror/language';
 import { lua } from '@codemirror/legacy-modes/mode/lua';
+import { autocompletion, closeBrackets, snippetCompletion } from '@codemirror/autocomplete';
+import type { CompletionContext } from '@codemirror/autocomplete';
+
+/** Lua 关键字/内置 API 补全来源（静态符号 + kamc 桥接 API 片段）。 */
+function luaCompletions(context: CompletionContext) {
+  const word = context.matchBefore(/[\w.]+/);
+  if (!word || (word.from === word.to && !context.explicit)) return null;
+  const kamcApi = [
+    'kamc.upsert_user(username, nickname, groups_csv)',
+    'kamc.upsert_group(name, desc)',
+    'kamc.list_users()',
+    'kamc.list_groups()',
+    'kamc.add_policy(sub, dom, obj, act)',
+    'kamc.remove_policy(sub, dom, obj, act)',
+    'kamc.has_policy(sub, dom, obj, act)',
+    'kamc.list_policies()',
+  ];
+  const options = [
+    // kamc 桥接 API（带 snippet 占位符，Tab 跳转）
+    ...kamcApi.map((label) =>
+      snippetCompletion(label, {
+        label,
+        type: 'function',
+        detail: 'kamc 桥接',
+        boost: 2,
+      }),
+    ),
+    ...['for', 'if', 'else', 'elseif', 'end', 'while', 'do', 'then', 'function', 'local', 'return', 'in', 'ipairs', 'pairs', 'tostring', 'string', 'table', 'math', 'true', 'false', 'nil', 'and', 'or', 'not', 'break'].map((k) => ({
+      label: k,
+      type: k === 'true' || k === 'false' || k === 'nil' ? 'constant' : 'keyword',
+    })),
+    snippetCompletion("for ${i} = 1, #${items} do\n\t\nend", { label: 'fori', type: 'keyword', detail: '数值 for 循环' }),
+    snippetCompletion("for _, ${v} in ipairs(${t}) do\n\t\nend", { label: 'forin', type: 'keyword', detail: 'ipairs 遍历' }),
+    snippetCompletion("if ${cond} then\n\t\nend", { label: 'ifthen', type: 'keyword', detail: '条件块' }),
+    snippetCompletion("local function ${name}()\n\t\nend", { label: 'func', type: 'keyword', detail: '函数定义' }),
+  ];
+  return { from: word.from, options, validFor: /^[\w.]*$/ };
+}
 import {
   deleteScript,
   getScript,
@@ -319,9 +357,13 @@ export function ScriptsTab() {
             <CodeMirror
               value={draft.content}
               height="420px"
-              extensions={[StreamLanguage.define(lua)]}
+              extensions={[
+                StreamLanguage.define(lua),
+                autocompletion({ override: [luaCompletions] }),
+                closeBrackets(),
+              ]}
               theme="dark"
-              basicSetup={{ foldGutter: false, autocompletion: true, highlightActiveLine: true }}
+              basicSetup={{ foldGutter: false, highlightActiveLine: true, autocompletion: false }}
               onChange={(value) => setDraft((d) => (d ? { ...d, content: value } : d))}
               style={{ fontSize: 13, border: '1px solid var(--kamc-border)', borderRadius: 8 }}
             />

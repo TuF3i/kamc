@@ -14,6 +14,7 @@ import (
 	"log"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hashicorp/yamux"
@@ -41,6 +42,10 @@ type Tunnel struct {
 
 	closeWith gracefulCloser  // 底层 WS 连接（Attach 时类型断言；peer 连接为 nil）
 	activity  activityTracker // 读活性追踪（Attach 时类型断言；无则看门狗跳过）
+
+	// replaced 被同 (cluster, agent) 的新会话顶替标记：顶替路径关闭旧会话后，
+	// monitorSession 不得再走 Remove（否则会误删新会话/触发 detach 打架）。
+	replaced atomic.Bool
 }
 
 // Option Manager 选项
@@ -245,12 +250,16 @@ func (m *Manager) Register(clusterID, agentID string, sess *yamux.Session) {
 	m.register(clusterID, agentID, sess, &Tunnel{ClusterID: clusterID, AgentID: agentID, Session: sess, Since: time.Now()})
 }
 
-// register 登记的具体实现（Attach 与 Register 共用）
+// register 登记的具体实现（Attach 与 Register 共用）：
+// 同 (cluster, agent) 的旧会话立即关闭并被替换（Agent 重连前必然已断开旧
+// 连接，这里兜底防泄漏）。旧会话标记 replaced——其 monitorSession 退出时
+// 不再 Remove/触发 detach，避免与新会话打架（同一 Agent 重连风暴的根源）。
 func (m *Manager) register(clusterID, agentID string, sess *yamux.Session, t *Tunnel) {
 	m.mu.Lock()
 	list := m.clusters[clusterID]
 	for i, old := range list {
 		if old.AgentID == agentID {
+			old.replaced.Store(true)
 			m.closeTunnel(old)
 			list[i] = t
 			m.mu.Unlock()
@@ -346,12 +355,29 @@ func (m *Manager) monitorSession(clusterID, agentID string, session *yamux.Sessi
 	for {
 		stream, err := session.Accept()
 		if err != nil {
+			// 被新会话顶替的旧会话静默退出：Remove 由顶替路径的语义接管，
+			// 这里再 Remove 会误删同 ID 的新隧道（重连风暴根源）。
+			if m.isReplaced(clusterID, agentID, session) {
+				return
+			}
 			log.Printf("[tunnel] 会话关闭 %s/%s: %v", clusterID, agentID, err)
 			m.Remove(clusterID, agentID)
 			return
 		}
 		_ = stream.Close()
 	}
+}
+
+// isReplaced 该会话是否已被同 (cluster, agent) 的新会话顶替（仅匹配会话指针）
+func (m *Manager) isReplaced(clusterID, agentID string, session *yamux.Session) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, t := range m.clusters[clusterID] {
+		if t.AgentID == agentID && t.Session == session {
+			return false // 还在册 = 正常死亡
+		}
+	}
+	return true // 已不在册（被顶替/已移除）
 }
 
 // Open 取集群的数据流连接（设计文档 §6.2 Dialer 模型的拨号入口）：
