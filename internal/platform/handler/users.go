@@ -14,6 +14,18 @@ import (
 	"github.com/TuF3i/kamc/internal/platform/service"
 )
 
+// CreateUser POST /api/v1/users —— 手动创建本地用户（SSO/LDAP 之外的来源）
+func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
+	var req service.CreateUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
+		return
+	}
+	data, rsp := h.svc.CreateUser(r.Context(), &req)
+	h.auditPlatform(r, "user-create", req.Username, "", "/api/v1/users", errcode.IsSuccess(rsp), req.Username)
+	errcode.GenFinalResponse(w, data, rsp)
+}
+
 // ListUsers GET /api/v1/users
 func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	data, rsp := h.svc.ListUsers(r.Context())
@@ -65,6 +77,7 @@ func (h *Handler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 // usersRoutes / groupsRoutes 管理组内挂载
 func usersRoutes(admin chi.Router, h *Handler) {
 	admin.Get("/users", h.ListUsers)
+	admin.Post("/users", h.CreateUser)
 	admin.Patch("/users/{username}", h.UpdateUser)
 	admin.Delete("/users/{username}", h.DeleteUser)
 }

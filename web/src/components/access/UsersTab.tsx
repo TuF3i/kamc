@@ -15,8 +15,8 @@ import {
   Typography,
   type TableColumnsType,
 } from 'antd';
-import { DeleteOutlined, EditOutlined, SearchOutlined } from '@ant-design/icons';
-import { deleteUser, listUsers, updateUser } from '@/api/users';
+import { DeleteOutlined, EditOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons';
+import { createUser, deleteUser, listUsers, updateUser } from '@/api/users';
 import type { PlatformUserDTO, UserSource } from '@/api/types';
 
 const SOURCE_META: Record<UserSource, { label: string; color: string }> = {
@@ -43,6 +43,8 @@ export function UsersTab() {
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<EditState | null>(null);
   const [saving, setSaving] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createForm] = Form.useForm<{ username: string; nickname: string; email: string; avatar_url: string; groups: string }>();
   const [form] = Form.useForm<{ nickname: string; email: string; groups: string }>();
 
   const load = useCallback(async () => {
@@ -60,6 +62,30 @@ export function UsersTab() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const submitCreate = async () => {
+    const values = await createForm.validateFields();
+    setSaving(true);
+    try {
+      await createUser({
+        username: values.username.trim(),
+        nickname: values.nickname?.trim() || undefined,
+        email: values.email?.trim() || undefined,
+        avatar_url: values.avatar_url?.trim() || undefined,
+        groups: values.groups
+          ? values.groups.split(',').map((g) => g.trim()).filter(Boolean)
+          : [],
+      });
+      message.success(`用户 ${values.username.trim()} 已创建`);
+      setCreateOpen(false);
+      createForm.resetFields();
+      await load();
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '创建用户失败');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const openEdit = (user: PlatformUserDTO) => {
     setEditing({ user });
@@ -204,6 +230,16 @@ export function UsersTab() {
         <Typography.Paragraph type="danger">{error}</Typography.Paragraph>
       ) : null}
       <Space style={{ marginBottom: 12 }}>
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={() => {
+            createForm.resetFields();
+            setCreateOpen(true);
+          }}
+        >
+          新建用户
+        </Button>
         <Input
           allowClear
           prefix={<SearchOutlined />}
@@ -224,6 +260,43 @@ export function UsersTab() {
         locale={{ emptyText: <Empty description="暂无用户；用户在 SSO/LDAP 登录后自动创建" /> }}
       />
       </Card>
+
+      <Modal
+        title="新建本地用户"
+        open={createOpen}
+        onCancel={() => setCreateOpen(false)}
+        onOk={() => void submitCreate()}
+        okText="创建"
+        cancelText="取消"
+        confirmLoading={saving}
+        destroyOnHidden
+      >
+        <Form form={createForm} layout="vertical" style={{ marginTop: 12 }} preserve={false}>
+          <Form.Item
+            name="username"
+            label="用户名"
+            rules={[
+              { required: true, message: '请输入用户名' },
+              { max: 128, message: '用户名最长 128 字符' },
+            ]}
+            extra="平台内唯一；SSO/LDAP 同名用户后续登录时会接管该账号来源。"
+          >
+            <Input placeholder="alice" autoComplete="off" className="mono" />
+          </Form.Item>
+          <Form.Item name="nickname" label="昵称">
+            <Input placeholder="张三" autoComplete="off" />
+          </Form.Item>
+          <Form.Item name="email" label="邮箱">
+            <Input placeholder="alice@example.com" autoComplete="off" />
+          </Form.Item>
+          <Form.Item name="avatar_url" label="头像 URL">
+            <Input placeholder="https://…/avatar.png" autoComplete="off" />
+          </Form.Item>
+          <Form.Item name="groups" label="组" extra="逗号分隔；策略主体 org:<组名> 可直接引用">
+            <Input placeholder="dev-team, qa-team" autoComplete="off" />
+          </Form.Item>
+        </Form>
+      </Modal>
 
       <Modal
         title={`编辑用户 · ${editing?.user.username ?? ''}`}

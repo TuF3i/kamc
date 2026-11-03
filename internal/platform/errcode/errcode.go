@@ -30,6 +30,7 @@ const (
 	CodeRobotExpired       = 30004
 	CodePolicyNotFound     = 40001
 	CodeUserNotFound       = 40006
+	CodeUserExists         = 40010
 	CodeGroupExists        = 40007
 	CodeGroupNotFound      = 40008
 	CodeLDAPDisabled       = 10002
@@ -64,6 +65,7 @@ var (
 	ErrRobotExpired       = &Response{Status: CodeRobotExpired, Message: "robot token expired"}
 	ErrPolicyNotFound     = &Response{Status: CodePolicyNotFound, Message: "policy not found"}
 	ErrUserNotFound       = &Response{Status: CodeUserNotFound, Message: "user not found"}
+	ErrUserExists         = &Response{Status: CodeUserExists, Message: "user already exists"}
 	ErrGroupExists        = &Response{Status: CodeGroupExists, Message: "group already exists"}
 	ErrGroupNotFound      = &Response{Status: CodeGroupNotFound, Message: "group not found"}
 	ErrLDAPDisabled       = &Response{Status: CodeLDAPDisabled, Message: "ldap not configured"}

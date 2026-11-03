@@ -4,8 +4,12 @@ import {
   App,
   Button,
   Card,
+  Descriptions,
+  Form,
   Input,
+  Modal,
   Popconfirm,
+  Select,
   Space,
   Table,
   Tag,
@@ -13,15 +17,22 @@ import {
   type TableColumnsType,
   type TableProps,
 } from 'antd';
-import { DeleteOutlined, SearchOutlined } from '@ant-design/icons';
-import { deletePolicy, listPolicies } from '@/api/access';
-import type { PolicyDTO } from '@/api/types';
+import { DeleteOutlined, EditOutlined, SearchOutlined } from '@ant-design/icons';
+import { createPolicies, deletePolicy, listPolicies } from '@/api/access';
+import { listClusterResources } from '@/api/resources';
+import type { ClusterResource, PolicyDTO } from '@/api/types';
 import { summarizeBatch } from '@/utils/batch';
 
 function subjectLabel(record: PolicyDTO): string {
   if (record.subject_type === 'org') return '组织';
   if (record.subject_type === 'user') return '用户';
   return '遗留';
+}
+
+/** 策略是否命名空间资源：obj 以 cluster/ 开头或资源为 * 视为集群级 */
+function isNamespaced(record: PolicyDTO): boolean {
+  if (record.resource === '*') return false;
+  return !record.obj.startsWith('cluster/');
 }
 
 function resourceLabel(record: PolicyDTO): string {
@@ -44,6 +55,30 @@ export function PoliciesTab({ subjectPrefix, clusterFilter }: PoliciesTabProps) 
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
+  const [editing, setEditing] = useState<PolicyDTO | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [resources, setResources] = useState<ClusterResource[]>([]);
+  const [namespaces, setNamespaces] = useState<string[]>([]);
+  const [editForm] = Form.useForm<{ namespace: string; verbs: string[] }>();
+
+  // 编辑弹窗打开时拉取目标集群资源（动作候选；集群离线则退回常用动作）
+  useEffect(() => {
+    if (!editing) return;
+    void listClusterResources(editing.cluster)
+      .then((res) => {
+        setResources(res.resources);
+        setNamespaces(res.namespaces);
+      })
+      .catch(() => {
+        setResources([]);
+        setNamespaces([]);
+      });
+    const namespaced = isNamespaced(editing);
+    editForm.setFieldsValue({
+      namespace: namespaced ? editing.namespace : '*',
+      verbs: editing.verbs,
+    });
+  }, [editing, editForm]);
 
   const load = async () => {
     setLoading(true);
@@ -107,6 +142,41 @@ export function PoliciesTab({ subjectPrefix, clusterFilter }: PoliciesTabProps) 
       await load();
     } catch (err) {
       message.error(err instanceof Error ? err.message : '删除策略失败');
+    }
+  };
+
+  const submitEdit = async () => {
+    if (!editing) return;
+    const values = await editForm.validateFields();
+    const namespaced = isNamespaced(editing);
+    const subjectType =
+      editing.subject_type === 'org' || editing.sub.startsWith('org:') ? 'org' : 'user';
+    setEditSaving(true);
+    try {
+      // 编辑语义：删除旧四元组 + 按新规则重建（保持主体/集群不变）
+      await deletePolicy({ sub: editing.sub, dom: editing.dom, obj: editing.obj, act: editing.act });
+      await createPolicies({
+        subject_type: subjectType,
+        subject: editing.subject,
+        cluster: editing.cluster,
+        rules: [
+          {
+            namespace: namespaced ? values.namespace : '*',
+            resource: editing.resource,
+            subresource: editing.subresource,
+            namespaced,
+            verbs: editing.resource === '*' ? ['*'] : values.verbs,
+          },
+        ],
+      });
+      message.success('策略已更新');
+      setEditing(null);
+      await load();
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '更新策略失败（旧策略可能已删除，请刷新核对）');
+      await load();
+    } finally {
+      setEditSaving(false);
     }
   };
 
@@ -210,20 +280,30 @@ export function PoliciesTab({ subjectPrefix, clusterFilter }: PoliciesTabProps) 
     {
       title: '操作',
       key: 'actions',
-      width: 100,
+      width: 160,
       render: (_, record) => (
-        <Popconfirm
-          title="删除这条策略？"
-          description={`${record.sub} · ${record.dom} · ${record.obj} · ${record.act}`}
-          okText="删除"
-          cancelText="取消"
-          okButtonProps={{ danger: true }}
-          onConfirm={() => void remove(record)}
-        >
-          <Button type="link" size="small" danger icon={<DeleteOutlined />}>
-            删除
+        <Space size={0}>
+          <Button
+            type="link"
+            size="small"
+            icon={<EditOutlined />}
+            onClick={() => setEditing(record)}
+          >
+            编辑
           </Button>
-        </Popconfirm>
+          <Popconfirm
+            title="删除这条策略？"
+            description={`${record.sub} · ${record.dom} · ${record.obj} · ${record.act}`}
+            okText="删除"
+            cancelText="取消"
+            okButtonProps={{ danger: true }}
+            onConfirm={() => void remove(record)}
+          >
+            <Button type="link" size="small" danger icon={<DeleteOutlined />}>
+              删除
+            </Button>
+          </Popconfirm>
+        </Space>
       ),
     },
   ];
@@ -290,6 +370,81 @@ export function PoliciesTab({ subjectPrefix, clusterFilter }: PoliciesTabProps) 
           }}
         />
       </Card>
+
+      <Modal
+        title="编辑策略"
+        open={editing !== null}
+        onCancel={() => setEditing(null)}
+        onOk={() => void submitEdit()}
+        okText="保存"
+        cancelText="取消"
+        confirmLoading={editSaving}
+        destroyOnHidden
+        width={560}
+      >
+        {editing ? (
+          <>
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="主体、集群与资源不可修改；保存时会删除旧策略并按新命名空间/动作重建"
+            />
+            <Descriptions column={1} size="small" bordered style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="主体">
+                <code className="mono">{editing.sub}</code>
+              </Descriptions.Item>
+              <Descriptions.Item label="集群">
+                <code className="mono">{editing.cluster}</code>
+              </Descriptions.Item>
+              <Descriptions.Item label="资源">
+                <code className="mono">{resourceLabel(editing)}</code>
+              </Descriptions.Item>
+            </Descriptions>
+            <Form form={editForm} layout="vertical">
+              <Form.Item
+                name="namespace"
+                label="命名空间"
+                extra={isNamespaced(editing) ? '切换命名空间会重建为对应作用域的规则' : '集群级资源无需命名空间'}
+              >
+                <Select
+                  disabled={!isNamespaced(editing) || editing.resource === '*'}
+                  options={[
+                    { value: '*', label: '*（全部命名空间）' },
+                    ...Array.from(new Set([editing.namespace, ...namespaces]))
+                      .filter((ns) => ns && ns !== '*')
+                      .sort()
+                      .map((ns) => ({ value: ns, label: ns })),
+                  ]}
+                />
+              </Form.Item>
+              <Form.Item
+                name="verbs"
+                label="动作"
+                extra={editing.resource === '*' ? '资源为 * 时动作固定为全部权限' : '可自定义（回车添加）'}
+                rules={[{ required: true, message: '至少选择一个动作' }]}
+              >
+                <Select
+                  mode="tags"
+                  disabled={editing.resource === '*'}
+                  placeholder="选择或输入动作"
+                  options={(() => {
+                    const found = resources.find(
+                      (r) =>
+                        r.resource === editing.resource &&
+                        (r.subresource ?? '') === (editing.subresource ?? ''),
+                    );
+                    const verbs = found?.verbs ?? [
+                      'get', 'list', 'watch', 'create', 'update', 'patch', 'delete',
+                    ];
+                    return verbs.map((v) => ({ value: v, label: v }));
+                  })()}
+                />
+              </Form.Item>
+            </Form>
+          </>
+        ) : null}
+      </Modal>
     </div>
   );
 }

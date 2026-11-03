@@ -7,6 +7,19 @@ export function listUsers(): Promise<PlatformUserDTO[]> {
   return apiGet<PlatformUserDTO[]>('/api/v1/users');
 }
 
+export interface CreateUserInput {
+  username: string;
+  nickname?: string;
+  email?: string;
+  avatar_url?: string;
+  groups?: string[];
+}
+
+/** 手动创建本地用户（SSO/LDAP 之外的来源）。 */
+export function createUser(input: CreateUserInput): Promise<PlatformUserDTO> {
+  return apiPost<PlatformUserDTO>('/api/v1/users', input);
+}
+
 export interface UpdateUserInput {
   nickname?: string;
   email?: string;

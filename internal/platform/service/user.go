@@ -134,6 +134,60 @@ func (s *Service) SyncUserOnLogin(ctx context.Context, id *Identity) *errcode.Re
 	return nil
 }
 
+// CreateUserRequest 管理面手动创建本地用户
+type CreateUserRequest struct {
+	Username  string   `json:"username"`
+	Nickname  string   `json:"nickname"`
+	Email     string   `json:"email"`
+	AvatarURL string   `json:"avatar_url"`
+	Groups    []string `json:"groups"`
+}
+
+// CreateUser 手动创建本地用户（source=local；SSO/LDAP 同名用户下次登录会覆盖来源）。
+func (s *Service) CreateUser(ctx context.Context, req *CreateUserRequest) (*modules.UserDTO, *errcode.Response) {
+	if req == nil {
+		return nil, errcode.ErrInvalidParam
+	}
+	username := strings.TrimSpace(req.Username)
+	if username == "" || len(username) > 128 {
+		return nil, errcode.ErrInvalidParam
+	}
+	if _, err := s.d.GetUser(ctx, username); err == nil {
+		return nil, errcode.ErrUserExists
+	} else if !isNotFound(err) {
+		return nil, errcode.ServerInternal(err)
+	}
+	uid, err := newUID()
+	if err != nil {
+		return nil, errcode.ServerInternal(err)
+	}
+	now := nowUTC()
+	u := &modules.PlatformUser{
+		UID:       uid,
+		Username:  username,
+		Nickname:  strings.TrimSpace(req.Nickname),
+		Email:     strings.TrimSpace(req.Email),
+		AvatarURL: strings.TrimSpace(req.AvatarURL),
+		Groups:    modulesJoinGroups(req.Groups),
+		Source:    modules.UserSourceLocal,
+		Metadata:  "{}",
+		LastLogin: &now,
+	}
+	if err := s.d.UpsertUser(ctx, u); err != nil {
+		return nil, errcode.ServerInternal(err)
+	}
+	// 组记录同步
+	for _, g := range req.Groups {
+		if g = strings.TrimSpace(g); g == "" {
+			continue
+		}
+		if _, err := s.d.GetGroup(ctx, g); isNotFound(err) {
+			_ = s.d.UpsertGroup(ctx, &modules.PlatformGroup{Name: g, Source: "local"})
+		}
+	}
+	return u.ToDTO(), nil
+}
+
 // ListUsers 平台用户列表（管理面）
 func (s *Service) ListUsers(ctx context.Context) ([]*modules.UserDTO, *errcode.Response) {
 	list, err := s.d.ListUsers(ctx)
