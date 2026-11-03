@@ -46,7 +46,7 @@ import (
 	"github.com/TuF3i/kamc/internal/platform/oidc"
 	"github.com/TuF3i/kamc/internal/platform/proxy"
 	"github.com/TuF3i/kamc/internal/platform/service"
-	"github.com/TuF3i/kamc/internal/platform/webui"
+	"github.com/TuF3i/kamc/internal/platform/webstatic"
 	"github.com/TuF3i/kamc/internal/tunnel"
 )
 
@@ -384,10 +384,14 @@ func newEngine(h *handler.Handler) *chi.Mux {
 	engine.Use(mw.AccessLog)
 	engine.Use(chimw.Recoverer)
 	h.RegisterRoutes(engine)
-	// 未匹配路由交给内嵌前端（make release 构建）；未嵌入时保持 404。
-	if webui.Available() {
-		engine.NotFound(webui.Handler().ServeHTTP)
-		log.Printf("[platform] embedded web UI enabled")
+	// 未匹配路由交给静态前端（AM_WEB_DIR，默认 web/dist）；
+	// 目录不存在（纯 API 部署/开发模式）时保持 404。
+	webDir := envDefault("AM_WEB_DIR", "web/dist")
+	if spa := webstatic.Handler(webDir); spa != nil {
+		engine.NotFound(spa.ServeHTTP)
+		log.Printf("[platform] web UI served from %s", webDir)
+	} else {
+		log.Printf("[platform] web UI not found at %s (API only)", webDir)
 	}
 	return engine
 }

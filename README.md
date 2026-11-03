@@ -11,12 +11,13 @@ kubernetes Access Manager Center
 
 ```bash
 make build   # 仅后端：bin/kamc-platform、bin/kamc-agent、bin/k8s-am-login
-make release # 生产单二进制：构建前端 → 嵌入 → 编译后端（前端与 API 同一进程）
+make release # 生产构建：先构建前端（web/dist），再编译后端
 make test
 ```
 
-`make release` 产出的 `bin/kamc-platform` 内置管理前端（`web/dist` 经 go:embed
-打包），部署时无需额外静态服务器；`make release VERSION=v1.0.0` 同时设定版本号
+`make release` 构建前端产物到 `web/dist/`；后端运行时从 `AM_WEB_DIR`
+（默认 `web/dist`）读取并托管页面与 API，同一进程启动即可访问管理前端，
+无需额外静态服务器。`make release VERSION=v1.0.0` 同时设定版本号
 （Agent 镜像 tag 使用同一版本）。
 
 本地运行平台（需要 PostgreSQL）：

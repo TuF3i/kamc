@@ -4,15 +4,16 @@ kamc 管理控制台：React 18 + Ant Design 5 + TypeScript + Vite + Recharts。
 深色悬浮导航运维控制台风格，覆盖集群、Agent Token、Casbin 权限、审计、
 机器人、kubeconfig 与平台信息页。
 
-## 生产构建（单二进制）
+## 生产构建（前后端一起启动）
 
 ```bash
-make release        # 在仓库根目录执行：前端构建产物嵌入 bin/kamc-platform
+make release        # 在仓库根目录执行：构建前端到 web/dist，再编译后端
 ./bin/kamc-platform # 打开 http://127.0.0.1:8080 即为管理前端（与 API 同源）
 ```
 
-前端资源经 `//go:embed` 打入后端二进制（`internal/platform/webui`），SPA 路由
-未知路径回退 `index.html`；`/api`、`/auth`、`/proxy` 等后端命名空间不参与回退。
+后端运行时从 `AM_WEB_DIR`（默认 `web/dist`）读取前端产物并映射成路由：
+SPA 未知路径回退 `index.html`，`assets/` 长缓存；`/api`、`/auth`、`/proxy`
+等后端命名空间不参与回退。前端产物不进入二进制，部署时与后端一起发布即可。
 
 ## 快速开始
 
