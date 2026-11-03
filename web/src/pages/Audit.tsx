@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import {
   Alert,
   Button,
@@ -161,6 +161,72 @@ function PlatformTable({ events, loading }: { events: AuditEvent[]; loading: boo
 }
 
 /** 请求/响应体块：限高滚动 + 强制换行（避免长 JSON 撑爆表格）+ 复制。 */
+/** JSON 行内语法高亮：key / 字符串 / 数字 / 布尔 分色 */
+const JSON_TOKEN = /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g;
+
+function highlightJSONLine(line: string, rowKey: number): ReactNode {
+  const nodes: ReactNode[] = [];
+  let last = 0;
+  let seq = 0;
+  JSON_TOKEN.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = JSON_TOKEN.exec(line)) !== null) {
+    if (m.index > last) nodes.push(line.slice(last, m.index));
+    if (m[1] !== undefined) {
+      const isKey = m[2] !== undefined;
+      nodes.push(
+        <span key={`s${rowKey}-${seq++}`} className={isKey ? 'json-key' : 'json-string'}>
+          {m[1]}
+        </span>,
+      );
+      if (isKey) nodes.push(m[2]);
+    } else if (m[3] !== undefined) {
+      nodes.push(<span key={`b${rowKey}-${seq++}`} className="json-bool">{m[3]}</span>);
+    } else {
+      nodes.push(<span key={`n${rowKey}-${seq++}`} className="json-number">{m[4]}</span>);
+    }
+    last = JSON_TOKEN.lastIndex;
+  }
+  if (last < line.length) nodes.push(line.slice(last));
+  return <div key={rowKey}>{nodes.length ? nodes : ' '}</div>;
+}
+
+/** 完整 HTTP 报文高亮：起始行 / 头名值 / JSON body 分别着色。 */
+function HighlightedDump({ text }: { text: string }) {
+  const sep = text.indexOf('\r\n\r\n');
+  const head = sep >= 0 ? text.slice(0, sep) : text;
+  const body = sep >= 0 ? text.slice(sep + 4) : '';
+  const headLines = head.split(/\r?\n/);
+  return (
+    <>
+      {headLines.map((line, i) => {
+        if (i === 0) {
+          return <div key={`h${i}`} className="http-start">{line || ' '}</div>;
+        }
+        const idx = line.indexOf(':');
+        if (idx > 0) {
+          return (
+            <div key={`h${i}`} className="http-header">
+              <span className="http-header-key">{line.slice(0, idx)}</span>
+              <span className="http-header-value">{line.slice(idx)}</span>
+            </div>
+          );
+        }
+        return <div key={`h${i}`} className={line.startsWith('…') ? 'dim' : undefined}>{line || ' '}</div>;
+      })}
+      {sep >= 0
+        ? body.split(/\r?\n/).map((line, i) =>
+            line.startsWith('(') || line.startsWith('…') ? (
+              <div key={`j${i}`} className="dim">{line || ' '}</div>
+            ) : (
+              highlightJSONLine(line, i)
+            ),
+          )
+        : null}
+    </>
+  );
+}
+
 function AuditBody({ title, body }: { title: string; body?: string }) {
   if (!body) {
     return (
@@ -177,7 +243,9 @@ function AuditBody({ title, body }: { title: string; body?: string }) {
         </Typography.Text>
         <CopyButton text={body} label="复制" size="small" />
       </div>
-      <pre className="code-block audit-body">{body}</pre>
+      <pre className="code-block audit-body">
+        <HighlightedDump text={body} />
+      </pre>
     </div>
   );
 }

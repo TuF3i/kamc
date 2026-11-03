@@ -1148,6 +1148,40 @@ body {
   margin: 0;
 }
 
+/* 审计报文语法高亮 */
+.audit-body .http-start {
+  color: #7cc4ff;
+  font-weight: 600;
+}
+
+.audit-body .http-header-key {
+  color: #8fb8e0;
+}
+
+.audit-body .http-header-value {
+  color: #dbe7f5;
+}
+
+.audit-body .json-key {
+  color: #9ecbff;
+}
+
+.audit-body .json-string {
+  color: #a7e5b4;
+}
+
+.audit-body .json-number {
+  color: #f0b072;
+}
+
+.audit-body .json-bool {
+  color: #d09cff;
+}
+
+.audit-body .dim {
+  color: var(--kamc-muted);
+}
+
 .token-issued .token-block {
   display: flex;
   gap: 10px;
