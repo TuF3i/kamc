@@ -136,6 +136,21 @@ export interface VersionInfo {
   component: string;
 }
 
+/** 集群节点概要（kubectl get nodes -o wide 子集） */
+export interface ClusterNodeInfo {
+  name: string;
+  roles?: string[];
+  ready: boolean;
+  unschedulable?: boolean;
+  internal_ip?: string;
+  kubelet_version?: string;
+  os_image?: string;
+  architecture?: string;
+  runtime?: string;
+  cpu?: string;
+  memory?: string;
+}
+
 /** 目标集群概要（kubectl cluster-info 语义，经 Agent 隧道读取） */
 export interface ClusterInfo {
   version: ClusterVersionInfo | null;
@@ -143,6 +158,8 @@ export interface ClusterInfo {
   control_plane?: string;
   /** CoreDNS 地址（clusterIP:port，读不到为空） */
   coredns?: string;
+  /** 集群节点列表（读取失败为空） */
+  nodes?: ClusterNodeInfo[];
   fetched_at: string;
 }
 

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
@@ -234,7 +235,85 @@ func (s *Service) Info(ctx context.Context, clusterID string) (*modules.ClusterI
 		svc.Body.Close()
 	}
 
+	// 节点列表（kubectl get nodes -o wide 子集）；失败仅降级为空列表
+	info.Nodes = s.listNodes(ctx, clusterID)
+
 	return info, nil
+}
+
+// listNodes 经隧道列出集群节点概要（失败返回空——节点展示是增强信息，不阻塞整体）
+func (s *Service) listNodes(ctx context.Context, clusterID string) []modules.ClusterNodeInfo {
+	transport, err := s.pool.Transport(clusterID)
+	if err != nil {
+		return nil
+	}
+	base := s.pool.Location(clusterID)
+	if base == nil {
+		return nil
+	}
+	cfg := &rest.Config{
+		Host:      base.String(),
+		Transport: transport,
+		Timeout:   15 * time.Second,
+	}
+	kc, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil
+	}
+	listCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	nodeList, err := kc.CoreV1().Nodes().List(listCtx, metav1.ListOptions{})
+	if err != nil {
+		return nil
+	}
+
+	nodes := make([]modules.ClusterNodeInfo, 0, len(nodeList.Items))
+	for _, n := range nodeList.Items {
+		node := modules.ClusterNodeInfo{
+			Name:          n.Name,
+			Unschedulable: n.Spec.Unschedulable,
+		}
+		// 角色：node-role.kubernetes.io/<role> 标签（缺省视为 worker）
+		for label := range n.Labels {
+			if role, ok := strings.CutPrefix(label, "node-role.kubernetes.io/"); ok && role != "" {
+				node.Roles = append(node.Roles, role)
+			}
+		}
+		sort.Strings(node.Roles)
+		if len(node.Roles) == 0 {
+			node.Roles = []string{"worker"}
+		}
+		// Ready 条件
+		for _, c := range n.Status.Conditions {
+			if c.Type == v1.NodeReady {
+				node.Ready = c.Status == v1.ConditionTrue
+				break
+			}
+		}
+		// 地址：优先 InternalIP
+		for _, a := range n.Status.Addresses {
+			if a.Type == v1.NodeInternalIP {
+				node.InternalIP = a.Address
+				break
+			}
+		}
+		node.KubeletVersion = n.Status.NodeInfo.KubeletVersion
+		node.OSImage = n.Status.NodeInfo.OSImage
+		node.Architecture = n.Status.NodeInfo.Architecture
+		node.Runtime = n.Status.NodeInfo.ContainerRuntimeVersion
+		// 容量：CPU 原样；memory 向上取整转 Gi（8589934592 → 8 Gi）
+		node.CPU = n.Status.Capacity.Cpu().String()
+		if mem := n.Status.Capacity.Memory(); !mem.IsZero() {
+			gi := mem.Value() / (1 << 30)
+			if mem.Value()%(1<<30) > 0 {
+				gi++
+			}
+			node.Memory = fmt.Sprintf("%d Gi", gi)
+		}
+		nodes = append(nodes, node)
+	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Name < nodes[j].Name })
+	return nodes
 }
 
 func (s *Service) discover(ctx context.Context, clusterID string) (*Catalog, *errcode.Response) {

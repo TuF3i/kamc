@@ -1266,7 +1266,29 @@ components:
         coredns:
           type: string
           description: CoreDNS 地址（kube-system/kube-dns Service，如 10.96.0.10:53）
+        nodes:
+          type: array
+          description: 集群节点列表（读取失败为空，不视为失败）
+          items: {$ref: '#/components/schemas/ClusterNodeInfo'}
         fetched_at: {type: string, format: date-time}
+
+    ClusterNodeInfo:
+      type: object
+      properties:
+        name: {type: string}
+        roles:
+          type: array
+          description: node-role.kubernetes.io/* 标签（缺省 worker）
+          items: {type: string}
+        ready: {type: boolean}
+        unschedulable: {type: boolean}
+        internal_ip: {type: string}
+        kubelet_version: {type: string, example: v1.31.4}
+        os_image: {type: string}
+        architecture: {type: string, example: amd64}
+        runtime: {type: string, example: 'containerd://1.7.22'}
+        cpu: {type: string, example: '4'}
+        memory: {type: string, example: 16 Gi}
 
     AgentInstallPreviewRequest:
       type: object

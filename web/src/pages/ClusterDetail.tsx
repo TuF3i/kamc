@@ -16,13 +16,19 @@ import {
   Spin,
   Table,
   Tabs,
+  Tag,
+  Tooltip,
   Typography,
   type TableColumnsType,
 } from 'antd';
 import {
   ArrowLeftOutlined,
   CloudDownloadOutlined,
+  ClusterOutlined,
   CodeOutlined,
+  DashboardOutlined,
+  DeploymentUnitOutlined,
+  DesktopOutlined,
   KeyOutlined,
   ReloadOutlined,
 } from '@ant-design/icons';
@@ -39,6 +45,7 @@ import type {
   AgentInstallPreview,
   Cluster,
   ClusterInfo,
+  ClusterNodeInfo,
   IssuedToken,
   TokenDTO,
   TokenKind,
@@ -47,6 +54,71 @@ import { PageHeader } from '@/components/PageHeader';
 import { ClusterStatusTag, TokenKindTag, TokenStatusTag } from '@/components/StatusTag';
 import { CopyButton } from '@/components/CopyButton';
 import { fmtTime } from '@/utils/format';
+
+function NodeCard({ node }: { node: ClusterNodeInfo }) {
+  const role = node.roles?.[0] ?? 'worker';
+  const isControlPlane = role === 'control-plane' || role === 'master';
+  const status = node.unschedulable ? 'SchedulingDisabled' : node.ready ? 'Ready' : 'NotReady';
+  const statusColor = node.ready ? 'var(--kamc-success)' : 'var(--kamc-danger)';
+
+  return (
+    <Tooltip
+      title={
+        <div style={{ lineHeight: 1.7 }}>
+          <div>
+            <strong>{node.name}</strong>
+          </div>
+          {node.internal_ip && <div>InternalIP: {node.internal_ip}</div>}
+          {node.runtime && <div>运行时: {node.runtime}</div>}
+          {node.os_image && <div>系统: {node.os_image}</div>}
+          {node.kubelet_version && <div>kubelet: {node.kubelet_version}</div>}
+          {(node.cpu || node.memory) && (
+            <div>
+              容量: {node.cpu ?? '—'} CPU / {node.memory ?? '—'}
+            </div>
+          )}
+        </div>
+      }
+      placement="bottom"
+    >
+      <div className={`node-card${node.ready ? '' : ' node-card-unready'}`}>
+        <div className="node-card-head">
+          <span className={`node-card-icon ${isControlPlane ? 'cp' : 'worker'}`}>
+            {isControlPlane ? <DeploymentUnitOutlined /> : <ClusterOutlined />}
+          </span>
+          <div className="node-card-name">
+            <span className="node-card-title" title={node.name}>
+              {node.name}
+            </span>
+            <span className="node-card-ip mono">{node.internal_ip || '—'}</span>
+          </div>
+          <span className="node-card-status" style={{ background: statusColor }}>
+            {status}
+          </span>
+        </div>
+        <div className="node-card-tags">
+          {node.roles?.map((r) => (
+            <Tag key={r} color={isControlPlane ? 'gold' : 'blue'} className="node-role-tag">
+              {r}
+            </Tag>
+          ))}
+          {node.unschedulable ? <Tag color="orange">不可调度</Tag> : null}
+        </div>
+        <div className="node-card-meta">
+          <span title="kubelet 版本">
+            <CodeOutlined /> {node.kubelet_version || '—'}
+          </span>
+          <span title="CPU / 内存容量">
+            <DashboardOutlined /> {node.cpu ?? '—'} CPU · {node.memory ?? '—'}
+          </span>
+          <span title="操作系统">
+            <DesktopOutlined /> {node.os_image || node.architecture || '—'}
+          </span>
+        </div>
+      </div>
+    </Tooltip>
+  );
+}
 
 function OverviewTab({ cluster }: { cluster: Cluster }) {
   const [info, setInfo] = useState<ClusterInfo | null>(null);
@@ -131,6 +203,30 @@ function OverviewTab({ cluster }: { cluster: Cluster }) {
           </Descriptions>
         )}
       </Card>
+
+      <div className="section-divider">
+        <span>集群节点</span>
+        {info?.nodes?.length ? (
+          <Typography.Text type="secondary">
+            共 {info.nodes.length} 个 · Ready {info.nodes.filter((n) => n.ready).length}
+          </Typography.Text>
+        ) : null}
+      </div>
+
+      {!info ? null : info.nodes?.length ? (
+        <div className="node-grid">
+          {info.nodes.map((node) => (
+            <NodeCard key={node.name} node={node} />
+          ))}
+        </div>
+      ) : (
+        <Card className="soft-card">
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description="未能读取节点列表（可能 Agent 版本较旧或权限不足）"
+          />
+        </Card>
+      )}
     </div>
   );
 }

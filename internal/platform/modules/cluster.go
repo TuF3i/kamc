@@ -70,7 +70,23 @@ type ClusterInfo struct {
 	Version      *ClusterVersionInfo `json:"version"`
 	ControlPlane string              `json:"control_plane,omitempty"` // default/kubernetes Endpoints（https://ip:port）
 	CoreDNS      string              `json:"coredns,omitempty"`       // kube-system/kube-dns Service（https://clusterIP[:port]）
+	Nodes        []ClusterNodeInfo   `json:"nodes,omitempty"`         // 集群节点列表（读取失败为空，不视为失败）
 	FetchedAt    time.Time           `json:"fetched_at"`
+}
+
+// ClusterNodeInfo 一个集群节点的概要（kubectl get nodes -o wide 语义的字段子集）
+type ClusterNodeInfo struct {
+	Name           string   `json:"name"`
+	Roles          []string `json:"roles,omitempty"` // node-role.kubernetes.io/* 标签（如 control-plane/worker）
+	Ready          bool     `json:"ready"`           // Ready 条件 == True
+	Unschedulable  bool     `json:"unschedulable,omitempty"`
+	InternalIP     string   `json:"internal_ip,omitempty"`
+	KubeletVersion string   `json:"kubelet_version,omitempty"`
+	OSImage        string   `json:"os_image,omitempty"`
+	Architecture   string   `json:"architecture,omitempty"`
+	Runtime        string   `json:"runtime,omitempty"` // 容器运行时（containerd://…）
+	CPU            string   `json:"cpu,omitempty"`     // capacity.cpu（如 4 / 3800m）
+	Memory         string   `json:"memory,omitempty"`  // capacity.memory（已转 Gi 展示）
 }
 
 // AgentInstallPreview Agent 一键安装预览：YAML 亦可经 /agent-install.yaml?token=
