@@ -102,6 +102,18 @@ func (d *Dao) GetGroup(ctx context.Context, name string) (*modules.PlatformGroup
 	return &g, nil
 }
 
+// UpdateGroup 更新组元信息（desc 等）
+func (d *Dao) UpdateGroup(ctx context.Context, name string, cols map[string]any) error {
+	res := d.db.WithContext(ctx).Model(&modules.PlatformGroup{}).Where("name = ?", name).Updates(cols)
+	if res.Error != nil {
+		return fmt.Errorf("dao -> update group %s: %w", name, res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return fmt.Errorf("dao -> update group %s: %w", name, gorm.ErrRecordNotFound)
+	}
+	return nil
+}
+
 // ListGroups 全量组（按名称升序）
 func (d *Dao) ListGroups(ctx context.Context) ([]modules.PlatformGroup, error) {
 	var list []modules.PlatformGroup

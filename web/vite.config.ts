@@ -21,6 +21,7 @@ export default defineConfig(({ mode }) => {
       proxy: {
         '/api': { target, changeOrigin: true },
         '/auth': { target, changeOrigin: true },
+        '/avatars': { target, changeOrigin: true },
         '/proxy': { target, changeOrigin: true, ws: true },
         '/.well-known': { target, changeOrigin: true },
         '/healthz': { target, changeOrigin: true },

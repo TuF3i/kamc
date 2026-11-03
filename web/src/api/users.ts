@@ -35,6 +35,26 @@ export function deleteUser(username: string): Promise<void> {
   return apiDelete<void>(`/api/v1/users/${encodeURIComponent(username)}`);
 }
 
+/** 上传头像（raw image body）；返回带签名 token 的展示 URL。 */
+export async function uploadAvatar(username: string, file: File): Promise<string> {
+  const { getToken } = await import('./http');
+  const res = await fetch(`/api/v1/users/${encodeURIComponent(username)}/avatar`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': file.type,
+      Authorization: `Bearer ${getToken()}`,
+    },
+    body: file,
+  });
+  if (!res.ok) {
+    throw new Error(res.status === 413 ? '头像文件过大（上限 2MB）' : '头像上传失败');
+  }
+  const body = (await res.json()) as { data?: { avatar_url?: string } };
+  const url = body.data?.avatar_url;
+  if (!url) throw new Error('头像上传响应缺少 URL');
+  return url;
+}
+
 // ── 组 ──
 
 export function listGroups(): Promise<GroupDTO[]> {
@@ -47,6 +67,24 @@ export function createGroup(name: string, desc: string): Promise<GroupDTO> {
 
 export function deleteGroup(name: string): Promise<void> {
   return apiDelete<void>(`/api/v1/groups/${encodeURIComponent(name)}`);
+}
+
+/** 编辑组（重命名会同步用户组字段；引用旧组名的策略需手动调整）。 */
+export function updateGroup(
+  name: string,
+  input: { name?: string; desc?: string },
+): Promise<GroupDTO> {
+  return apiPatch<GroupDTO>(`/api/v1/groups/${encodeURIComponent(name)}`, input);
+}
+
+export function addGroupMember(group: string, username: string): Promise<void> {
+  return apiPost<void>(`/api/v1/groups/${encodeURIComponent(group)}/members`, { username });
+}
+
+export function removeGroupMember(group: string, username: string): Promise<void> {
+  return apiDelete<void>(
+    `/api/v1/groups/${encodeURIComponent(group)}/members/${encodeURIComponent(username)}`,
+  );
 }
 
 // ── 映射脚本 ──

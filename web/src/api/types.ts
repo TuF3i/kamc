@@ -221,12 +221,6 @@ export interface PlatformInfo {
     wait_count: number;
   };
   cache: { enabled: boolean; addrs: string; db: number };
-  authentik: {
-    configured: boolean;
-    api_url?: string;
-    user_sub_field?: string;
-    cache_ttl_seconds?: number;
-  };
   runtime: {
     go_version: string;
     goroutines: number;

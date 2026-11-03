@@ -72,10 +72,6 @@ web/                 管理前端（React 18 + Ant Design 5 + Vite + TypeScript�
 | `AM_PASSWORD_LOGIN_USER` | `sysadmin` | 内置管理员账号（生产必须覆盖） |
 | `AM_PASSWORD_LOGIN_PASSWORD` | `sysadmin123` | 内置管理员密码（生产必须覆盖） |
 | `AM_ROBOT_TOKEN_TTL` | `8760h` | Robot 长期 JWT 有效期（Go duration，默认 365 天） |
-| `AUTHENTIK_API_URL` | 从 `OIDC_ISSUER` origin 推导 | Authentik API 地址（策略页组织/用户下拉） |
-| `AUTHENTIK_API_TOKEN` | — | Authentik API Token（读取 core users/groups） |
-| `AUTHENTIK_USER_SUB_FIELD` | `uid` | Authentik 用户字段映射到 JWT sub（uid/username/pk） |
-| `AUTHENTIK_CACHE_TTL` | `60s` | 目录查询缓存时间 |
 | `AM_DEV_ISSUE_TOKEN` | — | 开发直签 Token 开关（`/auth/dev-token`，生产勿开） |
 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_REDIRECT_URL` | — | Authentik OIDC（未配置则 /auth/login 503） |
 | `APISERVER_URL`（Agent） | in-cluster 探测 | 上游 kube-apiserver 显式覆盖（开发/测试） |
@@ -90,6 +86,8 @@ web/                 管理前端（React 18 + Ant Design 5 + Vite + TypeScript�
 | `AM_GEOIP_DB` | — | MaxMind GeoLite2/GeoIP2 `.mmdb` 路径（审计地理信息；未配置不解析） |
 | `AM_SYSLOG_ADDR` | — | 集群审计 syslog 导出地址，`udp://host:514` 或 `tcp://host:514`（空=不导出） |
 | `AM_SYSLOG_TAG` | `kamc-cluster-audit` | syslog APP-NAME |
+| `AM_AVATAR_DIR` | `/tmp/kamc-avatars` | 用户头像文件存储目录 |
+| `AM_AVATAR_SECRET` | 派生 | 头像 URL 签名密钥（不配则由部署配置派生，保证重启后 URL 有效） |
 | `AM_AGENT_IMAGE_REPO` | `tuf3i/k8s-am-agent` | Agent 镜像仓库完整地址（不含 tag；tag 随平台版本，一键安装清单用） |
 | `TEST_REDIS_ADDR` | — | Redis 集成测试门控（watcher/state store/限流，仅测试用） |
 | `TEST_PG_DSN` | — | 数据库集成测试门控（仅测试用） |

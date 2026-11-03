@@ -13,10 +13,11 @@ import {
   Table,
   Tag,
   Typography,
+  Upload,
   type TableColumnsType,
 } from 'antd';
-import { DeleteOutlined, EditOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons';
-import { createUser, deleteUser, listUsers, updateUser } from '@/api/users';
+import { DeleteOutlined, EditOutlined, PlusOutlined, SearchOutlined, UploadOutlined } from '@ant-design/icons';
+import { createUser, deleteUser, listUsers, updateUser, uploadAvatar } from '@/api/users';
 import type { PlatformUserDTO, UserSource } from '@/api/types';
 
 const SOURCE_META: Record<UserSource, { label: string; color: string }> = {
@@ -44,8 +45,9 @@ export function UsersTab() {
   const [editing, setEditing] = useState<EditState | null>(null);
   const [saving, setSaving] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
-  const [createForm] = Form.useForm<{ username: string; nickname: string; email: string; avatar_url: string; groups: string }>();
-  const [form] = Form.useForm<{ nickname: string; email: string; groups: string }>();
+  const [createForm] = Form.useForm<{ username: string; nickname: string; email: string; avatar_url: string }>();
+  const [form] = Form.useForm<{ nickname: string; email: string; avatar_url: string }>();
+  const [uploading, setUploading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -72,9 +74,6 @@ export function UsersTab() {
         nickname: values.nickname?.trim() || undefined,
         email: values.email?.trim() || undefined,
         avatar_url: values.avatar_url?.trim() || undefined,
-        groups: values.groups
-          ? values.groups.split(',').map((g) => g.trim()).filter(Boolean)
-          : [],
       });
       message.success(`用户 ${values.username.trim()} 已创建`);
       setCreateOpen(false);
@@ -92,7 +91,7 @@ export function UsersTab() {
     form.setFieldsValue({
       nickname: user.nickname,
       email: user.email,
-      groups: user.groups.join(', '),
+      avatar_url: user.avatar_url,
     });
   };
 
@@ -104,9 +103,7 @@ export function UsersTab() {
       await updateUser(editing.user.username, {
         nickname: values.nickname?.trim() || undefined,
         email: values.email?.trim() || undefined,
-        groups: values.groups
-          ? values.groups.split(',').map((g) => g.trim()).filter(Boolean)
-          : [],
+        avatar_url: values.avatar_url?.trim() || '',
       });
       message.success(`用户 ${editing.user.username} 已更新`);
       setEditing(null);
@@ -292,10 +289,10 @@ export function UsersTab() {
           <Form.Item name="avatar_url" label="头像 URL">
             <Input placeholder="https://…/avatar.png" autoComplete="off" />
           </Form.Item>
-          <Form.Item name="groups" label="组" extra="逗号分隔；策略主体 org:<组名> 可直接引用">
-            <Input placeholder="dev-team, qa-team" autoComplete="off" />
-          </Form.Item>
         </Form>
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+          组归属在「组」页签的编辑弹窗中管理。
+        </Typography.Paragraph>
       </Modal>
 
       <Modal
@@ -309,19 +306,64 @@ export function UsersTab() {
         destroyOnHidden
       >
         <Form form={form} layout="vertical" style={{ marginTop: 12 }}>
+          <Form.Item label="头像">
+            <Space align="center" size={12}>
+              {editing?.user.avatar_url ? (
+                <Avatar size={56} src={editing.user.avatar_url} />
+              ) : (
+                <Avatar size={56} className="user-avatar">
+                  {(editing?.user.nickname || editing?.user.username || '?').slice(0, 1).toUpperCase()}
+                </Avatar>
+              )}
+              <Upload
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                showUploadList={false}
+                beforeUpload={(file) => {
+                  if (file.size > 2 * 1024 * 1024) {
+                    message.error('头像文件过大（上限 2MB）');
+                    return Upload.LIST_IGNORE;
+                  }
+                  setUploading(true);
+                  void uploadAvatar(editing!.user.username, file)
+                    .then((url) => {
+                      form.setFieldValue('avatar_url', url);
+                      setEditing((prev) =>
+                        prev ? { user: { ...prev.user, avatar_url: url } } : prev,
+                      );
+                      message.success('头像已上传');
+                    })
+                    .catch((err) =>
+                      message.error(err instanceof Error ? err.message : '头像上传失败'),
+                    )
+                    .finally(() => setUploading(false));
+                  return false; // 阻止 antd 内置上传
+                }}
+              >
+                <Button icon={<UploadOutlined />} loading={uploading} size="small">
+                  上传头像
+                </Button>
+              </Upload>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                PNG/JPEG/WebP/GIF，≤2MB；上传后生成带 token 的平台 URL
+              </Typography.Text>
+            </Space>
+          </Form.Item>
+          <Form.Item
+            name="avatar_url"
+            label="头像 URL"
+            extra="可直接编辑；留空则使用默认字母头像"
+          >
+            <Input placeholder="/avatars/…?token=… 或 https://…" autoComplete="off" />
+          </Form.Item>
           <Form.Item name="nickname" label="昵称">
             <Input placeholder="显示名" autoComplete="off" />
           </Form.Item>
           <Form.Item name="email" label="邮箱">
             <Input placeholder="user@example.com" autoComplete="off" />
           </Form.Item>
-          <Form.Item
-            name="groups"
-            label="组"
-            extra="逗号分隔；登录同步的组会在下次登录时恢复"
-          >
-            <Input placeholder="dev-team, qa-team" autoComplete="off" />
-          </Form.Item>
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+            组归属请到「组」页签编辑。
+          </Typography.Paragraph>
         </Form>
       </Modal>
     </div>

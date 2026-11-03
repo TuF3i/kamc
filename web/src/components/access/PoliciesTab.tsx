@@ -17,7 +17,7 @@ import {
   type TableColumnsType,
   type TableProps,
 } from 'antd';
-import { DeleteOutlined, EditOutlined, SearchOutlined } from '@ant-design/icons';
+import { DeleteOutlined, EditOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons';
 import { createPolicies, deletePolicy, listPolicies } from '@/api/access';
 import { listClusterResources } from '@/api/resources';
 import type { ClusterResource, PolicyDTO } from '@/api/types';
@@ -45,10 +45,12 @@ interface PoliciesTabProps {
   subjectPrefix?: string;
   /** 仅显示该集群的策略 */
   clusterFilter?: string;
+  /** 显示「创建策略」按钮（权限 Tab 传入；机器人页签不带） */
+  onCreate?: () => void;
 }
 
 /** 策略列表（权限 Tab 与机器人权限 Tab 共用）。 */
-export function PoliciesTab({ subjectPrefix, clusterFilter }: PoliciesTabProps) {
+export function PoliciesTab({ subjectPrefix, clusterFilter, onCreate }: PoliciesTabProps) {
   const { message, modal } = App.useApp();
   const [policies, setPolicies] = useState<PolicyDTO[]>([]);
   const [loading, setLoading] = useState(true);
@@ -325,6 +327,11 @@ export function PoliciesTab({ subjectPrefix, clusterFilter }: PoliciesTabProps) 
         />
       ) : null}
       <Space style={{ marginBottom: 12 }}>
+        {onCreate ? (
+          <Button type="primary" icon={<PlusOutlined />} onClick={onCreate}>
+            创建策略
+          </Button>
+        ) : null}
         <Input
           allowClear
           prefix={<SearchOutlined />}

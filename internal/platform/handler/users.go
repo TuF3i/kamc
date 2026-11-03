@@ -68,9 +68,47 @@ func (h *Handler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 	errcode.GenFinalResponse(w, data, rsp)
 }
 
+// UpdateGroup PATCH /api/v1/groups/{name} —— 编辑名称/描述（重命名同步用户组字段）
+func (h *Handler) UpdateGroup(w http.ResponseWriter, r *http.Request) {
+	var req service.UpdateGroupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
+		return
+	}
+	name := chi.URLParam(r, "name")
+	data, rsp := h.svc.UpdateGroup(r.Context(), name, &req)
+	h.auditPlatform(r, "group-update", "", "", "/api/v1/groups/"+name, errcode.IsSuccess(rsp), "update")
+	errcode.GenFinalResponse(w, data, rsp)
+}
+
+// AddGroupMember POST /api/v1/groups/{name}/members {username}
+func (h *Handler) AddGroupMember(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Username string `json:"username"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Username == "" {
+		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
+		return
+	}
+	name := chi.URLParam(r, "name")
+	rsp := h.svc.AddGroupMember(r.Context(), name, req.Username)
+	h.auditPlatform(r, "group-member-add", req.Username, "", "/api/v1/groups/"+name+"/members", errcode.IsSuccess(rsp), req.Username)
+	errcode.GenFinalResponse(w, nil, rsp)
+}
+
+// RemoveGroupMember DELETE /api/v1/groups/{name}/members/{username}
+func (h *Handler) RemoveGroupMember(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	username := chi.URLParam(r, "username")
+	rsp := h.svc.RemoveGroupMember(r.Context(), name, username)
+	h.auditPlatform(r, "group-member-remove", username, "", "/api/v1/groups/"+name+"/members/"+username, errcode.IsSuccess(rsp), username)
+	errcode.GenFinalResponse(w, nil, rsp)
+}
+
 // DeleteGroup DELETE /api/v1/groups/{name}
 func (h *Handler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 	rsp := h.svc.DeleteGroup(r.Context(), chi.URLParam(r, "name"))
+	h.auditPlatform(r, "group-delete", "", "", "/api/v1/groups/"+chi.URLParam(r, "name"), errcode.IsSuccess(rsp), "delete")
 	errcode.GenFinalResponse(w, nil, rsp)
 }
 
@@ -85,5 +123,8 @@ func usersRoutes(admin chi.Router, h *Handler) {
 func groupsRoutes(admin chi.Router, h *Handler) {
 	admin.Get("/groups", h.ListGroups)
 	admin.Post("/groups", h.CreateGroup)
+	admin.Patch("/groups/{name}", h.UpdateGroup)
+	admin.Post("/groups/{name}/members", h.AddGroupMember)
+	admin.Delete("/groups/{name}/members/{username}", h.RemoveGroupMember)
 	admin.Delete("/groups/{name}", h.DeleteGroup)
 }

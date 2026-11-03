@@ -12,6 +12,8 @@ package platform
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -34,7 +36,6 @@ import (
 	"github.com/TuF3i/kamc/internal/platform/authz"
 	"github.com/TuF3i/kamc/internal/platform/catalog"
 	"github.com/TuF3i/kamc/internal/platform/dao"
-	"github.com/TuF3i/kamc/internal/platform/directory"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
 	"github.com/TuF3i/kamc/internal/platform/geoip"
 	"github.com/TuF3i/kamc/internal/platform/handler"
@@ -210,6 +211,23 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	}
 	catalogSvc := catalog.New(svc, proxies)
 
+	// 头像存储：AM_AVATAR_DIR 目录 + URL 签名密钥（未配置时由部署配置派生，
+	// 保证重启后已入库的头像 URL 仍然有效）
+	avatarDir := envDefault("AM_AVATAR_DIR", "/tmp/kamc-avatars")
+	if err := os.MkdirAll(avatarDir, 0o755); err != nil {
+		return nil, fmt.Errorf("platform -> create avatar dir: %w", err)
+	}
+	avatarSecret := os.Getenv("AM_AVATAR_SECRET")
+	if avatarSecret == "" {
+		dbURL := os.Getenv("DATABASE_URL")
+		if dbURL == "" {
+			dbURL = postgres.DefaultDSN
+		}
+		sum := sha256.Sum256([]byte("kamc-avatar|" + os.Getenv("AM_JWT_ISSUER") + "|" + dbURL))
+		avatarSecret = hex.EncodeToString(sum[:])
+		log.Printf("[platform] AM_AVATAR_SECRET 未配置，使用派生签名密钥（部署配置变更会使已存头像 URL 失效）")
+	}
+
 	// LDAP 登录（LDAP_URL 未配置 = /auth/ldap-login 503）
 	var ldapCfg *ldapclient.Config
 	if os.Getenv("LDAP_URL") != "" {
@@ -258,12 +276,6 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	// GeoIP（可选）：AM_GEOIP_DB 指向 MaxMind .mmdb；未配置/加载失败则审计不含地理信息
 	geoResolver := geoip.FromEnv()
 
-	// Authentik 用户/组织目录（策略编辑器下拉；未配置时端点返回 503）
-	directoryClient := directory.NewFromEnv()
-	if directoryClient == nil {
-		log.Printf("[platform] Authentik directory not configured (AUTHENTIK_API_URL/AUTHENTIK_API_TOKEN)")
-	}
-
 	// Agent 镜像仓库：完整地址（不含 tag，tag 随平台版本）；默认走 Docker Hub
 	agentImageRepo := envDefault("AM_AGENT_IMAGE_REPO", "tuf3i/k8s-am-agent")
 
@@ -277,19 +289,12 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		dsn = postgres.DefaultDSN
 	}
 	platSettings := handler.Settings{
-		ListenAddr:        o.addr,
-		ExternalURL:       os.Getenv("AM_EXTERNAL_URL"),
-		DSN:               redactDSN(dsn),
-		RedisEnabled:      sharedRedisCli != nil,
-		RedisAddrs:        redisAddrs,
-		AgentImageRepo:    agentImageRepo,
-		AuthentikAPIURL:   os.Getenv("AUTHENTIK_API_URL"),
-		AuthentikSubField: envDefault("AUTHENTIK_USER_SUB_FIELD", "uid"),
-	}
-	if ttl, err := time.ParseDuration(os.Getenv("AUTHENTIK_CACHE_TTL")); err == nil && ttl > 0 {
-		platSettings.AuthentikCacheTTL = ttl
-	} else {
-		platSettings.AuthentikCacheTTL = 60 * time.Second
+		ListenAddr:     o.addr,
+		ExternalURL:    os.Getenv("AM_EXTERNAL_URL"),
+		DSN:            redactDSN(dsn),
+		RedisEnabled:   sharedRedisCli != nil,
+		RedisAddrs:     redisAddrs,
+		AgentImageRepo: agentImageRepo,
 	}
 
 	h := handler.NewHandler(svc, handler.Deps{
@@ -305,13 +310,14 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		RateLimitN:      rateLimitN,
 		Audit:           auditWriter,
 		RobotTokenTTL:   envDuration("AM_ROBOT_TOKEN_TTL", 365*24*time.Hour),
-		Directory:       directoryClient,
 		Catalog:         catalogSvc,
 		AgentImageRepo:  agentImageRepo,
 		Settings:        platSettings,
 		LDAP:            ldapCfg,
 		LuaAuth:         luaEngine,
 		Geo:             geoResolver,
+		AvatarDir:       avatarDir,
+		AvatarSecret:    avatarSecret,
 	})
 	h.SetPolicy(envDefault("AM_ADMIN_GROUP", "am:admin"), os.Getenv("AM_DEV_ISSUE_TOKEN") == "1")
 	passwordUser := envDefault("AM_PASSWORD_LOGIN_USER", "sysadmin")

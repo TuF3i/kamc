@@ -51,7 +51,7 @@ tags:
   - name: kubeconfig
     description: 用户 kubeconfig 生成（自服务）
   - name: 权限策略
-    description: 组织/用户直接策略、Authentik 目录与集群资源发现（管理面）
+    description: 组织/用户直接策略与集群资源发现（管理面）
   - name: 机器人
     description: CICD 机器人长期 kubeconfig 签发与直接策略管理（管理面）
   - name: 审计
@@ -123,7 +123,7 @@ paths:
     get:
       tags: [认证]
       summary: 发起 OIDC 登录
-      description: 302 跳转到 Authentik 授权端点（携带一次性 state 防 CSRF，10 分钟有效）。
+      description: 302 跳转到 OIDC Provider 授权端点（携带一次性 state 防 CSRF，10 分钟有效）。
       security: []
       responses:
         '302':
@@ -677,7 +677,7 @@ paths:
       tags: [权限策略]
       summary: 批量创建策略
       description: |
-        主体只能是 Authentik 组织（org）或用户（user）之一；集群单选。
+        主体只能是平台组（org）或用户（user）之一；集群单选。
         每条资源规则按 namespace/resource/subresource/verbs 展开为 Casbin 四元组：
         - namespace `*` 生成 `*/resource`，并补充 `cluster/resource` 覆盖全命名空间 list；
         - 具体 namespace 生成 `<ns>/resource`；
@@ -722,58 +722,6 @@ paths:
               schema: {$ref: '#/components/schemas/Envelope'}
         '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
         '403': {$ref: '#/components/responses/PlainTextForbidden'}
-
-  /api/v1/directory/orgs:
-    get:
-      tags: [权限策略]
-      summary: Authentik 组织列表
-      description: 代理 Authentik `/api/v3/core/groups/`；未配置 API URL/Token 时 503。
-      security:
-        - platformJWT: []
-      parameters:
-        - {name: q, in: query, schema: {type: string}, description: 搜索关键字}
-      responses:
-        '200':
-          description: 组织选项
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/Envelope'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items: {$ref: '#/components/schemas/DirectoryOption'}
-        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
-        '403': {$ref: '#/components/responses/PlainTextForbidden'}
-        '503': {description: Authentik 目录未配置}
-
-  /api/v1/directory/users:
-    get:
-      tags: [权限策略]
-      summary: Authentik 用户列表
-      description: 代理 Authentik `/api/v3/core/users/`；未配置 API URL/Token 时 503。
-      security:
-        - platformJWT: []
-      parameters:
-        - {name: q, in: query, schema: {type: string}, description: 搜索关键字}
-      responses:
-        '200':
-          description: 用户选项
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/Envelope'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items: {$ref: '#/components/schemas/DirectoryOption'}
-        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
-        '403': {$ref: '#/components/responses/PlainTextForbidden'}
-        '503': {description: Authentik 目录未配置}
 
   /api/v1/clusters/{id}/resources:
     get:
@@ -1033,7 +981,7 @@ paths:
       tags: [运维]
       summary: 平台信息页数据
       description: |
-        平台设置 / SSO 接入 / 数据库 / 缓存 / Authentik API / Go 运行时的配置
+        平台设置 / SSO 接入 / 数据库 / 缓存 / Go 运行时的配置
         快照与聚合指标（管理面）。密钥与明文密码不出现在响应中（DSN 已脱敏）。
       security:
         - platformJWT: []
@@ -1363,13 +1311,6 @@ components:
             enabled: {type: boolean}
             addrs: {type: string}
             db: {type: integer}
-        authentik:
-          type: object
-          properties:
-            configured: {type: boolean}
-            api_url: {type: string}
-            user_sub_field: {type: string}
-            cache_ttl_seconds: {type: integer, format: int64}
         runtime:
           type: object
           properties:
@@ -1382,7 +1323,7 @@ components:
             num_gc: {type: integer}
             uptime_seconds: {type: integer, format: int64}
 
-    DirectoryOption:
+    SubjectOption:
       type: object
       properties:
         value: {type: string}

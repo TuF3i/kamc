@@ -311,6 +311,177 @@ func (s *Service) CreateGroup(ctx context.Context, req *CreateGroupRequest) (*mo
 	return &modules.GroupDTO{Name: g.Name, Desc: g.Desc, Source: g.Source, Members: []string{}, CreatedAt: g.CreatedAt}, nil
 }
 
+// UpdateGroupRequest 组编辑（nil 字段不更新）
+type UpdateGroupRequest struct {
+	Name *string `json:"name"`
+	Desc *string `json:"desc"`
+}
+
+// UpdateGroup 编辑组：可改描述与名称（重命名会把用户 groups 字段中的旧名
+// 全量替换为新名；引用该组的策略（org:<旧名>）不会自动迁移，需另行调整）。
+func (s *Service) UpdateGroup(ctx context.Context, name string, req *UpdateGroupRequest) (*modules.GroupDTO, *errcode.Response) {
+	if req == nil {
+		return nil, errcode.ErrInvalidParam
+	}
+	g, err := s.d.GetGroup(ctx, name)
+	if err != nil {
+		if isNotFound(err) {
+			return nil, errcode.ErrGroupNotFound
+		}
+		return nil, errcode.ServerInternal(err)
+	}
+
+	newName := name
+	if req.Name != nil {
+		if v := strings.TrimSpace(*req.Name); v != "" && v != name {
+			if len(v) > 128 {
+				return nil, errcode.ErrInvalidParam
+			}
+			if _, err := s.d.GetGroup(ctx, v); err == nil {
+				return nil, errcode.ErrGroupExists
+			} else if !isNotFound(err) {
+				return nil, errcode.ServerInternal(err)
+			}
+			newName = v
+		}
+	}
+	if req.Desc != nil {
+		if err := s.d.UpdateGroup(ctx, name, map[string]any{"desc": strings.TrimSpace(*req.Desc)}); err != nil {
+			return nil, errcode.ServerInternal(err)
+		}
+	}
+
+	if newName != name {
+		desc := g.Desc
+		if req.Desc != nil {
+			desc = strings.TrimSpace(*req.Desc)
+		}
+		if err := s.d.UpsertGroup(ctx, &modules.PlatformGroup{Name: newName, Desc: desc, Source: g.Source}); err != nil {
+			return nil, errcode.ServerInternal(err)
+		}
+		// 用户 groups 字段全量改名
+		users, err := s.d.ListUsers(ctx)
+		if err != nil {
+			return nil, errcode.ServerInternal(err)
+		}
+		for _, u := range users {
+			groups := splitUserGroups(u.Groups)
+			changed := false
+			for i, gu := range groups {
+				if gu == name {
+					groups[i] = newName
+					changed = true
+				}
+			}
+			if changed {
+				if err := s.d.UpdateUser(ctx, u.Username, map[string]any{"groups": modulesJoinGroups(groups)}); err != nil {
+					return nil, errcode.ServerInternal(err)
+				}
+			}
+		}
+		if _, err := s.d.DeleteGroup(ctx, name); err != nil && !isNotFound(err) {
+			return nil, errcode.ServerInternal(err)
+		}
+	}
+
+	groups, rsp := s.ListGroups(ctx)
+	if rsp != nil {
+		return nil, rsp
+	}
+	for _, dto := range groups {
+		if dto.Name == newName {
+			return dto, nil
+		}
+	}
+	return nil, errcode.ErrGroupNotFound
+}
+
+// AddGroupMember 把用户加入组（更新用户 groups 字段）
+func (s *Service) AddGroupMember(ctx context.Context, group, username string) *errcode.Response {
+	group = strings.TrimSpace(group)
+	username = strings.TrimSpace(username)
+	if group == "" || username == "" {
+		return errcode.ErrInvalidParam
+	}
+	if _, err := s.d.GetGroup(ctx, group); err != nil {
+		if isNotFound(err) {
+			return errcode.ErrGroupNotFound
+		}
+		return errcode.ServerInternal(err)
+	}
+	u, err := s.d.GetUser(ctx, username)
+	if err != nil {
+		if isNotFound(err) {
+			return errcode.ErrUserNotFound
+		}
+		return errcode.ServerInternal(err)
+	}
+	groups := splitUserGroups(u.Groups)
+	for _, g := range groups {
+		if g == group {
+			return nil // 已在组内
+		}
+	}
+	groups = append(groups, group)
+	if err := s.d.UpdateUser(ctx, username, map[string]any{"groups": modulesJoinGroups(groups)}); err != nil {
+		return errcode.ServerInternal(err)
+	}
+	return nil
+}
+
+// RemoveGroupMember 把用户移出组
+func (s *Service) RemoveGroupMember(ctx context.Context, group, username string) *errcode.Response {
+	group = strings.TrimSpace(group)
+	username = strings.TrimSpace(username)
+	if group == "" || username == "" {
+		return errcode.ErrInvalidParam
+	}
+	u, err := s.d.GetUser(ctx, username)
+	if err != nil {
+		if isNotFound(err) {
+			return errcode.ErrUserNotFound
+		}
+		return errcode.ServerInternal(err)
+	}
+	groups := splitUserGroups(u.Groups)
+	out := make([]string, 0, len(groups))
+	for _, g := range groups {
+		if g != group {
+			out = append(out, g)
+		}
+	}
+	if err := s.d.UpdateUser(ctx, username, map[string]any{"groups": modulesJoinGroups(out)}); err != nil {
+		return errcode.ServerInternal(err)
+	}
+	return nil
+}
+
+// GetUser 单个用户（头像上传等管理面操作的前置校验）
+func (s *Service) GetUser(ctx context.Context, username string) (*modules.UserDTO, *errcode.Response) {
+	u, err := s.d.GetUser(ctx, username)
+	if err != nil {
+		if isNotFound(err) {
+			return nil, errcode.ErrUserNotFound
+		}
+		return nil, errcode.ServerInternal(err)
+	}
+	return u.ToDTO(), nil
+}
+
+// SetAvatarURL 更新用户头像地址（头像上传后写入签名 URL）
+func (s *Service) SetAvatarURL(ctx context.Context, username, url string) *errcode.Response {
+	if _, err := s.d.GetUser(ctx, username); err != nil {
+		if isNotFound(err) {
+			return errcode.ErrUserNotFound
+		}
+		return errcode.ServerInternal(err)
+	}
+	if err := s.d.UpdateUser(ctx, username, map[string]any{"avatar_url": url}); err != nil {
+		return errcode.ServerInternal(err)
+	}
+	return nil
+}
+
 // DeleteGroup 删除组（不清理用户 groups 字段——下次登录同步收敛；策略需另行清理）
 func (s *Service) DeleteGroup(ctx context.Context, name string) *errcode.Response {
 	rows, err := s.d.DeleteGroup(ctx, name)

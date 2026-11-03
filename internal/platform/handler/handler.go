@@ -15,7 +15,6 @@ import (
 
 	"github.com/TuF3i/kamc/internal/auth"
 	"github.com/TuF3i/kamc/internal/platform/catalog"
-	"github.com/TuF3i/kamc/internal/platform/directory"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
 	"github.com/TuF3i/kamc/internal/platform/geoip"
 	ldapclient "github.com/TuF3i/kamc/internal/platform/ldapclient"
@@ -42,13 +41,14 @@ type Deps struct {
 	RateLimitN      int                // 窗口内最大请求数
 	Audit           *audit.Writer      // 审计异步写出器（nil = 不审计）
 	RobotTokenTTL   time.Duration      // Robot 长期 JWT 有效期（默认 365 天）
-	Directory       *directory.Client  // Authentik 用户/组织目录（nil = 未配置）
 	Catalog         *catalog.Service   // 集群 GVR 资源目录（nil = 未装配）
 	AgentImageRepo  string             // Agent 镜像仓库完整地址（不含 tag，AM_AGENT_IMAGE_REPO）
 	Settings        Settings           // 平台静态配置快照（平台信息页展示，敏感值已在装配层脱敏）
 	LDAP            *ldapclient.Config // LDAP 登录（nil = 未配置 → /auth/ldap-login 503）
 	LuaAuth         *luaauth.Engine    // 登录期映射脚本引擎（nil = 脚本功能关闭）
 	Geo             *geoip.Resolver    // GeoIP 数据库（nil = 不解析地理信息）
+	AvatarDir       string             // 头像存储目录（AM_AVATAR_DIR）
+	AvatarSecret    string             // 头像 URL 签名密钥（AM_AVATAR_SECRET/派生）
 }
 
 // Handler 平台 HTTP 处理器（业务下沉 Service；依赖可空，对应降级行为）
@@ -66,10 +66,9 @@ type Handler struct {
 	rateLimiter    mw.RateLimiter // 数据面限流器（nil 或 rateLimitN<=0 不启用）
 	rateLimitN     int            // 窗口内最大请求数
 	audit          *audit.Writer
-	robotTokenTTL  time.Duration     // Robot 长期 JWT 有效期
-	directory      *directory.Client // Authentik 用户/组织目录
-	catalog        *catalog.Service  // 集群 GVR 资源目录
-	agentImageRepo string            // Agent 镜像仓库完整地址（不含 tag）
+	robotTokenTTL  time.Duration    // Robot 长期 JWT 有效期
+	catalog        *catalog.Service // 集群 GVR 资源目录
+	agentImageRepo string           // Agent 镜像仓库完整地址（不含 tag）
 
 	settings        Settings  // 平台静态配置快照（平台信息页）
 	oidcRedirectURL string    // OIDC 回调地址（平台信息页展示）
@@ -77,9 +76,11 @@ type Handler struct {
 	devTokenEnabled bool      // 开发用直签 Token 开关（AM_DEV_ISSUE_TOKEN）
 	startedAt       time.Time // Handler 装配时间（运行时长统计）
 
-	ldap    *ldapclient.Config // LDAP 登录配置
-	luaAuth *luaauth.Engine    // 登录期映射脚本引擎
-	geo     *geoip.Resolver    // GeoIP 数据库（nil = 不解析）
+	ldap         *ldapclient.Config // LDAP 登录配置
+	luaAuth      *luaauth.Engine    // 登录期映射脚本引擎
+	geo          *geoip.Resolver    // GeoIP 数据库（nil = 不解析）
+	avatarDir    string             // 头像存储目录
+	avatarSecret []byte             // 头像 URL 签名密钥
 
 	passwordLoginEnabled bool   // 内置账号密码登录开关（AM_PASSWORD_LOGIN）
 	passwordUser         string // 内置账号（AM_PASSWORD_LOGIN_USER）
@@ -93,9 +94,10 @@ func NewHandler(svc *service.Service, deps Deps) *Handler {
 		caData: deps.CAData, oidcIssuer: deps.OIDCIssuer, oidcClientID: deps.OIDCClientID,
 		oidcRedirectURL: deps.OIDCRedirectURL,
 		rateLimiter:     deps.RateLimiter, rateLimitN: deps.RateLimitN, audit: deps.Audit,
-		robotTokenTTL: deps.RobotTokenTTL, directory: deps.Directory, catalog: deps.Catalog,
+		robotTokenTTL: deps.RobotTokenTTL, catalog: deps.Catalog,
 		agentImageRepo: deps.AgentImageRepo, settings: deps.Settings, startedAt: time.Now(),
 		ldap: deps.LDAP, luaAuth: deps.LuaAuth, geo: deps.Geo,
+		avatarDir: deps.AvatarDir, avatarSecret: []byte(deps.AvatarSecret),
 	}
 }
 
@@ -122,6 +124,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/metrics", promhttp.Handler().ServeHTTP)          // 平台指标（集群内网约定，鉴权属部署层）
 	r.Get("/tunnel", h.TunnelWS)                             // Agent 隧道入口（WS 升级 + Token 认证）
 	r.Get("/agent-install.yaml", h.AgentInstallYAMLForFetch) // Agent 一键安装清单（Token 即凭证）
+	r.Get("/avatars/{uid}", h.ServeAvatar)                   // 头像读取（签名 token 即凭证）
 	r.Get("/.well-known/jwks.json", h.JWKS)
 
 	// 认证流程：login/callback 匿名（OIDC 流程自身防 CSRF）；me 需 JWT；
@@ -165,10 +168,10 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 			admin.Post("/auth/revoke", h.AuthRevokeUser)
 			admin.Get("/audit", h.ListAudit)
 			policiesRoutes(admin, h)
-			directoryRoutes(admin, h)
 			clusterResourcesRoutes(admin, h)
 			clusterInfoRoutes(admin, h)
 			robotsRoutes(admin, h)
+			admin.Post("/users/{username}/avatar", h.UploadAvatar)
 			usersRoutes(admin, h)
 			groupsRoutes(admin, h)
 			scriptsRoutes(admin, h)

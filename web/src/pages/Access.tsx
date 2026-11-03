@@ -21,6 +21,7 @@ export function Access() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [initialSubjectType, setInitialSubjectType] = useState<'org' | 'user'>('user');
   const [initialSubject, setInitialSubject] = useState<string>();
+  const [policiesKey, setPoliciesKey] = useState(0);
 
   useEffect(() => {
     void Promise.all([listClusters(), listRobots()])
@@ -62,7 +63,14 @@ export function Access() {
             label: '权限',
             children: (
               <div className="tab-stack">
-                <PoliciesTab />
+                <PoliciesTab
+                  key={policiesKey}
+                  onCreate={() => {
+                    setInitialSubjectType('user');
+                    setInitialSubject(undefined);
+                    setEditorOpen(true);
+                  }}
+                />
                 <PolicyEditor
                   open={editorOpen}
                   clusters={clusters}
@@ -70,7 +78,7 @@ export function Access() {
                   initialSubjectType={initialSubjectType}
                   initialSubject={initialSubject}
                   onClose={() => setEditorOpen(false)}
-                  onCreated={() => undefined}
+                  onCreated={() => setPoliciesKey((k) => k + 1)}
                 />
               </div>
             ),

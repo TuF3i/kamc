@@ -68,12 +68,6 @@ export function Platform() {
       push('缓存（Redis）', 'addrs', info.cache.addrs);
       push('缓存（Redis）', 'db', info.cache.db);
     }
-    push('Authentik API', 'configured', info.authentik.configured ? '已配置' : '未配置');
-    if (info.authentik.configured) {
-      push('Authentik API', 'api_url', info.authentik.api_url);
-      push('Authentik API', 'user_sub_field', info.authentik.user_sub_field);
-      push('Authentik API', 'cache_ttl_seconds', info.authentik.cache_ttl_seconds);
-    }
     push('Go 运行时', 'go_version', info.runtime.go_version);
     push('Go 运行时', 'uptime', fmtUptime(info.runtime.uptime_seconds));
     push('Go 运行时', 'goroutines', info.runtime.goroutines);

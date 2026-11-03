@@ -12,7 +12,7 @@ import {
 } from 'antd';
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { createPolicies } from '@/api/access';
-import { listOrgs, listUsers } from '@/api/directory';
+import { listGroups, listUsers } from '@/api/users';
 import { listClusterResources } from '@/api/resources';
 import type {
   Cluster,
@@ -90,7 +90,24 @@ export function PolicyEditor({
     setDirectoryLoading(true);
     setDirectoryError(null);
     try {
-      const options = type === 'org' ? await listOrgs(query) : await listUsers(query);
+      const q = query.trim().toLowerCase();
+      const options: DirectoryOption[] =
+        type === 'org'
+          ? (await listGroups())
+              .filter((g) => !q || g.name.toLowerCase().includes(q) || g.desc.toLowerCase().includes(q))
+              .map((g) => ({ value: g.name, label: `组 · ${g.name}（${g.members.length} 人）` }))
+          : (await listUsers())
+              .filter(
+                (u) =>
+                  !q ||
+                  u.username.toLowerCase().includes(q) ||
+                  u.nickname.toLowerCase().includes(q) ||
+                  u.email.toLowerCase().includes(q),
+              )
+              .map((u) => ({
+                value: u.username,
+                label: `${u.nickname || u.username}（${u.username}）`,
+              }));
       const extra =
         type === 'user'
           ? robotOptions.filter(
@@ -106,7 +123,7 @@ export function PolicyEditor({
       }
       setDirectoryOptions(Array.from(merged.values()));
     } catch (err) {
-      setDirectoryError(err instanceof Error ? err.message : 'Authentik 目录加载失败');
+      setDirectoryError(err instanceof Error ? err.message : '平台用户/组加载失败');
       setDirectoryOptions(type === 'user' ? robotOptions : []);
     } finally {
       setDirectoryLoading(false);
