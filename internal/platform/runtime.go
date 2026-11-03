@@ -36,6 +36,7 @@ import (
 	"github.com/TuF3i/kamc/internal/platform/dao"
 	"github.com/TuF3i/kamc/internal/platform/directory"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
+	"github.com/TuF3i/kamc/internal/platform/geoip"
 	"github.com/TuF3i/kamc/internal/platform/handler"
 	ldapclient "github.com/TuF3i/kamc/internal/platform/ldapclient"
 	"github.com/TuF3i/kamc/internal/platform/luaauth"
@@ -246,9 +247,16 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		}
 	}
 
-	// 审计异步写出（§12.2）：缓冲投递 → 批量写 PG；PG 故障落本地文件回放
+	// 审计异步写出（§12.2）：缓冲投递 → 批量写 PG；PG 故障落本地文件回放。
+	// 出口分流：平台事件 → stdio；集群事件 → 可选的 syslog 远程日志服务器。
 	auditWriter := audit.NewWriter(d, envDefault("AM_AUDIT_SPILL_FILE", "/tmp/kamc-audit-spill.jsonl"))
+	syslogSink := audit.NewSyslogFromEnv()
+	auditWriter.WithSyslog(syslogSink)
 	auditWriter.Start()
+	log.Printf("[platform] audit syslog export: %s", syslogSink.Summary())
+
+	// GeoIP（可选）：AM_GEOIP_DB 指向 MaxMind .mmdb；未配置/加载失败则审计不含地理信息
+	geoResolver := geoip.FromEnv()
 
 	// Authentik 用户/组织目录（策略编辑器下拉；未配置时端点返回 503）
 	directoryClient := directory.NewFromEnv()
@@ -303,6 +311,7 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		Settings:        platSettings,
 		LDAP:            ldapCfg,
 		LuaAuth:         luaEngine,
+		Geo:             geoResolver,
 	})
 	h.SetPolicy(envDefault("AM_ADMIN_GROUP", "am:admin"), os.Getenv("AM_DEV_ISSUE_TOKEN") == "1")
 	passwordUser := envDefault("AM_PASSWORD_LOGIN_USER", "sysadmin")

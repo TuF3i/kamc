@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
-  App,
   Button,
   Card,
   Descriptions,
@@ -9,7 +8,9 @@ import {
   Input,
   Select,
   Table,
+  Tabs,
   Tag,
+  Typography,
   type TableColumnsType,
 } from 'antd';
 import { ReloadOutlined, SearchOutlined } from '@ant-design/icons';
@@ -19,124 +20,312 @@ import { PageHeader } from '@/components/PageHeader';
 import { AuditResultTag, ReasonTag } from '@/components/StatusTag';
 import { fmtTime } from '@/utils/format';
 
+type Kind = 'platform' | 'cluster';
+
 interface FilterForm {
   user?: string;
   cluster?: string;
   limit: number;
 }
 
-export function Audit() {
-  const { message } = App.useApp();
-  const [events, setEvents] = useState<AuditEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [form] = Form.useForm<FilterForm>();
+/** 地理信息展示：国家 · 地区 · 城市（空 = —） */
+function GeoCell({ record }: { record: AuditEvent }) {
+  const parts = [record.geo_country, record.geo_region, record.geo_city].filter(Boolean);
+  if (parts.length === 0) return <Typography.Text type="secondary">—</Typography.Text>;
+  return <span>{parts.join(' · ')}</span>;
+}
 
-  const load = async (query: AuditQuery = {}) => {
-    setLoading(true);
-    setError(null);
-    try {
-      setEvents(await listAudit(query));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '加载审计日志失败');
-    } finally {
-      setLoading(false);
-    }
-  };
+/** 对端 IP：主 IP + 转发链提示 */
+function IPCell({ record }: { record: AuditEvent }) {
+  if (!record.source_ip) return <Typography.Text type="secondary">—</Typography.Text>;
+  return (
+    <span>
+      <code className="mono">{record.source_ip}</code>
+      {record.forwarded_for ? (
+        <Typography.Text type="secondary" style={{ marginLeft: 6, fontSize: 11 }}>
+          xff
+        </Typography.Text>
+      ) : null}
+    </span>
+  );
+}
 
-  useEffect(() => {
-    void load({ limit: 200 });
-  }, []);
+function metaItems(record: AuditEvent) {
+  return [
+    <Descriptions.Item label="事件 ID" key="id">{record.id}</Descriptions.Item>,
+    <Descriptions.Item label="事件" key="event"><code className="mono">{record.event || '—'}</code></Descriptions.Item>,
+    <Descriptions.Item label="用户" key="user"><code className="mono">{record.user || '—'}</code></Descriptions.Item>,
+    <Descriptions.Item label="组" key="groups">
+      {record.groups ? record.groups.split(',').map((g) => <Tag key={g}>{g}</Tag>) : '—'}
+    </Descriptions.Item>,
+    <Descriptions.Item label="对端 IP" key="ip"><code className="mono">{record.source_ip || '—'}</code></Descriptions.Item>,
+    <Descriptions.Item label="X-Forwarded-For" key="xff">
+      <code className="mono">{record.forwarded_for || '—'}</code>
+    </Descriptions.Item>,
+    <Descriptions.Item label="地理信息" key="geo"><GeoCell record={record} /></Descriptions.Item>,
+    <Descriptions.Item label="User-Agent" key="ua">
+      <span style={{ wordBreak: 'break-all' }}>{record.user_agent || '—'}</span>
+    </Descriptions.Item>,
+    <Descriptions.Item label="方法" key="method">{record.method || '—'}</Descriptions.Item>,
+    <Descriptions.Item label="耗时" key="lat">
+      {record.latency_ms ? `${record.latency_ms} ms` : '—'}
+    </Descriptions.Item>,
+  ];
+}
 
-  const search = async (values: FilterForm) => {
-    await load({
-      user: values.user?.trim() || undefined,
-      cluster: values.cluster?.trim() || undefined,
-      limit: values.limit,
-    });
-    message.success('审计查询完成');
-  };
-
+/** 平台日志表：登录/Token/下载/管理动作。 */
+function PlatformTable({ events, loading }: { events: AuditEvent[]; loading: boolean }) {
   const columns: TableColumnsType<AuditEvent> = [
     {
       title: '时间',
       dataIndex: 'timestamp',
       key: 'timestamp',
-      width: 180,
+      width: 170,
       sorter: (a, b) => a.timestamp.localeCompare(b.timestamp),
       defaultSortOrder: 'descend',
-      render: (value: string) => fmtTime(value),
+      render: (v: string) => fmtTime(v),
+    },
+    {
+      title: '事件',
+      dataIndex: 'event',
+      key: 'event',
+      width: 190,
+      render: (v: string) => <code className="mono strong">{v || '—'}</code>,
     },
     {
       title: '用户',
       dataIndex: 'user',
       key: 'user',
       width: 150,
-      render: (value: string) => <code className="mono strong">{value}</code>,
+      render: (v: string) => (v ? <code className="mono">{v}</code> : '—'),
+    },
+    {
+      title: '组',
+      dataIndex: 'groups',
+      key: 'groups',
+      width: 160,
+      render: (v?: string) =>
+        v ? v.split(',').slice(0, 2).map((g) => <Tag key={g}>{g}</Tag>) : <Typography.Text type="secondary">—</Typography.Text>,
+    },
+    {
+      title: '对端 IP',
+      key: 'ip',
+      width: 160,
+      render: (_, r) => <IPCell record={r} />,
+    },
+    {
+      title: '地理信息',
+      key: 'geo',
+      width: 180,
+      render: (_, r) => <GeoCell record={r} />,
+    },
+    {
+      title: '结果',
+      dataIndex: 'allowed',
+      key: 'allowed',
+      width: 80,
+      render: (allowed: boolean) => <AuditResultTag allowed={allowed} />,
+    },
+    {
+      title: '说明',
+      dataIndex: 'reason',
+      key: 'reason',
+      ellipsis: true,
+      render: (reason: string) => <ReasonTag reason={reason} />,
+    },
+  ];
+
+  return (
+    <Card className="soft-card" styles={{ body: { padding: 0 } }}>
+      <Table<AuditEvent>
+        rowKey="id"
+        columns={columns}
+        dataSource={events}
+        loading={loading}
+        pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: [20, 50, 100], showTotal: (t) => `共 ${t} 条平台事件` }}
+        scroll={{ x: 1200 }}
+        expandable={{
+          expandedRowRender: (record) => (
+            <Descriptions size="small" column={{ xs: 1, md: 2 }} bordered>
+              {metaItems(record)}
+              <Descriptions.Item label="路径" span={2}>
+                <code className="mono">{record.path || '—'}</code>
+              </Descriptions.Item>
+            </Descriptions>
+          ),
+        }}
+      />
+    </Card>
+  );
+}
+
+/** 集群日志表：数据面 API 操作（资源/动作/状态 + 原始请求响应）。 */
+function ClusterTable({ events, loading }: { events: AuditEvent[]; loading: boolean }) {
+  const columns: TableColumnsType<AuditEvent> = [
+    {
+      title: '时间',
+      dataIndex: 'timestamp',
+      key: 'timestamp',
+      width: 170,
+      sorter: (a, b) => a.timestamp.localeCompare(b.timestamp),
+      defaultSortOrder: 'descend',
+      render: (v: string) => fmtTime(v),
+    },
+    {
+      title: '用户',
+      dataIndex: 'user',
+      key: 'user',
+      width: 150,
+      render: (v: string) => <code className="mono strong">{v || '—'}</code>,
     },
     {
       title: '集群',
       dataIndex: 'cluster',
       key: 'cluster',
-      width: 140,
-      render: (value: string) => (value ? <code className="mono">{value}</code> : '—'),
+      width: 130,
+      render: (v: string) => (v ? <code className="mono">{v}</code> : '—'),
     },
     {
-      title: '方法',
-      dataIndex: 'method',
-      key: 'method',
-      width: 90,
-      render: (value: string) => <Tag>{value}</Tag>,
-    },
-    {
-      title: '动词',
+      title: '动作',
       dataIndex: 'verb',
       key: 'verb',
       width: 110,
-      render: (value: string) => <code className="mono">{value}</code>,
+      render: (v: string) => (v ? <Tag color="blue">{v}</Tag> : '—'),
     },
     {
       title: '资源',
       dataIndex: 'path',
       key: 'path',
       ellipsis: true,
-      render: (value: string) => <code className="mono">{value}</code>,
+      render: (v: string) => <code className="mono">{v}</code>,
+    },
+    {
+      title: '状态',
+      dataIndex: 'status_code',
+      key: 'status',
+      width: 80,
+      render: (v?: number) => {
+        if (!v) return '—';
+        const color = v >= 500 ? 'error' : v >= 400 ? 'warning' : 'success';
+        return <Tag color={color}>{v}</Tag>;
+      },
     },
     {
       title: '结果',
       dataIndex: 'allowed',
       key: 'allowed',
-      width: 90,
+      width: 80,
       render: (allowed: boolean) => <AuditResultTag allowed={allowed} />,
     },
     {
-      title: '原因',
-      dataIndex: 'reason',
-      key: 'reason',
-      width: 190,
-      render: (reason: string) => <ReasonTag reason={reason} />,
+      title: '对端 IP / 地理',
+      key: 'ip',
+      width: 220,
+      render: (_, r) => (
+        <div>
+          <IPCell record={r} />
+          <div style={{ fontSize: 12, color: 'var(--kamc-muted)' }}>
+            <GeoCell record={r} />
+          </div>
+        </div>
+      ),
     },
     {
       title: '耗时',
       dataIndex: 'latency_ms',
       key: 'latency_ms',
-      width: 100,
+      width: 90,
       align: 'right',
       sorter: (a, b) => (a.latency_ms ?? 0) - (b.latency_ms ?? 0),
-      render: (value?: number) => (value ? `${value} ms` : '—'),
+      render: (v?: number) => (v ? `${v} ms` : '—'),
     },
   ];
+
+  return (
+    <Card className="soft-card" styles={{ body: { padding: 0 } }}>
+      <Table<AuditEvent>
+        rowKey="id"
+        columns={columns}
+        dataSource={events}
+        loading={loading}
+        pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: [20, 50, 100], showTotal: (t) => `共 ${t} 条集群操作` }}
+        scroll={{ x: 1400 }}
+        expandable={{
+          expandedRowRender: (record) => (
+            <Descriptions size="small" column={{ xs: 1, md: 2 }} bordered>
+              {metaItems(record)}
+              <Descriptions.Item label="原始请求路径" span={2}>
+                <code className="mono">{record.path || '—'}</code>
+              </Descriptions.Item>
+              <Descriptions.Item label="拒绝/放行原因" span={2}>
+                <ReasonTag reason={record.reason} />
+              </Descriptions.Item>
+              <Descriptions.Item label="请求体" span={2}>
+                {record.request_body ? (
+                  <pre className="code-block" style={{ maxHeight: 220, margin: 0 }}>{record.request_body}</pre>
+                ) : (
+                  <Typography.Text type="secondary">—</Typography.Text>
+                )}
+              </Descriptions.Item>
+              <Descriptions.Item label="响应体" span={2}>
+                {record.response_body ? (
+                  <pre className="code-block" style={{ maxHeight: 220, margin: 0 }}>{record.response_body}</pre>
+                ) : (
+                  <Typography.Text type="secondary">—</Typography.Text>
+                )}
+              </Descriptions.Item>
+            </Descriptions>
+          ),
+        }}
+      />
+    </Card>
+  );
+}
+
+export function Audit() {
+  const [kind, setKind] = useState<Kind>('platform');
+  const [events, setEvents] = useState<Record<Kind, AuditEvent[]>>({ platform: [], cluster: [] });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [form] = Form.useForm<FilterForm>();
+
+  const load = useCallback(async (target: Kind, query: AuditQuery = {}) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const list = await listAudit({ ...query, kind: target, limit: query.limit ?? 200 });
+      setEvents((prev) => ({ ...prev, [target]: list }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '加载审计日志失败');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load('platform', { limit: 200 });
+    void load('cluster', { limit: 200 });
+  }, [load]);
+
+  const search = async () => {
+    const values = form.getFieldsValue();
+    await load(kind, {
+      user: values.user?.trim() || undefined,
+      cluster: values.cluster?.trim() || undefined,
+      limit: values.limit ?? 200,
+    });
+  };
 
   return (
     <div>
       <PageHeader
         title="审计日志"
-        subtitle="数据面访问与登录事件（时间倒序，含拒绝原因；异步批量落库，查询可能有约 0.5s 延迟）。"
+        subtitle="平台事件走 stdio 并落库；集群操作走审计库，可经 syslog 导出到远程日志服务器。"
         extra={
           <Button
             icon={<ReloadOutlined />}
             onClick={() =>
-              void load({
+              void load(kind, {
                 user: form.getFieldValue('user')?.trim() || undefined,
                 cluster: form.getFieldValue('cluster')?.trim() || undefined,
                 limit: form.getFieldValue('limit') ?? 200,
@@ -148,12 +337,36 @@ export function Audit() {
         }
       />
 
-      <Card className="soft-card filter-card">
+      {error ? (
+        <Alert
+          type="error"
+          showIcon
+          message="审计日志加载失败"
+          description={error}
+          style={{ marginBottom: 16 }}
+          action={
+            <Button size="small" onClick={() => void load(kind, { limit: 200 })}>
+              重试
+            </Button>
+          }
+        />
+      ) : null}
+
+      <Tabs
+        activeKey={kind}
+        onChange={(key) => setKind(key as Kind)}
+        items={[
+          { key: 'platform', label: '平台日志', children: null },
+          { key: 'cluster', label: '集群日志', children: null },
+        ]}
+      />
+
+      <Card className="soft-card filter-card" style={{ marginBottom: 16 }}>
         <Form<FilterForm>
           form={form}
           layout="inline"
           initialValues={{ limit: 200 }}
-          onFinish={search}
+          onFinish={() => void search()}
           className="audit-filter"
         >
           <Form.Item name="user" label="用户">
@@ -176,58 +389,11 @@ export function Audit() {
         </Form>
       </Card>
 
-      {error ? (
-        <Alert
-          type="error"
-          showIcon
-          message="审计日志加载失败"
-          description={error}
-          style={{ marginBottom: 16 }}
-          action={
-            <Button size="small" onClick={() => void load({ limit: 200 })}>
-              重试
-            </Button>
-          }
-        />
-      ) : null}
-
-      <Card className="soft-card" styles={{ body: { padding: 0 } }}>
-        <Table<AuditEvent>
-          rowKey="id"
-          columns={columns}
-          dataSource={events}
-          loading={loading}
-          pagination={{
-            pageSize: 20,
-            showSizeChanger: true,
-            pageSizeOptions: [20, 50, 100],
-            showTotal: (total) => `共 ${total} 条事件`,
-          }}
-          scroll={{ x: 1200 }}
-          expandable={{
-            expandedRowRender: (record) => (
-              <Descriptions size="small" column={{ xs: 1, md: 2 }} bordered>
-                <Descriptions.Item label="事件 ID">{record.id}</Descriptions.Item>
-                <Descriptions.Item label="来源 IP">
-                  <code className="mono">{record.source_ip || '—'}</code>
-                </Descriptions.Item>
-                <Descriptions.Item label="方法">{record.method}</Descriptions.Item>
-                <Descriptions.Item label="耗时">
-                  {record.latency_ms ? `${record.latency_ms} ms` : '—'}
-                </Descriptions.Item>
-                <Descriptions.Item label="组" span={2}>
-                  {record.groups
-                    ? record.groups.split(',').map((g) => <Tag key={g}>{g}</Tag>)
-                    : '—'}
-                </Descriptions.Item>
-                <Descriptions.Item label="资源路径" span={2}>
-                  <code className="mono">{record.path}</code>
-                </Descriptions.Item>
-              </Descriptions>
-            ),
-          }}
-        />
-      </Card>
+      {kind === 'platform' ? (
+        <PlatformTable events={events.platform} loading={loading} />
+      ) : (
+        <ClusterTable events={events.cluster} loading={loading} />
+      )}
     </div>
   );
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/TuF3i/kamc/internal/platform/catalog"
 	"github.com/TuF3i/kamc/internal/platform/directory"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
+	"github.com/TuF3i/kamc/internal/platform/geoip"
 	ldapclient "github.com/TuF3i/kamc/internal/platform/ldapclient"
 	"github.com/TuF3i/kamc/internal/platform/luaauth"
 	"github.com/TuF3i/kamc/internal/platform/modules"
@@ -47,6 +48,7 @@ type Deps struct {
 	Settings        Settings           // 平台静态配置快照（平台信息页展示，敏感值已在装配层脱敏）
 	LDAP            *ldapclient.Config // LDAP 登录（nil = 未配置 → /auth/ldap-login 503）
 	LuaAuth         *luaauth.Engine    // 登录期映射脚本引擎（nil = 脚本功能关闭）
+	Geo             *geoip.Resolver    // GeoIP 数据库（nil = 不解析地理信息）
 }
 
 // Handler 平台 HTTP 处理器（业务下沉 Service；依赖可空，对应降级行为）
@@ -77,6 +79,7 @@ type Handler struct {
 
 	ldap    *ldapclient.Config // LDAP 登录配置
 	luaAuth *luaauth.Engine    // 登录期映射脚本引擎
+	geo     *geoip.Resolver    // GeoIP 数据库（nil = 不解析）
 
 	passwordLoginEnabled bool   // 内置账号密码登录开关（AM_PASSWORD_LOGIN）
 	passwordUser         string // 内置账号（AM_PASSWORD_LOGIN_USER）
@@ -92,7 +95,7 @@ func NewHandler(svc *service.Service, deps Deps) *Handler {
 		rateLimiter:     deps.RateLimiter, rateLimitN: deps.RateLimitN, audit: deps.Audit,
 		robotTokenTTL: deps.RobotTokenTTL, directory: deps.Directory, catalog: deps.Catalog,
 		agentImageRepo: deps.AgentImageRepo, settings: deps.Settings, startedAt: time.Now(),
-		ldap: deps.LDAP, luaAuth: deps.LuaAuth,
+		ldap: deps.LDAP, luaAuth: deps.LuaAuth, geo: deps.Geo,
 	}
 }
 
@@ -210,6 +213,7 @@ func (h *Handler) CreateCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data, rsp := h.svc.CreateCluster(r.Context(), &req)
+	h.auditPlatform(r, "cluster-create", "", req.ID, "/api/v1/clusters", errcode.IsSuccess(rsp), req.ID)
 	errcode.GenFinalResponse(w, data, rsp)
 }
 
@@ -227,6 +231,8 @@ func (h *Handler) GetCluster(w http.ResponseWriter, r *http.Request) {
 
 // DeleteCluster DELETE /api/v1/clusters/{id}
 func (h *Handler) DeleteCluster(w http.ResponseWriter, r *http.Request) {
-	rsp := h.svc.DeleteCluster(r.Context(), chi.URLParam(r, "id"))
+	id := chi.URLParam(r, "id")
+	rsp := h.svc.DeleteCluster(r.Context(), id)
+	h.auditPlatform(r, "cluster-delete", "", id, "/api/v1/clusters/"+id, errcode.IsSuccess(rsp), "delete")
 	errcode.GenFinalResponse(w, nil, rsp)
 }

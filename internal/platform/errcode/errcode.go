@@ -76,9 +76,10 @@ func ServerInternal(err error) *Response {
 	return &Response{Status: CodeServerInternal, Message: "internal error: " + err.Error()}
 }
 
-// IsSuccess 判定是否成功响应
+// IsSuccess 判定是否成功响应。nil = 成功（层间约定成功时返回 nil rsp，
+// 只有 GenFinalResponse 出口把它归一为 OperationSuccess）。
 func IsSuccess(rsp *Response) bool {
-	return errors.Is(rsp, OperationSuccess)
+	return rsp == nil || errors.Is(rsp, OperationSuccess)
 }
 
 // GenFinalResponse 统一出口：HTTP 恒 200（系统错误 500），业务码在 status 字段。

@@ -33,9 +33,11 @@ func (h *Handler) GetKubeconfig(w http.ResponseWriter, r *http.Request) {
 		ExecClientID: h.oidcClientID,
 	})
 	if rsp != nil {
+		h.auditPlatform(r, "kubeconfig-download", claims.Subject, chi.URLParam(r, "id"), "/api/v1/clusters/"+chi.URLParam(r, "id")+"/kubeconfig", false, rsp.Message)
 		http.Error(w, rsp.Message, http.StatusBadRequest)
 		return
 	}
+	h.auditPlatform(r, "kubeconfig-download", claims.Subject, chi.URLParam(r, "id"), "/api/v1/clusters/"+chi.URLParam(r, "id")+"/kubeconfig", true, "mode="+mode)
 
 	w.Header().Set("Content-Type", "application/yaml")
 	w.Header().Set("Content-Disposition",

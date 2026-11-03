@@ -65,7 +65,7 @@ func (h *Handler) TunnelWS(w http.ResponseWriter, r *http.Request) {
 	if _, rsp := h.svc.SetClusterStatus(r.Context(), clusterID, modules.ClusterStatusOnline); !errcode.IsSuccess(rsp) {
 		log.Printf("[platform] mark cluster %s online: %s", clusterID, rsp)
 	}
-	h.auditSimple(r, agentID, clusterID, "/tunnel", "tunnel-attached", true)
+	h.auditPlatform(r, "tunnel-attached", "", clusterID, "/tunnel", true, "attached")
 	log.Printf("[platform] tunnel attached: cluster=%s agent=%s", clusterID, agentID)
 }
 

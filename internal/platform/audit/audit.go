@@ -33,10 +33,14 @@ const (
 	flushInterval = 500 * time.Millisecond
 )
 
-// Writer 审计事件异步写出器
+// Writer 审计事件异步写出器。
+// 出口按事件类别分流：平台事件（kind=platform）输出到 stdio；集群事件
+// （kind=cluster）不落 stdio，可经 Syslog 导出到远程日志服务器。两类事件
+// 都写 PG 供管理面查询。
 type Writer struct {
 	sink      Sink
 	spillPath string
+	syslog    *Syslog
 	buf       chan *modules.AuditEvent
 	done      chan struct{}
 	wg        sync.WaitGroup
@@ -51,6 +55,12 @@ func NewWriter(sink Sink, spillPath string) *Writer {
 		buf:       make(chan *modules.AuditEvent, bufferSize),
 		done:      make(chan struct{}),
 	}
+}
+
+// WithSyslog 设置集群事件的远程日志导出（nil = 不导出）
+func (w *Writer) WithSyslog(s *Syslog) *Writer {
+	w.syslog = s
+	return w
 }
 
 // Start 启动写出循环（幂等）
@@ -84,6 +94,7 @@ func (w *Writer) Log(ev *modules.AuditEvent) {
 func (w *Writer) Release() {
 	w.muOnceClose()
 	w.wg.Wait()
+	w.syslog.Close()
 }
 
 func (w *Writer) muOnceClose() {
@@ -136,7 +147,8 @@ func (w *Writer) loop() {
 	}
 }
 
-// writeBatch 写 PG；失败落 spill
+// writeBatch 写 PG；失败落 spill；随后按类别分发 stdout / syslog。
+// stdout：平台事件（管理面即时观测，不进集群日志面）；syslog：集群事件。
 func (w *Writer) writeBatch(events []*modules.AuditEvent) {
 	// 先回放历史 spill（PG 此前故障期间暂存的事件，按序优先）
 	w.replaySpill()
@@ -146,6 +158,31 @@ func (w *Writer) writeBatch(events []*modules.AuditEvent) {
 	if err := w.sink.InsertBatch(ctx, events); err != nil {
 		fmt.Printf("[audit] insert batch(%d) failed, spilling: %v\n", len(events), err)
 		w.spill(events)
+	}
+
+	var platform, cluster []*modules.AuditEvent
+	for _, ev := range events {
+		if ev.Kind == modules.AuditKindPlatform {
+			platform = append(platform, ev)
+		} else {
+			cluster = append(cluster, ev)
+		}
+	}
+	w.emitStdout(platform)
+	w.syslog.Send(cluster)
+}
+
+// emitStdout 平台事件 JSON Lines 输出到 stdio（直接可见，不进 syslog）
+func (w *Writer) emitStdout(events []*modules.AuditEvent) {
+	if len(events) == 0 {
+		return
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetEscapeHTML(false)
+	for _, ev := range events {
+		if err := enc.Encode(ev); err != nil {
+			w.dropped.Add(1)
+		}
 	}
 }
 

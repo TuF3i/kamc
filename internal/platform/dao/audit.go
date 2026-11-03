@@ -7,10 +7,15 @@ import (
 	"github.com/TuF3i/kamc/internal/platform/modules"
 )
 
-// SetupAudit 建审计事件表（幂等）
+// SetupAudit 建审计事件表（幂等）。历史行（无 kind）按集群事件归类。
 func (d *Dao) SetupAudit(ctx context.Context) error {
 	if err := d.db.WithContext(ctx).AutoMigrate(&modules.AuditEvent{}); err != nil {
 		return fmt.Errorf("dao -> migrate audit_event: %w", err)
+	}
+	if err := d.db.WithContext(ctx).Exec(
+		"UPDATE audit_events SET kind = ? WHERE kind IS NULL OR kind = ''", modules.AuditKindCluster,
+	).Error; err != nil {
+		return fmt.Errorf("dao -> backfill audit kind: %w", err)
 	}
 	return nil
 }
@@ -30,11 +35,14 @@ func (d *Dao) InsertBatch(ctx context.Context, events []*modules.AuditEvent) err
 type AuditEventRow = modules.AuditEvent
 
 // ListAuditEvents 管理面审计查询（按时间倒序，可按用户/集群过滤）
-func (d *Dao) ListAuditEvents(ctx context.Context, user, cluster string, limit int) ([]modules.AuditEvent, error) {
+func (d *Dao) ListAuditEvents(ctx context.Context, kind, user, cluster string, limit int) ([]modules.AuditEvent, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
 	q := d.db.WithContext(ctx).Model(&modules.AuditEvent{})
+	if kind == string(modules.AuditKindPlatform) || kind == string(modules.AuditKindCluster) {
+		q = q.Where("kind = ?", kind)
+	}
 	if user != "" {
 		q = q.Where("user = ?", user)
 	}

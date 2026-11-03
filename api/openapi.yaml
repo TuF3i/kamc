@@ -625,9 +625,13 @@ paths:
     get:
       tags: [审计]
       summary: 审计查询（管理面）
+      description: |
+        kind=platform 返回平台事件（登录/Token/下载/管理动作，同步输出到 stdio）；
+        kind=cluster 返回集群操作（数据面 API，含原始请求/响应前缀，可经 syslog 导出）。
       security:
         - platformJWT: []
       parameters:
+        - {name: kind, in: query, schema: {type: string, enum: [platform, cluster]}}
         - {name: user, in: query, schema: {type: string}}
         - {name: cluster, in: query, schema: {type: string}}
         - {name: limit, in: query, schema: {type: integer, default: 100, maximum: 1000}}
@@ -1211,20 +1215,28 @@ components:
     AuditEvent:
       type: object
       properties:
-        id: {type: integer}
+        id: {type: integer, format: int64}
+        kind: {type: string, enum: [platform, cluster]}
+        event: {type: string, description: '事件名（login-success/kubeconfig-download/token-issue/k8s-api…）'}
         timestamp: {type: string, format: date-time}
         user: {type: string}
-        groups: {type: string, description: 逗号分隔}
+        groups: {type: string, description: 逗号分隔组串}
         cluster: {type: string}
         method: {type: string}
         path: {type: string, description: 语义资源串（Casbin obj）}
         verb: {type: string, description: K8s verb}
         allowed: {type: boolean}
-        reason:
-          type: string
-          enum: [allowed, denied-casbin, denied-casbin-error, tunnel-attached, user-revoked, login-success, login-failed]
+        reason: {type: string}
         source_ip: {type: string}
-        latency_ms: {type: integer}
+        forwarded_for: {type: string}
+        user_agent: {type: string}
+        geo_country: {type: string}
+        geo_region: {type: string}
+        geo_city: {type: string}
+        status_code: {type: integer}
+        request_body: {type: string, description: 原始请求体前缀（≤4KB）}
+        response_body: {type: string, description: 原始响应体前缀（≤4KB）}
+        latency_ms: {type: integer, format: int64}
 
     SystemInfo:
       type: object

@@ -87,6 +87,9 @@ web/                 管理前端（React 18 + Ant Design 5 + Vite + TypeScript�
 | `PLATFORM_INSECURE`（Agent） | — | 跳过平台证书校验（开发环境自签） |
 | `AM_RATE_LIMIT` | 0（不限） | 数据面每用户每分钟最大请求数（Redis 共享窗口） |
 | `AM_AUDIT_SPILL_FILE` | `/tmp/kamc-audit-spill.jsonl` | 审计本地暂存文件（PG 故障时） |
+| `AM_GEOIP_DB` | — | MaxMind GeoLite2/GeoIP2 `.mmdb` 路径（审计地理信息；未配置不解析） |
+| `AM_SYSLOG_ADDR` | — | 集群审计 syslog 导出地址，`udp://host:514` 或 `tcp://host:514`（空=不导出） |
+| `AM_SYSLOG_TAG` | `kamc-cluster-audit` | syslog APP-NAME |
 | `AM_AGENT_IMAGE_REPO` | `tuf3i/k8s-am-agent` | Agent 镜像仓库完整地址（不含 tag；tag 随平台版本，一键安装清单用） |
 | `TEST_REDIS_ADDR` | — | Redis 集成测试门控（watcher/state store/限流，仅测试用） |
 | `TEST_PG_DSN` | — | 数据库集成测试门控（仅测试用） |

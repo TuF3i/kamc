@@ -37,6 +37,7 @@ func (h *Handler) IssueToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data, rsp := h.svc.IssueToken(r.Context(), clusterID, &req)
+	h.auditPlatform(r, "token-issue", "", clusterID, "/api/v1/clusters/"+clusterID+"/tokens", errcode.IsSuccess(rsp), "kind="+string(req.Kind))
 	errcode.GenFinalResponse(w, data, rsp)
 }
 
@@ -48,6 +49,8 @@ func (h *Handler) ListTokens(w http.ResponseWriter, r *http.Request) {
 
 // RevokeToken DELETE /api/v1/clusters/{id}/tokens/{kind}
 func (h *Handler) RevokeToken(w http.ResponseWriter, r *http.Request) {
-	rsp := h.svc.RevokeToken(r.Context(), chi.URLParam(r, "id"), modules.TokenKind(chi.URLParam(r, "kind")))
+	clusterID, kind := chi.URLParam(r, "id"), chi.URLParam(r, "kind")
+	rsp := h.svc.RevokeToken(r.Context(), clusterID, modules.TokenKind(kind))
+	h.auditPlatform(r, "token-revoke", "", clusterID, "/api/v1/clusters/"+clusterID+"/tokens/"+kind, errcode.IsSuccess(rsp), "kind="+kind)
 	errcode.GenFinalResponse(w, nil, rsp)
 }

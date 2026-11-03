@@ -54,8 +54,13 @@ export interface Claims {
   am_ep?: number;
 }
 
+export type AuditKind = 'platform' | 'cluster';
+
 export interface AuditEvent {
   id: number;
+  kind: AuditKind;
+  /** 事件名：login-success / kubeconfig-download / token-issue / k8s-api … */
+  event: string;
   timestamp: string;
   user: string;
   /** 逗号分隔的组字符串（不是 JSON 数组） */
@@ -67,6 +72,14 @@ export interface AuditEvent {
   allowed: boolean;
   reason: string;
   source_ip?: string;
+  forwarded_for?: string;
+  user_agent?: string;
+  geo_country?: string;
+  geo_region?: string;
+  geo_city?: string;
+  status_code?: number;
+  request_body?: string;
+  response_body?: string;
   latency_ms?: number;
 }
 

@@ -18,6 +18,7 @@ func (h *Handler) CreatePolicies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data, rsp := h.svc.CreatePolicies(r.Context(), &req)
+	h.auditPlatform(r, "policy-create", req.Subject, req.Cluster, "/api/v1/policies", errcode.IsSuccess(rsp), req.SubjectType+"/"+req.Subject)
 	errcode.GenFinalResponse(w, data, rsp)
 }
 
@@ -35,6 +36,7 @@ func (h *Handler) RemovePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rsp := h.svc.RemovePolicy(r.Context(), req)
+	h.auditPlatform(r, "policy-remove", req.Sub, "", "/api/v1/policies", errcode.IsSuccess(rsp), req.Dom+"/"+req.Obj+"/"+req.Act)
 	errcode.GenFinalResponse(w, nil, rsp)
 }
 

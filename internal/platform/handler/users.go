@@ -28,12 +28,14 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data, rsp := h.svc.UpdateUser(r.Context(), chi.URLParam(r, "username"), &req)
+	h.auditPlatform(r, "user-update", chi.URLParam(r, "username"), "", "/api/v1/users/"+chi.URLParam(r, "username"), errcode.IsSuccess(rsp), "update")
 	errcode.GenFinalResponse(w, data, rsp)
 }
 
 // DeleteUser DELETE /api/v1/users/{username}
 func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	rsp := h.svc.DeleteUser(r.Context(), chi.URLParam(r, "username"))
+	h.auditPlatform(r, "user-delete", chi.URLParam(r, "username"), "", "/api/v1/users/"+chi.URLParam(r, "username"), errcode.IsSuccess(rsp), "delete")
 	errcode.GenFinalResponse(w, nil, rsp)
 }
 

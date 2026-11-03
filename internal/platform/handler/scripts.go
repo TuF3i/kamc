@@ -72,7 +72,15 @@ func (h *Handler) PutAuthScript(w http.ResponseWriter, r *http.Request) {
 		errcode.GenFinalResponse(w, nil, errcode.ServerInternal(err))
 		return
 	}
+	h.auditPlatform(r, "script-save", "", "", "/api/v1/scripts/"+name, true, "enabled="+boolStr(req.Enabled))
 	errcode.GenFinalResponse(w, sc, nil)
+}
+
+func boolStr(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
 }
 
 // DeleteAuthScript DELETE /api/v1/scripts/{name}
@@ -90,6 +98,7 @@ func (h *Handler) DeleteAuthScript(w http.ResponseWriter, r *http.Request) {
 		errcode.GenFinalResponse(w, nil, errcode.ErrAuthScriptNotFound)
 		return
 	}
+	h.auditPlatform(r, "script-delete", "", "", "/api/v1/scripts/"+chi.URLParam(r, "name"), true, "delete")
 	errcode.GenFinalResponse(w, nil, nil)
 }
 
@@ -123,7 +132,7 @@ func (h *Handler) ExecuteAuthScript(w http.ResponseWriter, r *http.Request) {
 		Sub: req.Sub, Email: req.Email, Groups: req.Groups, Source: req.Source, Extra: req.Extra,
 	}, dryRun)
 	if err != nil {
-		h.auditSimple(r, req.Sub, "", "/api/v1/scripts/"+name+"/execute", "script-failed", false)
+		h.auditPlatform(r, "script-execute-failed", req.Sub, "", "/api/v1/scripts/"+name+"/execute", false, "mapping-script-failed")
 		errcode.GenFinalResponse(w, map[string]any{"error": err.Error()}, errcode.ServerInternal(err))
 		return
 	}

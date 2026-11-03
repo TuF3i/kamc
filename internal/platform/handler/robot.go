@@ -94,6 +94,7 @@ func (h *Handler) CreateRobot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.auditPlatform(r, "robot-create", "", clusterID, "/api/v1/robots", true, name)
 	errcode.GenFinalResponse(w, map[string]any{
 		"robot":      dto,
 		"kubeconfig": string(data),
@@ -120,6 +121,7 @@ func (h *Handler) DeleteRobot(w http.ResponseWriter, r *http.Request) {
 		errcode.GenFinalResponse(w, nil, rsp)
 		return
 	}
+	h.auditPlatform(r, "robot-delete", "", robot.ClusterID, "/api/v1/robots/"+id, true, robot.Name)
 	errcode.GenFinalResponse(w, nil, nil)
 }
 

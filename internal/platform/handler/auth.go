@@ -45,7 +45,7 @@ func (h *Handler) AuthCallback(w http.ResponseWriter, r *http.Request) {
 	user, err := h.oidc.Exchange(r.Context(), r.URL.Query().Get("code"), r.URL.Query().Get("state"))
 	if err != nil {
 		log.Printf("[platform] oidc exchange: %v", err)
-		h.auditSimple(r, "", "", "/auth/callback", "login-failed", false)
+		h.auditPlatform(r, "login-failed", "", "", "/auth/callback", false, "oidc-exchange-failed")
 		http.Error(w, "login failed", http.StatusUnauthorized)
 		return
 	}
@@ -104,7 +104,7 @@ func (h *Handler) AuthLdapLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := h.ldap.Authenticate(strings.TrimSpace(req.Username), req.Password)
 	if err != nil {
-		h.auditSimple(r, req.Username, "", "/auth/ldap-login", "login-failed", false)
+		h.auditPlatform(r, "login-failed", req.Username, "", "/auth/ldap-login", false, "ldap-auth-failed")
 		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
 		return
 	}
@@ -164,7 +164,7 @@ func (h *Handler) AuthPasswordLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.auditSimple(r, username, "", "/auth/password-login", "login-failed", false)
+	h.auditPlatform(r, "login-failed", username, "", "/auth/password-login", false, "bad-credentials")
 	http.Error(w, "unauthorized", http.StatusUnauthorized)
 }
 
@@ -209,7 +209,7 @@ func (h *Handler) AuthRevokeUser(w http.ResponseWriter, r *http.Request) {
 		errcode.GenFinalResponse(w, nil, errcode.ServerInternal(err))
 		return
 	}
-	h.auditSimple(r, req.Sub, "", "/api/v1/auth/revoke", "user-revoked", true)
+	h.auditPlatform(r, "user-revoked", req.Sub, "", "/api/v1/auth/revoke", true, "revoked")
 	metrics.RevocationsTotal.WithLabelValues("user").Inc()
 	errcode.GenFinalResponse(w, map[string]string{"sub": req.Sub, "revoked": "before-now"}, nil)
 }
@@ -230,6 +230,7 @@ func (h *Handler) AuthLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	metrics.RevocationsTotal.WithLabelValues("token").Inc()
+	h.auditPlatform(r, "logout", claims.Subject, "", "/auth/logout", true, "ok")
 	errcode.GenFinalResponse(w, map[string]bool{"logout": true}, nil)
 }
 
@@ -257,7 +258,7 @@ func wantsHTML(r *http.Request) bool {
 // issueJWT 登录签发挂载点（不做用户同步——仅测试/特殊场景使用）；
 // browser=true 时以桥接 HTML 输出（仅 /auth/callback 浏览器导航使用）。
 func (h *Handler) issueJWT(w http.ResponseWriter, r *http.Request, sub, email string, groups []string, source string, browser bool) {
-	h.auditSimple(r, sub, "", source, "login-success", true)
+	h.auditPlatform(r, "login-success", sub, "", source, true, "ok")
 	token, exp, err := h.auth.Sign(sub, email, groups)
 	if err != nil {
 		http.Error(w, "sign error", http.StatusInternalServerError)
@@ -297,7 +298,7 @@ func (h *Handler) issueJWTWithSync(w http.ResponseWriter, r *http.Request, id *s
 			Source: string(id.Source), Extra: extra,
 		}); err != nil {
 			log.Printf("[platform] lua script %s: %v", id.Username, err)
-			h.auditSimple(r, id.Username, "", source, "script-failed", false)
+			h.auditPlatform(r, "script-failed", id.Username, "", source, false, "mapping-script-rejected")
 			errcode.GenFinalResponse(w, map[string]any{
 				"status": 10003, "message": "login rejected by mapping script",
 			}, &errcode.Response{Status: 10003, Message: "login rejected by mapping script: " + err.Error()})
