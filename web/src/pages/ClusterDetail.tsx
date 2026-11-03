@@ -375,7 +375,6 @@ function KubeconfigTab({ clusterId }: { clusterId: string }) {
   return (
     <div className="tab-stack">
       <Card title="kubeconfig 下载" className="soft-card">
-        <Typography.Paragraph>下载 kubeconfig</Typography.Paragraph>
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
           <Radio.Group value={mode} onChange={(e) => setMode(e.target.value as 'exec' | 'static')}>
             <Radio.Button value="exec">exec（推荐）</Radio.Button>
