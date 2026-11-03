@@ -1235,8 +1235,8 @@ components:
         geo_region: {type: string}
         geo_city: {type: string}
         status_code: {type: integer}
-        request_body: {type: string, description: 原始请求体前缀（≤4KB）}
-        response_body: {type: string, description: 原始响应体前缀（≤4KB）}
+        request_body: {type: string, description: 完整请求报文（起始行+头+格式化 JSON body，body 上限 16KB，敏感头脱敏）}
+        response_body: {type: string, description: 完整响应报文（状态行+头+格式化 JSON body，body 上限 16KB，gzip 自动解压）}
         latency_ms: {type: integer, format: int64}
 
     SystemInfo:

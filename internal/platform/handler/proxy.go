@@ -42,7 +42,7 @@ func (h *Handler) Proxy(w http.ResponseWriter, r *http.Request) {
 	clusterID := chi.URLParam(r, "clusterID")
 	start := time.Now()
 	// 原始请求体前缀（审计用；读后还原，代理照常转发）
-	reqBody := captureRequestBody(r)
+	reqDump := captureRequestDump(r)
 
 	// 1. 身份（RequireJWT 中间件已注入）
 	claims, ok := middleware.ClaimsFromCtx(r.Context())
@@ -70,21 +70,21 @@ func (h *Handler) Proxy(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[platform] casbin enforce error %s@%s %s %s: %v",
 			claims.Subject, clusterID, obj, act, err)
 		metrics.CasbinDenialsTotal.WithLabelValues(clusterID).Inc()
-		h.auditDataPlane(r, clusterID, obj, act, false, "denied-casbin-error", start, reqBody, "", http.StatusForbidden)
+		h.auditDataPlane(r, clusterID, obj, act, false, "denied-casbin-error", start, reqDump, "", http.StatusForbidden)
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	if !allowed {
 		log.Printf("[platform] casbin denied %s@%s %s %s", claims.Subject, clusterID, obj, act)
 		metrics.CasbinDenialsTotal.WithLabelValues(clusterID).Inc()
-		h.auditDataPlane(r, clusterID, obj, act, false, "denied-casbin", start, reqBody, "", http.StatusForbidden)
+		h.auditDataPlane(r, clusterID, obj, act, false, "denied-casbin", start, reqDump, "", http.StatusForbidden)
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 
 	// 4. 流式分流（§9）：WebSocket 升级请求交官方 handler；其余走 ReverseProxy
 	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
-		h.auditDataPlane(r, clusterID, obj, act, true, "allowed-stream", start, reqBody, "", http.StatusSwitchingProtocols)
+		h.auditDataPlane(r, clusterID, obj, act, true, "allowed-stream", start, reqDump, "", http.StatusSwitchingProtocols)
 		h.serveStream(w, r, clusterID, cleanPath, claims.Subject, claims.Groups)
 		return
 	}
@@ -102,12 +102,12 @@ func (h *Handler) Proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 响应捕获（状态码 + 前缀体）→ 计数包装器叠在外层
-	cap := newCaptureWriter(w)
+	cap := newCaptureWriter(w, r.Proto)
 	ww := chimw.NewWrapResponseWriter(cap, r.ProtoMajor)
 	rp.ServeHTTP(ww, r)
 	metrics.RequestsTotal.WithLabelValues(clusterID, act, strconv.Itoa(ww.Status())).Inc()
 	metrics.ProxyDurationSeconds.WithLabelValues(clusterID).Observe(time.Since(start).Seconds())
-	h.auditDataPlane(r, clusterID, obj, act, true, "allowed", start, reqBody, cap.Body(), cap.Status())
+	h.auditDataPlane(r, clusterID, obj, act, true, "allowed", start, reqDump, cap.Dump(), cap.Status())
 }
 
 // serveStream 流式升级路径：Impersonation 走头部注入（Tunneling/UpgradeAware

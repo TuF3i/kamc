@@ -287,8 +287,8 @@ function ClusterTable({ events, loading }: { events: AuditEvent[]; loading: bool
                   <ReasonTag reason={record.reason} />
                 </Descriptions.Item>
               </Descriptions>
-              <AuditBody title="请求体" body={record.request_body} />
-              <AuditBody title="响应体" body={record.response_body} />
+              <AuditBody title="请求报文" body={record.request_body} />
+              <AuditBody title="响应报文" body={record.response_body} />
             </div>
           ),
         }}

@@ -2,9 +2,13 @@ package handler
 
 import (
 	"bytes"
+	"compress/gzip"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -14,8 +18,24 @@ import (
 	"github.com/TuF3i/kamc/internal/platform/modules"
 )
 
-// maxAuditBody 原始请求/响应体在审计中的截断上限（字节前缀）
-const maxAuditBody = 4096
+const (
+	// maxAuditBody 请求/响应体在审计报文中的截断上限（字节）
+	maxAuditBody = 16 * 1024
+	// maxAuditHeaderBytes 报文头总长上限（防止异常超长头撑爆记录）
+	maxAuditHeaderBytes = 4 * 1024
+)
+
+// sensitiveHeaders 敏感头遮蔽：审计保留头结构但不泄露凭证
+var sensitiveHeaders = map[string]bool{
+	"authorization":       true,
+	"proxy-authorization": true,
+	"cookie":              true,
+	"set-cookie":          true,
+	"x-api-key":           true,
+	"x-auth-token":        true,
+	"impersonate-token":   true,
+	"impersonate-uid":     true,
+}
 
 // ListAudit GET /api/v1/audit?kind=&user=&cluster=&limit= —— 审计查询（管理面）。
 // kind=platform|cluster 过滤；缺省返回全部（兼容旧调用）。
@@ -135,8 +155,8 @@ func (h *Handler) clusterEvent(r *http.Request, allowed bool, reason string) *mo
 }
 
 // auditDataPlane 数据面审计（Proxy 允许/拒绝统一出口）：组装集群事件 +
-// 原始请求/响应前缀，kind=cluster 落库（不落 stdio）+ 可选 syslog 导出。
-func (h *Handler) auditDataPlane(r *http.Request, clusterID, obj, verb string, allowed bool, reason string, start time.Time, reqBody, respBody string, status int) {
+// 完整 HTTP 报文（请求/响应），kind=cluster 落库（不落 stdio）+ 可选 syslog。
+func (h *Handler) auditDataPlane(r *http.Request, clusterID, obj, verb string, allowed bool, reason string, start time.Time, reqDump, respDump string, status int) {
 	ev := h.clusterEvent(r, allowed, reason)
 	ev.Cluster = clusterID
 	ev.Path = r.URL.RequestURI() // 原始请求（含 query，审计溯源）
@@ -144,8 +164,8 @@ func (h *Handler) auditDataPlane(r *http.Request, clusterID, obj, verb string, a
 	ev.Verb = verb
 	ev.Method = r.Method
 	ev.LatencyMS = time.Since(start).Milliseconds()
-	ev.RequestBody = reqBody
-	ev.ResponseBody = respBody
+	ev.RequestBody = reqDump
+	ev.ResponseBody = respDump
 	ev.StatusCode = status
 	h.auditCluster(ev)
 }
@@ -158,52 +178,163 @@ func (h *Handler) auditCluster(ev *modules.AuditEvent) {
 	h.audit.Log(ev)
 }
 
-// truncateBody 审计体截断（附标记）
-func truncateBody(b []byte) string {
-	if len(b) <= maxAuditBody {
-		return string(b)
+// ── HTTP 报文捕获与格式化 ──
+
+// maskHeader 敏感头遮蔽（保留键名便于排查）
+func maskHeader(key, value string) string {
+	if sensitiveHeaders[strings.ToLower(key)] {
+		return "***"
 	}
-	return string(b[:maxAuditBody]) + "…(truncated)"
+	return truncate(value, 512)
 }
 
-// captureRequestBody 读取请求体前缀后还原（供代理继续转发）。
-// GET/HEAD/OPTIONS 不捕获；其余方法读取至多 maxAuditBody+1 字节。
-func captureRequestBody(r *http.Request) string {
-	if r.Body == nil || r.Body == http.NoBody {
-		return ""
+// buildHTTPMessage 组装可读的完整 HTTP 报文：起始行 + 头 + 格式化 body。
+func buildHTTPMessage(startLine string, header http.Header, body []byte, truncated, decompressed bool) string {
+	var b strings.Builder
+	b.WriteString(startLine)
+	b.WriteString("\r\n")
+
+	keys := make([]string, 0, len(header))
+	for k := range header {
+		keys = append(keys, k)
 	}
+	sort.Strings(keys)
+	headerBytes := 0
+	for _, k := range keys {
+		for _, v := range header[k] {
+			line := k + ": " + maskHeader(k, v) + "\r\n"
+			if headerBytes+len(line) > maxAuditHeaderBytes {
+				b.WriteString("…(headers truncated)\r\n")
+				headerBytes = -1
+				break
+			}
+			b.WriteString(line)
+			headerBytes += len(line)
+		}
+		if headerBytes < 0 {
+			break
+		}
+	}
+	b.WriteString("\r\n")
+	b.WriteString(formatAuditBody(header.Get("Content-Type"), body, truncated, decompressed))
+	return b.String()
+}
+
+// formatAuditBody body 美化：JSON（按 Content-Type 或内容嗅探）缩进 2 空格，
+// 其余原样；截断/解压状态以注释行标注。
+func formatAuditBody(contentType string, raw []byte, truncated, decompressed bool) string {
+	var sb strings.Builder
+	if decompressed {
+		sb.WriteString("(body 已从 gzip 解压展示)\n")
+	}
+	if len(raw) == 0 {
+		sb.WriteString("(无 body)")
+	} else if looksLikeJSON(contentType, raw) && !truncated {
+		var buf bytes.Buffer
+		if err := json.Indent(&buf, raw, "", "  "); err == nil {
+			sb.Write(buf.Bytes())
+		} else {
+			sb.Write(raw)
+		}
+	} else {
+		sb.Write(raw)
+	}
+	if truncated {
+		sb.WriteString("\n…(truncated)")
+	}
+	return sb.String()
+}
+
+// looksLikeJSON Content-Type 含 json，或 body 以 { / [ 开头
+func looksLikeJSON(contentType string, raw []byte) bool {
+	if strings.Contains(strings.ToLower(contentType), "json") {
+		return true
+	}
+	for _, c := range raw {
+		switch c {
+		case ' ', '\t', '\r', '\n':
+			continue
+		case '{', '[':
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+// decodeBody gzip 解压（压缩由客户端 Accept-Encoding 触发，审计需可读内容）
+func decodeBody(header http.Header, raw []byte) (body []byte, truncated, decompressed bool) {
+	enc := strings.ToLower(header.Get("Content-Encoding"))
+	if !strings.Contains(enc, "gzip") || len(raw) == 0 {
+		return raw, false, false
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return raw, false, false
+	}
+	defer zr.Close()
+	dec, err := io.ReadAll(io.LimitReader(zr, maxAuditBody+1))
+	if err != nil {
+		return raw, false, false
+	}
+	if len(dec) > maxAuditBody {
+		dec = dec[:maxAuditBody]
+		truncated = true
+	}
+	return dec, truncated, true
+}
+
+// captureRequestDump 捕获完整请求报文（起始行 + 头 + 格式化 body），
+// 同时把请求体还原给代理继续转发。请求头在此刻快照（早于剥离/注入）。
+func captureRequestDump(r *http.Request) string {
+	header := r.Header.Clone()
+	var raw []byte
+	truncated := false
 	switch r.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
-		return ""
+		// 无 body
+	default:
+		if r.Body != nil && r.Body != http.NoBody {
+			prefix, err := io.ReadAll(io.LimitReader(r.Body, maxAuditBody+1))
+			if err == nil {
+				if len(prefix) > maxAuditBody {
+					prefix = prefix[:maxAuditBody]
+					truncated = true
+				}
+				raw = prefix
+				rest := r.Body
+				// 还原：prefix + 剩余流（代理继续消费；Close 透传给原 Body）
+				r.Body = struct {
+					io.Reader
+					io.Closer
+				}{Reader: io.MultiReader(bytes.NewReader(raw), rest), Closer: rest}
+			}
+		}
 	}
-	prefix, err := io.ReadAll(io.LimitReader(r.Body, maxAuditBody+1))
-	if err != nil {
-		return ""
-	}
-	rest := r.Body
-	// 还原：prefix + 剩余流（代理继续消费；Close 透传给原 Body）
-	r.Body = struct {
-		io.Reader
-		io.Closer
-	}{Reader: io.MultiReader(bytes.NewReader(prefix), rest), Closer: rest}
-	return truncateBody(prefix)
+	body, gzTrunc, gzDec := decodeBody(header, raw)
+	startLine := fmt.Sprintf("%s %s %s", r.Method, r.URL.RequestURI(), r.Proto)
+	return buildHTTPMessage(startLine, header, body, truncated || gzTrunc, gzDec)
 }
 
-// captureWriter 响应捕获包装：记录状态码与前 maxAuditBody 字节，
+// captureWriter 响应捕获包装：记录状态码/响应头/前 maxAuditBody 字节，
 // 其余行为原样透传（含 Flush，保证流式响应不被破坏）。
 type captureWriter struct {
 	http.ResponseWriter
+	proto         string
 	status        int
+	header        http.Header
 	body          bytes.Buffer
 	bodyTruncated bool
 }
 
-func newCaptureWriter(w http.ResponseWriter) *captureWriter {
-	return &captureWriter{ResponseWriter: w, status: http.StatusOK}
+func newCaptureWriter(w http.ResponseWriter, proto string) *captureWriter {
+	return &captureWriter{ResponseWriter: w, proto: proto, status: http.StatusOK}
 }
 
 func (w *captureWriter) WriteHeader(code int) {
 	w.status = code
+	w.header = w.Header().Clone() // 快照（之后头不再变）
 	w.ResponseWriter.WriteHeader(code)
 }
 
@@ -228,12 +359,15 @@ func (w *captureWriter) Flush() {
 	}
 }
 
-// Body 返回捕获的响应体（truncated）；gzip 等压缩响应标记为不可读
-func (w *captureWriter) Body() string {
-	if enc := w.Header().Get("Content-Encoding"); enc != "" && enc != "identity" {
-		return "(响应体经 " + enc + " 压缩，不记录)"
+// Dump 组装完整响应报文（状态行 + 头 + 格式化 body）
+func (w *captureWriter) Dump() string {
+	header := w.header
+	if header == nil {
+		header = w.Header().Clone()
 	}
-	return truncateBody(w.body.Bytes())
+	body, gzTrunc, gzDec := decodeBody(header, w.body.Bytes())
+	startLine := fmt.Sprintf("%s %d %s", w.proto, w.status, http.StatusText(w.status))
+	return buildHTTPMessage(startLine, header, body, w.bodyTruncated || gzTrunc, gzDec)
 }
 
 // Status 返回响应状态码
