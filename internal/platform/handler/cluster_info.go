@@ -13,13 +13,13 @@ import (
 )
 
 // ClusterInfo GET /api/v1/clusters/{id}/info —— 经 Agent 隧道读取目标集群
-// kube-apiserver /version（集群详情「集群详细信息」卡片）。
+// 概要信息（kubectl cluster-info 语义：版本 + 控制平面/DNS 地址）。
 func (h *Handler) ClusterInfo(w http.ResponseWriter, r *http.Request) {
 	if h.catalog == nil {
 		http.Error(w, "resource catalog disabled", http.StatusServiceUnavailable)
 		return
 	}
-	data, rsp := h.catalog.ServerVersion(r.Context(), chi.URLParam(r, "id"))
+	data, rsp := h.catalog.Info(r.Context(), chi.URLParam(r, "id"))
 	errcode.GenFinalResponse(w, data, rsp)
 }
 

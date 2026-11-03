@@ -38,7 +38,7 @@ import {
 import type {
   AgentInstallPreview,
   Cluster,
-  ClusterVersionInfo,
+  ClusterInfo,
   IssuedToken,
   TokenDTO,
   TokenKind,
@@ -49,7 +49,7 @@ import { CopyButton } from '@/components/CopyButton';
 import { fmtTime } from '@/utils/format';
 
 function OverviewTab({ cluster }: { cluster: Cluster }) {
-  const [info, setInfo] = useState<ClusterVersionInfo | null>(null);
+  const [info, setInfo] = useState<ClusterInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -102,26 +102,31 @@ function OverviewTab({ cluster }: { cluster: Cluster }) {
           <Alert
             type="warning"
             showIcon
-            message="无法读取 apiserver 信息"
-            description="集群未接入或 Agent 隧道离线；接入 Agent 后即可从 api-server 读取版本等详细信息。"
+            message="无法读取集群信息"
+            description="集群未接入或 Agent 隧道离线；接入 Agent 后即可读取集群详细信息。"
           />
         ) : (
           <Descriptions column={{ xs: 1, md: 2 }} size="middle">
-            <Descriptions.Item label="Kubernetes 版本">
-              <code className="mono strong">{info.git_version || '—'}</code>
+            <Descriptions.Item label="Kubernetes 版本" span={2}>
+              <code className="mono strong">{info.version?.git_version || '—'}</code>
             </Descriptions.Item>
-            <Descriptions.Item label="主次版本">
-              {info.major}.{info.minor}
+            <Descriptions.Item label="控制平面" span={2}>
+              {info.control_plane ? (
+                <code className="mono">{info.control_plane}</code>
+              ) : (
+                <Typography.Text type="secondary">—</Typography.Text>
+              )}
             </Descriptions.Item>
-            <Descriptions.Item label="编译提交">
-              <code className="mono">{info.git_commit || '—'}</code>
+            <Descriptions.Item label="CoreDNS" span={2}>
+              {info.coredns ? (
+                <code className="mono">{info.coredns}</code>
+              ) : (
+                <Typography.Text type="secondary">—</Typography.Text>
+              )}
             </Descriptions.Item>
-            <Descriptions.Item label="构建时间">{info.build_date || '—'}</Descriptions.Item>
             <Descriptions.Item label="apiserver Go 版本">
-              <code className="mono">{info.go_version || '—'}</code>
+              <code className="mono">{info.version?.go_version || '—'}</code>
             </Descriptions.Item>
-            <Descriptions.Item label="运行平台">{info.platform || '—'}</Descriptions.Item>
-            <Descriptions.Item label="编译器">{info.compiler || '—'}</Descriptions.Item>
             <Descriptions.Item label="采集时间">{fmtTime(info.fetched_at)}</Descriptions.Item>
           </Descriptions>
         )}

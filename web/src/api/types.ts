@@ -136,7 +136,16 @@ export interface VersionInfo {
   component: string;
 }
 
-/** 目标集群 kube-apiserver /version（经 Agent 隧道读取） */
+/** 目标集群概要（kubectl cluster-info 语义，经 Agent 隧道读取） */
+export interface ClusterInfo {
+  version: ClusterVersionInfo | null;
+  /** 控制平面地址（https://ip:port，读不到为空） */
+  control_plane?: string;
+  /** CoreDNS 地址（clusterIP:port，读不到为空） */
+  coredns?: string;
+  fetched_at: string;
+}
+
 export interface ClusterVersionInfo {
   major: string;
   minor: string;
@@ -146,7 +155,6 @@ export interface ClusterVersionInfo {
   go_version: string;
   compiler: string;
   platform: string;
-  fetched_at: string;
 }
 
 /** Agent 一键安装预览（YAML 亦可经 /agent-install.yaml?token= 被 kubectl 拉取） */

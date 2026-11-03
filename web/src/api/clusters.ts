@@ -2,7 +2,7 @@ import { apiDelete, apiGet, apiPost, downloadFile } from './http';
 import type {
   AgentInstallPreview,
   Cluster,
-  ClusterVersionInfo,
+  ClusterInfo,
   IssuedToken,
   TokenDTO,
   TokenKind,
@@ -31,9 +31,9 @@ export function deleteCluster(id: string): Promise<void> {
   return apiDelete<void>(`/api/v1/clusters/${encodeURIComponent(id)}`);
 }
 
-/** 目标集群 kube-apiserver 版本信息（经 Agent 隧道；集群离线时返回 20003）。 */
-export function getClusterInfo(id: string): Promise<ClusterVersionInfo> {
-  return apiGet<ClusterVersionInfo>(`/api/v1/clusters/${encodeURIComponent(id)}/info`);
+/** 集群概要信息（kubectl cluster-info 语义；集群离线时返回 20003）。 */
+export function getClusterInfo(id: string): Promise<ClusterInfo> {
+  return apiGet<ClusterInfo>(`/api/v1/clusters/${encodeURIComponent(id)}/info`);
 }
 
 /**

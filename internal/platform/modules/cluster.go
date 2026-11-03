@@ -54,15 +54,23 @@ func (c *Cluster) ToDTO() *ClusterDTO {
 
 // ClusterVersionInfo 目标集群 kube-apiserver /version 信息（经 Agent 隧道读取）
 type ClusterVersionInfo struct {
-	Major      string    `json:"major"`
-	Minor      string    `json:"minor"`
-	GitVersion string    `json:"git_version"`
-	GitCommit  string    `json:"git_commit"`
-	BuildDate  string    `json:"build_date"`
-	GoVersion  string    `json:"go_version"`
-	Compiler   string    `json:"compiler"`
-	Platform   string    `json:"platform"`
-	FetchedAt  time.Time `json:"fetched_at"`
+	Major      string `json:"major"`
+	Minor      string `json:"minor"`
+	GitVersion string `json:"git_version"`
+	GitCommit  string `json:"git_commit"`
+	BuildDate  string `json:"build_date"`
+	GoVersion  string `json:"go_version"`
+	Compiler   string `json:"compiler"`
+	Platform   string `json:"platform"`
+}
+
+// ClusterInfo 集群概要信息（kubectl cluster-info 语义）：版本 + 控制平面/DNS
+// 地址。地址字段读不到时留空（前端显示 —），不视为失败。
+type ClusterInfo struct {
+	Version      *ClusterVersionInfo `json:"version"`
+	ControlPlane string              `json:"control_plane,omitempty"` // default/kubernetes Endpoints（https://ip:port）
+	CoreDNS      string              `json:"coredns,omitempty"`       // kube-system/kube-dns Service（https://clusterIP[:port]）
+	FetchedAt    time.Time           `json:"fetched_at"`
 }
 
 // AgentInstallPreview Agent 一键安装预览：YAML 亦可经 /agent-install.yaml?token=

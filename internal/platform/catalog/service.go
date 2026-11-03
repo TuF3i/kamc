@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -161,8 +162,79 @@ func (s *Service) ServerVersion(ctx context.Context, clusterID string) (*modules
 		GoVersion:  raw.GoVersion,
 		Compiler:   raw.Compiler,
 		Platform:   raw.Platform,
-		FetchedAt:  time.Now(),
 	}, nil
+}
+
+// Info 集群概要（kubectl cluster-info 语义）：版本 + 控制平面/DNS 地址。
+// 地址读取失败只降级（字段留空），不影响整体返回。
+func (s *Service) Info(ctx context.Context, clusterID string) (*modules.ClusterInfo, *errcode.Response) {
+	version, rsp := s.ServerVersion(ctx, clusterID)
+	if rsp != nil {
+		return nil, rsp
+	}
+	info := &modules.ClusterInfo{Version: version, FetchedAt: time.Now()}
+
+	transport, err := s.pool.Transport(clusterID)
+	if err != nil {
+		return info, nil
+	}
+	base := s.pool.Location(clusterID)
+	if base == nil {
+		return info, nil
+	}
+	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
+
+	// 控制平面地址：default/kubernetes Endpoints 的 subsets 地址（同 kubectl cluster-info）
+	if ep, err := client.Get(base.JoinPath("api/v1/namespaces/default/endpoints/kubernetes").String()); err == nil {
+		var body struct {
+			Subsets []struct {
+				Addresses []struct {
+					IP string `json:"ip"`
+				} `json:"addresses"`
+				Ports []struct {
+					Port int    `json:"port"`
+					Name string `json:"name"`
+				} `json:"ports"`
+			} `json:"subsets"`
+		}
+		if json.NewDecoder(ep.Body).Decode(&body) == nil && len(body.Subsets) > 0 &&
+			len(body.Subsets[0].Addresses) > 0 {
+			port := 443
+			if len(body.Subsets[0].Ports) > 0 && body.Subsets[0].Ports[0].Port != 0 {
+				port = body.Subsets[0].Ports[0].Port
+			}
+			info.ControlPlane = "https://" + body.Subsets[0].Addresses[0].IP + ":" + strconv.Itoa(port)
+		}
+		ep.Body.Close()
+	}
+
+	// CoreDNS 地址：kube-system/kube-dns 的 Service ClusterIP（coredns/kube-dns 同义）
+	if svc, err := client.Get(base.JoinPath("api/v1/namespaces/kube-system/services/kube-dns").String()); err == nil {
+		var body struct {
+			Spec struct {
+				ClusterIP string `json:"clusterIP"`
+				Ports     []struct {
+					Port     int    `json:"port"`
+					Protocol string `json:"protocol"`
+					Name     string `json:"name"`
+				} `json:"ports"`
+			} `json:"spec"`
+		}
+		if json.NewDecoder(svc.Body).Decode(&body) == nil && body.Spec.ClusterIP != "" &&
+			body.Spec.ClusterIP != "None" {
+			dnsPort := 53
+			for _, p := range body.Spec.Ports {
+				if p.Protocol == "UDP" && p.Port != 0 {
+					dnsPort = p.Port
+					break
+				}
+			}
+			info.CoreDNS = body.Spec.ClusterIP + ":" + strconv.Itoa(dnsPort)
+		}
+		svc.Body.Close()
+	}
+
+	return info, nil
 }
 
 func (s *Service) discover(ctx context.Context, clusterID string) (*Catalog, *errcode.Response) {

@@ -514,15 +514,19 @@ paths:
   /api/v1/clusters/{id}/info:
     get:
       tags: [集群]
-      summary: 集群 apiserver 版本信息
-      description: 经 Agent 隧道读取目标集群 kube-apiserver /version（集群详情「集群详细信息」卡片）。集群未接入时返回 20003。
+      summary: 集群概要信息（kubectl cluster-info 语义）
+      description: |
+        经 Agent 隧道读取目标集群的版本与控制平面/CoreDNS 地址：
+        版本来自 kube-apiserver /version；控制平面地址来自 default/kubernetes
+        Endpoints；CoreDNS 来自 kube-system/kube-dns Service。
+        地址读取失败仅字段留空（降级），集群未接入时返回 20003。
       security:
         - platformJWT: []
       parameters:
         - $ref: '#/components/parameters/ClusterID'
       responses:
         '200':
-          description: 版本信息
+          description: 集群概要信息
           content:
             application/json:
               schema:
@@ -530,7 +534,7 @@ paths:
                   - $ref: '#/components/schemas/Envelope'
                   - type: object
                     properties:
-                      data: {$ref: '#/components/schemas/ClusterVersionInfo'}
+                      data: {$ref: '#/components/schemas/ClusterInfo'}
         '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
         '403': {$ref: '#/components/responses/PlainTextForbidden'}
 
@@ -1251,6 +1255,17 @@ components:
         go_version: {type: string, example: go1.22.8}
         compiler: {type: string, example: gc}
         platform: {type: string, example: linux/amd64}
+
+    ClusterInfo:
+      type: object
+      properties:
+        version: {$ref: '#/components/schemas/ClusterVersionInfo'}
+        control_plane:
+          type: string
+          description: 控制平面地址（default/kubernetes Endpoints，如 https://10.0.0.1:6443）
+        coredns:
+          type: string
+          description: CoreDNS 地址（kube-system/kube-dns Service，如 10.96.0.10:53）
         fetched_at: {type: string, format: date-time}
 
     AgentInstallPreviewRequest:
