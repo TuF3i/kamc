@@ -214,7 +214,7 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 
 	// 头像存储：AM_AVATAR_DIR 目录 + URL 签名密钥（未配置时由部署配置派生，
 	// 保证重启后已入库的头像 URL 仍然有效）
-	avatarDir := envDefault("AM_AVATAR_DIR", "/tmp/kamc-avatars")
+	avatarDir := envDefault("AM_AVATAR_DIR", "data/avatar")
 	if err := os.MkdirAll(avatarDir, 0o755); err != nil {
 		return nil, fmt.Errorf("platform -> create avatar dir: %w", err)
 	}
@@ -386,7 +386,7 @@ func newEngine(h *handler.Handler) *chi.Mux {
 	h.RegisterRoutes(engine)
 	// 未匹配路由交给静态前端（AM_WEB_DIR，默认 web/dist）；
 	// 目录不存在（纯 API 部署/开发模式）时保持 404。
-	webDir := envDefault("AM_WEB_DIR", "web/dist")
+	webDir := envDefault("AM_WEB_DIR", "data/web")
 	if spa := webstatic.Handler(webDir); spa != nil {
 		engine.NotFound(spa.ServeHTTP)
 		log.Printf("[platform] web UI served from %s", webDir)

@@ -12,11 +12,14 @@ interface PasswordForm {
 
 type LoginMode = 'sso' | 'password';
 
+/** Mock 模式：脱离后端，登录直接进入本地模拟数据 */
+const MOCK = import.meta.env.VITE_APP_MODE === 'mock';
+
 export function Login() {
   const { message } = App.useApp();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [mode, setMode] = useState<LoginMode>('sso');
+  const [mode, setMode] = useState<LoginMode>(MOCK ? 'password' : 'sso');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -92,7 +95,7 @@ export function Login() {
           <div className="login-card-head">
             <Typography.Title level={3}>登录访问管理中心</Typography.Title>
             <Typography.Text type="secondary">
-              使用组织身份登录，或使用账号密码
+              {MOCK ? 'Mock 模式：本地模拟数据，无需后端' : '使用组织身份登录，或使用账号密码'}
             </Typography.Text>
           </div>
 
@@ -123,7 +126,7 @@ export function Login() {
             />
           ) : null}
 
-          {mode === 'sso' ? (
+          {mode === 'sso' && !MOCK ? (
             <>
               <Button
                 type="primary"
@@ -182,14 +185,16 @@ export function Login() {
               >
                 登录
               </Button>
-              <Button type="link" block onClick={() => setMode('sso')}>
-                返回 SSO 登录
-              </Button>
+              {MOCK ? null : (
+                <Button type="link" block onClick={() => setMode('sso')}>
+                  返回 SSO 登录
+                </Button>
+              )}
             </Form>
           )}
 
           <div className="login-card-foot">
-            平台 JWT 1 小时有效 · 登出即时吊销 · 账号密码登录支持平台账号与 LDAP
+            {MOCK ? 'Mock 模式：数据为前端本地模拟，刷新后重置' : '平台 JWT 1 小时有效 · 登出即时吊销 · 账号密码登录支持平台账号与 LDAP'}
           </div>
         </section>
       </div>

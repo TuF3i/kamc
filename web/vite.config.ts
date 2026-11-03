@@ -30,6 +30,9 @@ export default defineConfig(({ mode }) => {
       },
     },
     build: {
+      // 生产构建产物统一落在仓库根 data/web（后端 AM_WEB_DIR 默认读取该目录）
+      outDir: '../data/web',
+      emptyOutDir: true,
       chunkSizeWarningLimit: 1600,
     },
   };

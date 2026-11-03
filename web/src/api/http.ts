@@ -95,6 +95,21 @@ async function parseError(resp: Response): Promise<ApiError> {
 
 /** 调用平台业务 API（统一 status/message/data 信封）。 */
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  // Mock 模式：编译期常量分支（release 构建中为 false，mock 模块不会加载）
+  if (import.meta.env.VITE_APP_MODE === 'mock') {
+    const { mockApi } = await import('@/mocks');
+    const method = (init.method ?? 'GET').toUpperCase();
+    let body: unknown;
+    if (typeof init.body === 'string' && init.body) {
+      try {
+        body = JSON.parse(init.body);
+      } catch {
+        body = undefined;
+      }
+    }
+    return mockApi<T>(method, path, body);
+  }
+
   const headers = buildHeaders(init.headers);
   if (init.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
@@ -158,6 +173,20 @@ export function apiDelete<T>(path: string, body?: unknown): Promise<T> {
 
 /** 下载二进制/文本文件（kubeconfig 等），处理 Content-Disposition 文件名。 */
 export async function downloadFile(path: string, fallbackName: string): Promise<void> {
+  if (import.meta.env.VITE_APP_MODE === 'mock') {
+    const { mockDownload } = await import('@/mocks');
+    const { text, filename } = mockDownload(path);
+    const blob = new Blob([text], { type: 'application/yaml' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename || fallbackName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return;
+  }
   const headers = new Headers();
   const token = getToken();
   if (token) {

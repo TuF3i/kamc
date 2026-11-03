@@ -37,6 +37,17 @@ export function deleteUser(username: string): Promise<void> {
 
 /** 上传头像（raw image body）；返回带签名 token 的展示 URL。 */
 export async function uploadAvatar(username: string, file: File): Promise<string> {
+  if (import.meta.env.VITE_APP_MODE === 'mock') {
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error('读取头像文件失败'));
+      reader.readAsDataURL(file);
+    });
+    const { mockSetAvatar } = await import('@/mocks');
+    mockSetAvatar(username, dataUrl);
+    return dataUrl;
+  }
   const { getToken } = await import('./http');
   const res = await fetch(`/api/v1/users/${encodeURIComponent(username)}/avatar`, {
     method: 'POST',

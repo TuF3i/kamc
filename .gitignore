@@ -30,9 +30,10 @@ go.work.sum
 .env.local
 *.local
 
-# 本地构建产物
+# 本地构建产物与运行数据（构建前端、头像上传）
 bin/
 dist/
+data/
 
 # 前端依赖与构建产物
 node_modules/

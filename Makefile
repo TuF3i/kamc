@@ -8,21 +8,21 @@ LDFLAGS := -X github.com/TuF3i/kamc/internal/version.Version=$(VERSION) \
            -X github.com/TuF3i/kamc/internal/version.Commit=$(COMMIT)
 
 WEB_DIR  := web
-WEB_DIST := $(WEB_DIR)/dist
+WEB_OUT  := data/web
 
 .PHONY: build release web platform agent k8s-am-login test vet fmt tidy clean
 
 # 仅后端三件套（开发迭代用）
 build: platform agent k8s-am-login
 
-# 一键生产构建：先构建前端（web/dist），再编译后端；
-# 运行时后端从 AM_WEB_DIR（默认 web/dist）读取前端产物，同一进程托管页面与 API。
+# 一键生产构建：先构建前端（data/web），再编译后端；
+# 运行时后端从 AM_WEB_DIR（默认 data/web）读取前端产物，同一进程托管页面与 API。
 release: web platform agent k8s-am-login
 
-web: $(WEB_DIST)/index.html
+web: $(WEB_OUT)/index.html
 
 # 前端构建（npm ci 优先，保证 lockfile 一致；产物时间戳作为增量依据）
-$(WEB_DIST)/index.html: $(shell find $(WEB_DIR)/src $(WEB_DIR)/public $(WEB_DIR)/index.html $(WEB_DIR)/package.json $(WEB_DIR)/vite.config.ts $(WEB_DIR)/tsconfig*.json 2>/dev/null)
+$(WEB_OUT)/index.html: $(shell find $(WEB_DIR)/src $(WEB_DIR)/public $(WEB_DIR)/index.html $(WEB_DIR)/package.json $(WEB_DIR)/vite.config.ts $(WEB_DIR)/tsconfig*.json 2>/dev/null)
 	cd $(WEB_DIR) && (test -f package-lock.json && npm ci || npm install)
 	cd $(WEB_DIR) && npm run build
 

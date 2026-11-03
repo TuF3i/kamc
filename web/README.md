@@ -7,20 +7,22 @@ kamc 管理控制台：React 18 + Ant Design 5 + TypeScript + Vite + Recharts。
 ## 生产构建（前后端一起启动）
 
 ```bash
-make release        # 在仓库根目录执行：构建前端到 web/dist，再编译后端
+make release        # 在仓库根目录执行：构建前端到 data/web，再编译后端
 ./bin/kamc-platform # 打开 http://127.0.0.1:8080 即为管理前端（与 API 同源）
 ```
 
-后端运行时从 `AM_WEB_DIR`（默认 `web/dist`）读取前端产物并映射成路由：
+后端运行时从 `AM_WEB_DIR`（默认 `data/web`）读取前端产物并映射成路由：
 SPA 未知路径回退 `index.html`，`assets/` 长缓存；`/api`、`/auth`、`/proxy`
 等后端命名空间不参与回退。前端产物不进入二进制，部署时与后端一起发布即可。
 
-## 快速开始
+## 快速开始（两种模式）
 
 ```bash
 cd web
 npm install
-KAMC_API=http://127.0.0.1:8080 npm run dev
+
+npm run dev        # release 模式：连接后端（KAMC_API 指定平台地址，默认 127.0.0.1:8080）
+npm run dev:mock   # mock 模式：完全脱离后端，使用前端内置模拟数据（刷新重置）
 ```
 
 打开 <http://localhost:5173>：

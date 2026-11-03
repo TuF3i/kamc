@@ -15,9 +15,9 @@ make release # 生产构建：先构建前端（web/dist），再编译后端
 make test
 ```
 
-`make release` 构建前端产物到 `web/dist/`；后端运行时从 `AM_WEB_DIR`
-（默认 `web/dist`）读取并托管页面与 API，同一进程启动即可访问管理前端，
-无需额外静态服务器。`make release VERSION=v1.0.0` 同时设定版本号
+`make release` 构建前端产物到 `data/web/`；后端运行时从 `AM_WEB_DIR`
+（默认 `data/web`）读取并托管页面与 API，同一进程启动即可访问管理前端，
+无需额外静态服务器。用户头像上传保存到 `AM_AVATAR_DIR`（默认 `data/avatar`）。`make release VERSION=v1.0.0` 同时设定版本号
 （Agent 镜像 tag 使用同一版本）。
 
 本地运行平台（需要 PostgreSQL）：

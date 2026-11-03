@@ -86,8 +86,9 @@ web/                 管理前端（React 18 + Ant Design 5 + Vite + TypeScript�
 | `AM_GEOIP_DB` | — | MaxMind GeoLite2/GeoIP2 `.mmdb` 路径（审计地理信息；未配置不解析） |
 | `AM_SYSLOG_ADDR` | — | 集群审计 syslog 导出地址，`udp://host:514` 或 `tcp://host:514`（空=不导出） |
 | `AM_SYSLOG_TAG` | `kamc-cluster-audit` | syslog APP-NAME |
-| `AM_AVATAR_DIR` | `/tmp/kamc-avatars` | 用户头像文件存储目录 |
+| `AM_AVATAR_DIR` | `data/avatar` | 用户头像文件存储目录 |
 | `AM_AVATAR_SECRET` | 派生 | 头像 URL 签名密钥（不配则由部署配置派生，保证重启后 URL 有效） |
+| `AM_WEB_DIR` | `data/web` | 前端构建产物目录（后端同进程托管页面；不存在则纯 API） |
 | `AM_AGENT_IMAGE_REPO` | `tuf3i/k8s-am-agent` | Agent 镜像仓库完整地址（不含 tag；tag 随平台版本，一键安装清单用） |
 | `TEST_REDIS_ADDR` | — | Redis 集成测试门控（watcher/state store/限流，仅测试用） |
 | `TEST_PG_DSN` | — | 数据库集成测试门控（仅测试用） |

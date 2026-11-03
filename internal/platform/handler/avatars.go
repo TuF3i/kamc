@@ -17,7 +17,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -88,7 +90,8 @@ func (h *Handler) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 		errcode.GenFinalResponse(w, nil, errcode.ServerInternal(fmt.Errorf("write avatar: %w", err)))
 		return
 	}
-	url := "/avatars/" + user.UID + "?token=" + h.signAvatar(user.UID)
+	// v=nanotime：同一 uid 重新上传后 URL 变化，浏览器立即拉新图（不被旧缓存挡住）
+	url := "/avatars/" + user.UID + "?token=" + h.signAvatar(user.UID) + "&v=" + strconv.FormatInt(time.Now().UnixNano(), 36)
 	if rsp := h.svc.SetAvatarURL(r.Context(), username, url); rsp != nil {
 		errcode.GenFinalResponse(w, nil, rsp)
 		return
