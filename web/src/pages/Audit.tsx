@@ -17,6 +17,7 @@ import { ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import { listAudit, type AuditQuery } from '@/api/audit';
 import type { AuditEvent } from '@/api/types';
 import { PageHeader } from '@/components/PageHeader';
+import { CopyButton } from '@/components/CopyButton';
 import { AuditResultTag, ReasonTag } from '@/components/StatusTag';
 import { fmtTime } from '@/utils/format';
 
@@ -159,6 +160,28 @@ function PlatformTable({ events, loading }: { events: AuditEvent[]; loading: boo
   );
 }
 
+/** 请求/响应体块：限高滚动 + 强制换行（避免长 JSON 撑爆表格）+ 复制。 */
+function AuditBody({ title, body }: { title: string; body?: string }) {
+  if (!body) {
+    return (
+      <div style={{ marginTop: 12, color: 'var(--kamc-muted)', fontSize: 12 }}>
+        {title}：（空）
+      </div>
+    );
+  }
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <Typography.Text type="secondary">
+          {title}（{body.length} 字符）
+        </Typography.Text>
+        <CopyButton text={body} label="复制" size="small" />
+      </div>
+      <pre className="code-block audit-body">{body}</pre>
+    </div>
+  );
+}
+
 /** 集群日志表：数据面 API 操作（资源/动作/状态 + 原始请求响应）。 */
 function ClusterTable({ events, loading }: { events: AuditEvent[]; loading: boolean }) {
   const columns: TableColumnsType<AuditEvent> = [
@@ -194,10 +217,9 @@ function ClusterTable({ events, loading }: { events: AuditEvent[]; loading: bool
     },
     {
       title: '资源',
-      dataIndex: 'path',
-      key: 'path',
+      key: 'object',
       ellipsis: true,
-      render: (v: string) => <code className="mono">{v}</code>,
+      render: (_, r) => <code className="mono">{r.object || r.path || '—'}</code>,
     },
     {
       title: '状态',
@@ -252,29 +274,22 @@ function ClusterTable({ events, loading }: { events: AuditEvent[]; loading: bool
         scroll={{ x: 1400 }}
         expandable={{
           expandedRowRender: (record) => (
-            <Descriptions size="small" column={{ xs: 1, md: 2 }} bordered>
-              {metaItems(record)}
-              <Descriptions.Item label="原始请求路径" span={2}>
-                <code className="mono">{record.path || '—'}</code>
-              </Descriptions.Item>
-              <Descriptions.Item label="拒绝/放行原因" span={2}>
-                <ReasonTag reason={record.reason} />
-              </Descriptions.Item>
-              <Descriptions.Item label="请求体" span={2}>
-                {record.request_body ? (
-                  <pre className="code-block" style={{ maxHeight: 220, margin: 0 }}>{record.request_body}</pre>
-                ) : (
-                  <Typography.Text type="secondary">—</Typography.Text>
-                )}
-              </Descriptions.Item>
-              <Descriptions.Item label="响应体" span={2}>
-                {record.response_body ? (
-                  <pre className="code-block" style={{ maxHeight: 220, margin: 0 }}>{record.response_body}</pre>
-                ) : (
-                  <Typography.Text type="secondary">—</Typography.Text>
-                )}
-              </Descriptions.Item>
-            </Descriptions>
+            <div className="audit-expand">
+              <Descriptions size="small" column={{ xs: 1, md: 2 }} bordered>
+                {metaItems(record)}
+                <Descriptions.Item label="原始请求" span={2}>
+                  <code className="mono" style={{ wordBreak: 'break-all' }}>{record.path || '—'}</code>
+                </Descriptions.Item>
+                <Descriptions.Item label="鉴权对象" span={2}>
+                  <code className="mono">{record.object || '—'}</code>
+                </Descriptions.Item>
+                <Descriptions.Item label="拒绝/放行原因" span={2}>
+                  <ReasonTag reason={record.reason} />
+                </Descriptions.Item>
+              </Descriptions>
+              <AuditBody title="请求体" body={record.request_body} />
+              <AuditBody title="响应体" body={record.response_body} />
+            </div>
           ),
         }}
       />

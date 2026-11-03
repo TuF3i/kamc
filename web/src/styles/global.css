@@ -1125,6 +1125,29 @@ body {
   margin: 0 0 12px;
 }
 
+/* 审计展开区：长 JSON 强制换行 + 限高滚动，禁止撑宽表格 */
+.audit-expand {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.audit-expand .ant-descriptions-view {
+  table-layout: fixed;
+}
+
+.audit-expand .ant-descriptions-item-content {
+  max-width: 0; /* fixed 布局下配合 overflow 限制列宽 */
+}
+
+.audit-body {
+  max-height: 320px;
+  max-width: 100%;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow: auto;
+  margin: 0;
+}
+
 .token-issued .token-block {
   display: flex;
   gap: 10px;

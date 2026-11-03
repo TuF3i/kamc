@@ -67,7 +67,10 @@ export interface AuditEvent {
   groups?: string;
   cluster: string;
   method: string;
+  /** 原始请求 URI（含 query） */
   path: string;
+  /** Casbin 语义资源（<ns>/<resource> 等） */
+  object?: string;
   verb: string;
   allowed: boolean;
   reason: string;

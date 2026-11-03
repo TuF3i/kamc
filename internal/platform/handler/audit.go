@@ -117,7 +117,7 @@ func (h *Handler) clusterEvent(r *http.Request, allowed bool, reason string) *mo
 		Event:        "k8s-api",
 		Timestamp:    time.Now(),
 		Method:       r.Method,
-		Path:         r.URL.Path,
+		Path:         r.URL.RequestURI(),
 		Allowed:      allowed,
 		Reason:       reason,
 		SourceIP:     m.IP,
@@ -139,7 +139,8 @@ func (h *Handler) clusterEvent(r *http.Request, allowed bool, reason string) *mo
 func (h *Handler) auditDataPlane(r *http.Request, clusterID, obj, verb string, allowed bool, reason string, start time.Time, reqBody, respBody string, status int) {
 	ev := h.clusterEvent(r, allowed, reason)
 	ev.Cluster = clusterID
-	ev.Path = obj // 语义资源串（<ns>/<resource>），r.URL.Path 保留在事件外
+	ev.Path = r.URL.RequestURI() // 原始请求（含 query，审计溯源）
+	ev.Object = obj              // 鉴权语义资源串
 	ev.Verb = verb
 	ev.Method = r.Method
 	ev.LatencyMS = time.Since(start).Milliseconds()
@@ -227,8 +228,13 @@ func (w *captureWriter) Flush() {
 	}
 }
 
-// Body 返回捕获的响应体（truncated）
-func (w *captureWriter) Body() string { return truncateBody(w.body.Bytes()) }
+// Body 返回捕获的响应体（truncated）；gzip 等压缩响应标记为不可读
+func (w *captureWriter) Body() string {
+	if enc := w.Header().Get("Content-Encoding"); enc != "" && enc != "identity" {
+		return "(响应体经 " + enc + " 压缩，不记录)"
+	}
+	return truncateBody(w.body.Bytes())
+}
 
 // Status 返回响应状态码
 func (w *captureWriter) Status() int { return w.status }

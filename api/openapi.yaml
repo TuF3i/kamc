@@ -1223,7 +1223,8 @@ components:
         groups: {type: string, description: 逗号分隔组串}
         cluster: {type: string}
         method: {type: string}
-        path: {type: string, description: 语义资源串（Casbin obj）}
+        path: {type: string, description: 原始请求 URI（含 query）}
+        object: {type: string, description: Casbin 语义资源串（<ns>/<resource> 等）}
         verb: {type: string, description: K8s verb}
         allowed: {type: boolean}
         reason: {type: string}

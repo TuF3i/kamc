@@ -22,7 +22,8 @@ type AuditEvent struct {
 	Groups    string    `gorm:"size:1024" json:"groups"` // JSON 数组字符串
 	Cluster   string    `gorm:"size:64;index" json:"cluster"`
 	Method    string    `gorm:"size:8" json:"method"`
-	Path      string    `gorm:"size:1024" json:"path"`
+	Path      string    `gorm:"size:1024" json:"path"`   // 原始请求 URI（含 query）
+	Object    string    `gorm:"size:1024" json:"object"` // Casbin 语义资源（<ns>/<resource> 等）
 	Verb      string    `gorm:"size:32" json:"verb"`
 	Allowed   bool      `json:"allowed"`
 	Reason    string    `gorm:"size:128" json:"reason"` // allowed / denied-casbin / login-failed…
