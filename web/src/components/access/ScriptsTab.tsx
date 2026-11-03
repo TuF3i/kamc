@@ -3,6 +3,7 @@ import {
   Alert,
   App,
   Button,
+  Card,
   Divider,
   Drawer,
   Form,
@@ -315,15 +316,17 @@ export function ScriptsTab() {
           新建脚本
         </Button>
       </Space>
-      <Table
-        rowKey="name"
-        columns={columns}
-        dataSource={scripts}
-        loading={loading}
-        size="middle"
-        pagination={false}
-        locale={{ emptyText: '暂无映射脚本' }}
-      />
+      <Card className="soft-card" styles={{ body: { padding: 0 } }}>
+        <Table
+          rowKey="name"
+          columns={columns}
+          dataSource={scripts}
+          loading={loading}
+          size="middle"
+          pagination={false}
+          locale={{ emptyText: '暂无映射脚本' }}
+        />
+      </Card>
 
       <Drawer
         title={draft?.originName ? `编辑脚本 · ${draft.originName}` : '新建映射脚本'}

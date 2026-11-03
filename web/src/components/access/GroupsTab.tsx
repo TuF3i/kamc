@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   App,
   Button,
+  Card,
   Empty,
   Form,
   Input,
@@ -139,6 +140,7 @@ export function GroupsTab() {
           创建组
         </Button>
       </Space>
+      <Card className="soft-card" styles={{ body: { padding: 0 } }}>
       <Table<GroupDTO>
         rowKey="name"
         columns={columns}
@@ -148,6 +150,7 @@ export function GroupsTab() {
         pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 个组` }}
         locale={{ emptyText: <Empty description="暂无组；SSO/LDAP 登录的组会自动同步" /> }}
       />
+      </Card>
 
       <Modal
         title="创建组"

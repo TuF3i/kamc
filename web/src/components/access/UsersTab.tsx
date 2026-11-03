@@ -3,6 +3,7 @@ import {
   App,
   Avatar,
   Button,
+  Card,
   Empty,
   Form,
   Input,
@@ -212,6 +213,7 @@ export function UsersTab() {
           style={{ width: 260 }}
         />
       </Space>
+      <Card className="soft-card" styles={{ body: { padding: 0 } }}>
       <Table<PlatformUserDTO>
         rowKey="uid"
         columns={columns}
@@ -221,6 +223,7 @@ export function UsersTab() {
         pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 个用户` }}
         locale={{ emptyText: <Empty description="暂无用户；用户在 SSO/LDAP 登录后自动创建" /> }}
       />
+      </Card>
 
       <Modal
         title={`编辑用户 · ${editing?.user.username ?? ''}`}
