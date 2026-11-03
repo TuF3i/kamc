@@ -3,6 +3,7 @@ package handler
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/TuF3i/kamc/internal/metrics"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
+	ldapclient "github.com/TuF3i/kamc/internal/platform/ldapclient"
 	"github.com/TuF3i/kamc/internal/platform/luaauth"
 	"github.com/TuF3i/kamc/internal/platform/middleware"
 	"github.com/TuF3i/kamc/internal/platform/modules"
@@ -84,7 +86,8 @@ func (h *Handler) AuthDevToken(w http.ResponseWriter, r *http.Request) {
 	}, "/auth/dev-token", false)
 }
 
-// AuthLdapLogin POST /auth/ldap-login —— LDAP 直登（LDAP_URL 未配置时 503）。
+// AuthLdapLogin POST /auth/ldap-login —— 独立 LDAP 直登端点（保留给 CLI/exec
+// 场景；Web 登录走 /auth/password-login 的统一 fallback 链路）。
 // 认证通过后与 SSO 一致：同步平台用户/组 → 跑映射脚本 → 签发 JWT。
 func (h *Handler) AuthLdapLogin(w http.ResponseWriter, r *http.Request) {
 	if h.ldap == nil || h.auth == nil {
@@ -111,11 +114,12 @@ func (h *Handler) AuthLdapLogin(w http.ResponseWriter, r *http.Request) {
 	}, "/auth/ldap-login", false)
 }
 
-// AuthPasswordLogin POST /auth/password-login —— 内置管理员账号密码登录。
-// 默认账号 sysadmin/sysadmin123（可用 AM_PASSWORD_LOGIN_USER/PASSWORD 覆盖，
-// AM_PASSWORD_LOGIN=0 关闭）。成功后的签发/审计流程与 OIDC 一致。
+// AuthPasswordLogin POST /auth/password-login —— 统一账号密码登录：
+// 1) 先匹配内置管理员（AM_PASSWORD_LOGIN_USER/PASSWORD）；
+// 2) 未命中且已配置 LDAP 时走 LDAP 认证（成功即同步数据写入平台用户库）；
+// 3) 都未命中统一 401（不泄露内置账号是否启用/LDAP 是否配置，防枚举）。
 func (h *Handler) AuthPasswordLogin(w http.ResponseWriter, r *http.Request) {
-	if !h.passwordLoginEnabled || h.auth == nil {
+	if h.auth == nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -132,16 +136,36 @@ func (h *Handler) AuthPasswordLogin(w http.ResponseWriter, r *http.Request) {
 		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
 		return
 	}
-	userOK := subtle.ConstantTimeCompare([]byte(username), []byte(h.passwordUser)) == 1
-	passOK := subtle.ConstantTimeCompare([]byte(req.Password), []byte(h.passwordPass)) == 1
-	if !userOK || !passOK {
-		h.auditSimple(r, username, "", "/auth/password-login", "login-failed", false)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+
+	// 1) 内置管理员（恒定时间比较；AM_PASSWORD_LOGIN=0 关闭）
+	if h.passwordLoginEnabled {
+		userOK := subtle.ConstantTimeCompare([]byte(username), []byte(h.passwordUser)) == 1
+		passOK := subtle.ConstantTimeCompare([]byte(req.Password), []byte(h.passwordPass)) == 1
+		if userOK && passOK {
+			h.issueJWTWithSync(w, r, &service.Identity{
+				Username: username, Groups: []string{h.adminGroup}, Source: modules.UserSourceLocal,
+			}, "/auth/password-login", false)
+			return
+		}
 	}
-	h.issueJWTWithSync(w, r, &service.Identity{
-		Username: username, Groups: []string{h.adminGroup}, Source: modules.UserSourceLocal,
-	}, "/auth/password-login", false)
+
+	// 2) LDAP 认证（未配置 = 跳过；目录级系统错误按登录失败处理防枚举）
+	if h.ldap != nil {
+		user, err := h.ldap.Authenticate(username, req.Password)
+		if err == nil {
+			h.issueJWTWithSync(w, r, &service.Identity{
+				Username: user.Username, Email: user.Email, Nickname: user.Nickname,
+				Groups: user.Groups, Source: modules.UserSourceLDAP,
+			}, "/auth/ldap-login", false)
+			return
+		}
+		if !errors.Is(err, ldapclient.ErrAuth) {
+			log.Printf("[platform] ldap auth %s: %v", username, err)
+		}
+	}
+
+	h.auditSimple(r, username, "", "/auth/password-login", "login-failed", false)
+	http.Error(w, "unauthorized", http.StatusUnauthorized)
 }
 
 // AuthTokenExchange POST /auth/token-exchange —— OIDC ID Token 兑换平台 JWT

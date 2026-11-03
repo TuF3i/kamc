@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { Tabs } from 'antd';
 import { PageHeader } from '@/components/PageHeader';
-import { SafetyCertificateOutlined } from '@ant-design/icons';
 import { GroupsTab } from '@/components/access/GroupsTab';
 import { PoliciesTab } from '@/components/access/PoliciesTab';
 import { ScriptsTab } from '@/components/access/ScriptsTab';
@@ -12,13 +12,6 @@ import { listRobots } from '@/api/robots';
 import type { Cluster, Robot } from '@/api/types';
 
 type AccessTab = 'users' | 'groups' | 'policies' | 'scripts';
-
-const TABS: { key: AccessTab; label: string }[] = [
-  { key: 'users', label: '用户' },
-  { key: 'groups', label: '组' },
-  { key: 'policies', label: '权限' },
-  { key: 'scripts', label: '映射脚本' },
-];
 
 export function Access() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -51,51 +44,40 @@ export function Access() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const switchTab = (key: AccessTab) => {
-    setTab(key);
-  };
-
   return (
     <div>
       <PageHeader
         title="权限管理"
-        icon={<SafetyCertificateOutlined />}
         subtitle="平台用户目录、SSO/LDAP 组、集群策略与登录期映射脚本。"
-        extra={
-          <div className="subtab-bar" role="tablist" aria-label="权限子页签">
-            {TABS.map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                role="tab"
-                aria-selected={tab === t.key}
-                className={`subtab${tab === t.key ? ' active' : ''}`}
-                onClick={() => switchTab(t.key)}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-        }
       />
 
-      {tab === 'users' ? <UsersTab /> : null}
-      {tab === 'groups' ? <GroupsTab /> : null}
-      {tab === 'policies' ? (
-        <div className="tab-stack">
-          <PoliciesTab />
-          <PolicyEditor
-            open={editorOpen}
-            clusters={clusters}
-            robots={robots}
-            initialSubjectType={initialSubjectType}
-            initialSubject={initialSubject}
-            onClose={() => setEditorOpen(false)}
-            onCreated={() => undefined}
-          />
-        </div>
-      ) : null}
-      {tab === 'scripts' ? <ScriptsTab /> : null}
+      <Tabs
+        activeKey={tab}
+        onChange={(key) => setTab(key as AccessTab)}
+        items={[
+          { key: 'users', label: '用户', children: <UsersTab /> },
+          { key: 'groups', label: '组', children: <GroupsTab /> },
+          {
+            key: 'policies',
+            label: '权限',
+            children: (
+              <div className="tab-stack">
+                <PoliciesTab />
+                <PolicyEditor
+                  open={editorOpen}
+                  clusters={clusters}
+                  robots={robots}
+                  initialSubjectType={initialSubjectType}
+                  initialSubject={initialSubject}
+                  onClose={() => setEditorOpen(false)}
+                  onCreated={() => undefined}
+                />
+              </div>
+            ),
+          },
+          { key: 'scripts', label: '映射脚本', children: <ScriptsTab /> },
+        ]}
+      />
     </div>
   );
 }

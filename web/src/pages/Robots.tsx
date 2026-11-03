@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Alert,
   App,
@@ -9,6 +8,7 @@ import {
   Input,
   Modal,
   Select,
+  Tabs,
   Space,
   Table,
   Tag,
@@ -44,7 +44,6 @@ function RobotStatusTag({ status }: { status: Robot['status'] }) {
 
 export function Robots() {
   const { message, modal } = App.useApp();
-  const navigate = useNavigate();
   const [robots, setRobots] = useState<Robot[]>([]);
   const [clusters, setClusters] = useState<Cluster[]>([]);
   const [loading, setLoading] = useState(true);
@@ -165,7 +164,8 @@ export function Robots() {
   };
 
   const configurePolicy = (robot: Robot) => {
-    navigate(`/access?subjectType=user&subject=${encodeURIComponent(robot.sub)}`);
+    setRobotTab('policies');
+    void robot; // 列表页签内切换；策略过滤由 PoliciesTab 主体前缀统一承担
   };
 
   const columns: TableColumnsType<Robot> = [
@@ -263,40 +263,18 @@ export function Robots() {
         title="机器人"
         subtitle="为 CICD 机器人签发长期 kubeconfig；机器人策略独立于用户，在「权限」页签单独管理。"
         extra={
-          <Space size={12}>
-            <div className="subtab-bar" role="tablist" aria-label="机器人子页签">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={robotTab === 'list'}
-                className={`subtab${robotTab === 'list' ? ' active' : ''}`}
-                onClick={() => setRobotTab('list')}
-              >
-                机器人
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={robotTab === 'policies'}
-                className={`subtab${robotTab === 'policies' ? ' active' : ''}`}
-                onClick={() => setRobotTab('policies')}
-              >
-                权限
-              </button>
-            </div>
-            {robotTab === 'list' ? (
-              <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                onClick={() => {
-                  form.resetFields();
-                  setCreateOpen(true);
-                }}
-              >
-                签发机器人
-              </Button>
-            ) : null}
-          </Space>
+          robotTab === 'list' ? (
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => {
+                form.resetFields();
+                setCreateOpen(true);
+              }}
+            >
+              签发机器人
+            </Button>
+          ) : undefined
         }
       />
 
@@ -315,48 +293,61 @@ export function Robots() {
         />
       ) : null}
 
-      {robotTab === 'policies' ? (
-        <PoliciesTab subjectPrefix="robot:" />
-      ) : (
-      <Card className="soft-card" styles={{ body: { padding: 0 } }}>
-        {selectedKeys.length > 0 ? (
-          <div className="batch-bar">
-            <Space size={12}>
-              <Typography.Text>
-                已选择 <span className="batch-count">{selectedKeys.length}</span> 个机器人
-              </Typography.Text>
-              <Button type="link" size="small" onClick={() => setSelectedKeys([])}>
-                清空
-              </Button>
-            </Space>
-            <Button danger size="small" icon={<DeleteOutlined />} onClick={batchRevoke}>
-              批量吊销
-            </Button>
-          </div>
-        ) : null}
-        <Table<Robot>
-          rowKey="id"
-          columns={columns}
-          dataSource={robots}
-          loading={loading}
-          rowSelection={rowSelection}
-          pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 个机器人` }}
-          scroll={{ x: 1300 }}
-          locale={{
-            emptyText: (
-              <div style={{ padding: '28px 0' }}>
-                <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-                  尚未签发机器人。创建后请在权限页为机器人主体配置策略。
-                </Typography.Paragraph>
-                <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-                  签发第一个机器人
-                </Button>
-              </div>
+      <Tabs
+        activeKey={robotTab}
+        onChange={(key) => setRobotTab(key as 'list' | 'policies')}
+        items={[
+          {
+            key: 'list',
+            label: '机器人',
+            children: (
+              <Card className="soft-card" styles={{ body: { padding: 0 } }}>
+                {selectedKeys.length > 0 ? (
+                  <div className="batch-bar">
+                    <Space size={12}>
+                      <Typography.Text>
+                        已选择 <span className="batch-count">{selectedKeys.length}</span> 个机器人
+                      </Typography.Text>
+                      <Button type="link" size="small" onClick={() => setSelectedKeys([])}>
+                        清空
+                      </Button>
+                    </Space>
+                    <Button danger size="small" icon={<DeleteOutlined />} onClick={batchRevoke}>
+                      批量吊销
+                    </Button>
+                  </div>
+                ) : null}
+                <Table<Robot>
+                  rowKey="id"
+                  columns={columns}
+                  dataSource={robots}
+                  loading={loading}
+                  rowSelection={rowSelection}
+                  pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 个机器人` }}
+                  scroll={{ x: 1300 }}
+                  locale={{
+                    emptyText: (
+                      <div style={{ padding: '28px 0' }}>
+                        <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+                          尚未签发机器人。创建后请在「权限」页签为机器人配置策略。
+                        </Typography.Paragraph>
+                        <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+                          签发第一个机器人
+                        </Button>
+                      </div>
+                    ),
+                  }}
+                />
+              </Card>
             ),
-          }}
-        />
-      </Card>
-      )}
+          },
+          {
+            key: 'policies',
+            label: '权限',
+            children: <PoliciesTab subjectPrefix="robot:" />,
+          },
+        ]}
+      />
 
       <Modal
         title="签发机器人"
@@ -386,7 +377,7 @@ export function Robots() {
             name="cluster_id"
             label="集群"
             rules={[{ required: true, message: '请选择集群' }]}
-            extra="创建后请到权限页为 user:<sub> 配置资源策略。"
+            extra="创建后请到「权限」页签为机器人配置资源策略。"
           >
             <Select
               showSearch
@@ -400,7 +391,6 @@ export function Robots() {
           </Form.Item>
         </Form>
       </Modal>
-
       <Modal
         title="机器人 kubeconfig 已签发"
         open={created !== null}

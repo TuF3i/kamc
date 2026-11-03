@@ -15,7 +15,7 @@ import {
   type TableColumnsType,
   type TableProps,
 } from 'antd';
-import { ClusterOutlined, DeleteOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons';
+import { DeleteOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons';
 import { createCluster, deleteCluster, listClusters } from '@/api/clusters';
 import type { Cluster } from '@/api/types';
 import { PageHeader } from '@/components/PageHeader';
@@ -225,7 +225,6 @@ export function Clusters() {
     <div>
       <PageHeader
         title="集群"
-        icon={<ClusterOutlined />}
         subtitle="注册并管理目标 Kubernetes 集群；接入状态来自 Agent 反向隧道。"
         extra={
           <Space>

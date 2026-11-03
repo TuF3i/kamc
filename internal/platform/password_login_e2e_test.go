@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/TuF3i/kamc/internal/platform/errcode"
@@ -55,12 +56,17 @@ func TestPasswordLoginE2E(t *testing.T) {
 	}
 }
 
-// TestPasswordLoginDisabled 关闭开关后端点 404。
+// TestPasswordLoginDisabled 关闭内置账号开关后：内置账号登录 401
+// （端点保留——LDAP fallback 共用该路径；未配置 LDAP 时也统一 401 防枚举）。
 func TestPasswordLoginDisabled(t *testing.T) {
 	t.Setenv("AM_PASSWORD_LOGIN", "0")
 	rt := newTestRuntime(t)
-	resp := callRaw(t, rt, http.MethodPost, "/auth/password-login")
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("disabled password login: want 404, got %d", resp.StatusCode)
+	req := httptest.NewRequest(http.MethodPost, "/auth/password-login",
+		strings.NewReader(`{"username":"sysadmin","password":"sysadmin123"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	rt.Engine().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("disabled builtin login: want 401, got %d", rec.Code)
 	}
 }

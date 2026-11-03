@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Button, Card, Skeleton, Table, Typography, type TableColumnsType } from 'antd';
-import { InfoCircleOutlined, ReloadOutlined } from '@ant-design/icons';
+import { ReloadOutlined } from '@ant-design/icons';
 import { getPlatformInfo } from '@/api/platform';
 import type { PlatformInfo } from '@/api/types';
 import { PageHeader } from '@/components/PageHeader';
@@ -122,7 +122,6 @@ export function Platform() {
     <div>
       <PageHeader
         title="平台信息"
-        icon={<InfoCircleOutlined />}
         subtitle="平台配置快照与运行时状态。"
         extra={
           <Button icon={<ReloadOutlined />} onClick={() => void load()} loading={loading}>

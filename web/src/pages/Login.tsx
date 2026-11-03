@@ -1,16 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Alert, App, Button, Divider, Form, Input, Spin, Typography } from 'antd';
-import {
-  KeyOutlined,
-  LockOutlined,
-  LoginOutlined,
-  TeamOutlined,
-  UserOutlined,
-} from '@ant-design/icons';
+import { LockOutlined, LoginOutlined, UserOutlined } from '@ant-design/icons';
 import { ApiError } from '@/api/http';
-import { ldapLogin } from '@/api/users';
-import { setToken } from '@/api/http';
 import { useAuthStore } from '@/stores/auth';
 
 interface PasswordForm {
@@ -18,7 +10,7 @@ interface PasswordForm {
   password: string;
 }
 
-type LoginMode = 'sso' | 'password' | 'ldap';
+type LoginMode = 'sso' | 'password';
 
 export function Login() {
   const { message } = App.useApp();
@@ -33,7 +25,6 @@ export function Login() {
   const checked = useAuthStore((s) => s.checked);
   const restore = useAuthStore((s) => s.restore);
   const signInWithPassword = useAuthStore((s) => s.signInWithPassword);
-  const probeAdmin = useAuthStore((s) => s.probeAdmin);
 
   const rawRedirect = searchParams.get('redirect') || '/';
   const redirect =
@@ -65,33 +56,9 @@ export function Login() {
       navigate(redirect, { replace: true });
     } catch (err) {
       if (err instanceof ApiError && err.httpStatus === 404) {
-        setError('用户名密码登录未启用。');
+        setError('账号密码登录未启用。');
       } else if (err instanceof ApiError && err.httpStatus === 401) {
         setError('用户名或密码错误。');
-      } else {
-        setError(err instanceof Error ? err.message : '登录失败');
-      }
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const onLdapLogin = async (values: PasswordForm) => {
-    setSubmitting(true);
-    setError(null);
-    try {
-      const result = await ldapLogin(values.username.trim(), values.password);
-      setToken(result.token);
-      await probeAdmin();
-      message.success('LDAP 登录成功');
-      navigate(redirect, { replace: true });
-    } catch (err) {
-      if (err instanceof ApiError) {
-        if (err.message.includes('ldap not configured')) {
-          setError('LDAP 登录未启用（平台未配置 LDAP_URL）。');
-        } else {
-          setError('LDAP 用户名或密码错误。');
-        }
       } else {
         setError(err instanceof Error ? err.message : '登录失败');
       }
@@ -125,7 +92,7 @@ export function Login() {
           <div className="login-card-head">
             <Typography.Title level={3}>登录访问管理中心</Typography.Title>
             <Typography.Text type="secondary">
-              使用组织身份（SSO / LDAP）或管理员账号密码
+              使用组织身份登录，或使用账号密码
             </Typography.Text>
           </div>
 
@@ -180,29 +147,19 @@ export function Login() {
               >
                 使用用户名和密码
               </Button>
-              <Button
-                type="default"
-                size="large"
-                block
-                className="login-outline-btn"
-                icon={<TeamOutlined />}
-                onClick={() => setMode('ldap')}
-              >
-                使用 LDAP 账号登录
-              </Button>
             </>
           ) : (
             <Form<PasswordForm>
               layout="vertical"
-              onFinish={mode === 'ldap' ? onLdapLogin : onPasswordLogin}
-              initialValues={mode === 'ldap' ? {} : { username: 'sysadmin', password: 'sysadmin123' }}
+              onFinish={onPasswordLogin}
+              initialValues={{ username: 'sysadmin', password: 'sysadmin123' }}
             >
               <Form.Item
                 name="username"
-                label={mode === 'ldap' ? 'LDAP 用户名' : '用户名'}
+                label="用户名"
                 rules={[{ required: true, message: '请输入用户名' }]}
               >
-                <Input prefix={<UserOutlined />} placeholder={mode === 'ldap' ? 'LDAP uid' : 'sysadmin'} autoComplete="username" />
+                <Input prefix={<UserOutlined />} placeholder="用户名（平台账号 / LDAP 账号）" autoComplete="username" />
               </Form.Item>
               <Form.Item
                 name="password"
@@ -222,9 +179,8 @@ export function Login() {
                 htmlType="submit"
                 loading={submitting}
                 className="login-outline-btn"
-                icon={mode === 'ldap' ? <TeamOutlined /> : <KeyOutlined />}
               >
-                {mode === 'ldap' ? 'LDAP 登录' : '登录'}
+                登录
               </Button>
               <Button type="link" block onClick={() => setMode('sso')}>
                 返回 SSO 登录
@@ -232,7 +188,9 @@ export function Login() {
             </Form>
           )}
 
-          <div className="login-card-foot">平台 JWT 1 小时有效 · 登出即时吊销</div>
+          <div className="login-card-foot">
+            平台 JWT 1 小时有效 · 登出即时吊销 · 账号密码登录支持平台账号与 LDAP
+          </div>
         </section>
       </div>
     </div>

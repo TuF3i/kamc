@@ -476,8 +476,10 @@ body {
 
 .soft-card {
   border: 1px solid var(--kamc-border);
+  border-radius: 12px;
   background: var(--kamc-bg-elev);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  overflow: hidden; /* padding:0 卡片内嵌表格时，表格四角随卡片圆角裁切 */
 }
 
 .soft-card .ant-card-head {
@@ -957,44 +959,6 @@ body {
 .batch-count {
   color: var(--kamc-primary);
   font-weight: 600;
-}
-
-/* ---------- 子页签选择器（模仿主导航胶囊面板） ---------- */
-
-.subtab-bar {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px;
-  border: 1px solid var(--kamc-border);
-  border-radius: 12px;
-  background: var(--kamc-bg-soft);
-}
-
-.subtab {
-  border: 0;
-  background: transparent;
-  color: var(--kamc-muted);
-  font-size: 13px;
-  font-weight: 500;
-  padding: 7px 16px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: color 0.2s, background 0.2s;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.subtab:hover {
-  color: var(--kamc-heading);
-  background: var(--kamc-bg-hover);
-}
-
-.subtab.active {
-  color: var(--kamc-heading);
-  background: var(--kamc-bg-hover);
-  box-shadow: inset 0 -2px 0 var(--kamc-primary);
 }
 
 /* Lua 脚本编辑器 */
