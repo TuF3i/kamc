@@ -38,3 +38,8 @@ dist/
 node_modules/
 web/node_modules/
 web/dist/
+
+# 嵌入前端的构建产物（make release 生成，仅保留占位文件）
+!internal/platform/webui/dist/
+internal/platform/webui/dist/*
+!internal/platform/webui/dist/.gitkeep

@@ -46,6 +46,7 @@ import (
 	"github.com/TuF3i/kamc/internal/platform/oidc"
 	"github.com/TuF3i/kamc/internal/platform/proxy"
 	"github.com/TuF3i/kamc/internal/platform/service"
+	"github.com/TuF3i/kamc/internal/platform/webui"
 	"github.com/TuF3i/kamc/internal/tunnel"
 )
 
@@ -383,6 +384,11 @@ func newEngine(h *handler.Handler) *chi.Mux {
 	engine.Use(mw.AccessLog)
 	engine.Use(chimw.Recoverer)
 	h.RegisterRoutes(engine)
+	// 未匹配路由交给内嵌前端（make release 构建）；未嵌入时保持 404。
+	if webui.Available() {
+		engine.NotFound(webui.Handler().ServeHTTP)
+		log.Printf("[platform] embedded web UI enabled")
+	}
 	return engine
 }
 

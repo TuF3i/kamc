@@ -10,9 +10,14 @@ kubernetes Access Manager Center
 ## 快速开始
 
 ```bash
-make build   # 产出 bin/kamc-platform、bin/kamc-agent
+make build   # 仅后端：bin/kamc-platform、bin/kamc-agent、bin/k8s-am-login
+make release # 生产单二进制：构建前端 → 嵌入 → 编译后端（前端与 API 同一进程）
 make test
 ```
+
+`make release` 产出的 `bin/kamc-platform` 内置管理前端（`web/dist` 经 go:embed
+打包），部署时无需额外静态服务器；`make release VERSION=v1.0.0` 同时设定版本号
+（Agent 镜像 tag 使用同一版本）。
 
 本地运行平台（需要 PostgreSQL）：
 
