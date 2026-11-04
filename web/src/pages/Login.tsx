@@ -193,9 +193,9 @@ export function Login() {
             </Form>
           )}
 
-          <div className="login-card-foot">
-            {MOCK ? 'Mock 模式：数据为前端本地模拟，刷新后重置' : '平台 JWT 1 小时有效 · 登出即时吊销 · 账号密码登录支持平台账号与 LDAP'}
-          </div>
+          {MOCK ? (
+            <div className="login-card-foot">Mock 模式：数据为前端本地模拟，刷新后重置</div>
+          ) : null}
         </section>
       </div>
     </div>
