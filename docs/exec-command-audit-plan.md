@@ -25,8 +25,8 @@
 当前 exec 链路（`internal/platform/handler/proxy.go:115`）：
 
 1. `kubectl exec` 携带 `Upgrade: websocket` 与 `v5.channel.k8s.io` 子协议进入 `/proxy/{cluster}/...`。
-2. 平台注入 `Impersonate-User/Group`，启动本地中继（127.0.0.1 临时监听）。
-3. 使用 `k8s.io/apiserver/pkg/util/proxy.NewStreamTranslatorHandler` 完成：
+2. 平台 Casbin 已放行（集群侧不再注入 Impersonation；Agent 以 SA 身份访问上游）。
+3. 使用 `k8s.io/apiserver/pkg/util/proxy.NewStreamTranslatorHandler` 直接经隧道 transport 完成：
    - 客户端 WebSocket（channel 0=stdin、1=stdout、2=stderr、3=error、4=resize）
    - ↔ 上游 SPDY（`remotecommand.NewSPDYExecutor`）
 4. 平台目前只记录 `allowed-stream`（status 101），不读取流内容。
@@ -64,9 +64,8 @@ kamc-platform /proxy/{cluster}/...
    │      ├─ stderr ── tee ──► SessionRecorder.Cast(错误帧)
    │      └─ resize ────────► SessionRecorder.Cast(resize 事件)
    │
-   ├─ 本地中继（127.0.0.1）注入 Impersonation
    ▼
-上游 apiserver / SPDY
+上游 apiserver / SPDY（Agent SA 身份，平台已完成用户级授权）
    │
    └─ 会话结束 ──► exec_sessions / exec_commands 落库
                     录制文件 data/sessions/<id>.cast.gz

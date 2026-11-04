@@ -31,7 +31,7 @@ func (noopRegistry) Lookup(_ context.Context, _ string) ([]registry.Owner, error
 }
 
 // TestTunnelEndToEnd 全链路：签发 Token → Agent 拨号 /tunnel → 隧道接入（集群转
-// online）→ /proxy 请求穿隧道到上游（Impersonate/Authorization 不透传）→
+// online）→ /proxy 请求穿隧道到上游（伪造 Impersonate 被剥离、Authorization 不透传）→
 // Agent 断开（集群转 offline）。
 // 依赖真实数据库（Token 校验落库），TEST_PG_DSN 门控。
 func TestTunnelEndToEnd(t *testing.T) {
@@ -139,7 +139,7 @@ func TestTunnelEndToEnd(t *testing.T) {
 		t.Fatalf("viewer proxy: want 403, got %d", resp.StatusCode)
 	}
 
-	// 经 /proxy 穿隧道请求（带伪造 Impersonate，断言被剥离并替换为平台注入值）
+	// 经 /proxy 穿隧道请求（带伪造 Impersonate，断言被剥离且不再注入）
 	req := httptest.NewRequest(http.MethodGet, "/proxy/"+clusterID+"/api/v1/namespaces/dev/pods", nil)
 	req.Header.Set("Impersonate-User", "mallory")
 	req.Header.Set("Authorization", "Bearer "+tok)
@@ -155,12 +155,12 @@ func TestTunnelEndToEnd(t *testing.T) {
 	if gotPath != "/api/v1/namespaces/dev/pods" {
 		t.Fatalf("upstream path: got %q (FIX-6 strip)", gotPath)
 	}
-	// Impersonation 注入（§8.1 第 4 步）：mallory 被剥离，替换为 JWT 身份
-	if gotImpersonateUser != "admin-test" {
-		t.Fatalf("Impersonate-User: got %q, want injected admin-test", gotImpersonateUser)
+	// 集群侧不再切分权限：mallory 被剥离，且平台不再注入身份头
+	if gotImpersonateUser != "" {
+		t.Fatalf("Impersonate-User should be stripped, got %q", gotImpersonateUser)
 	}
-	if !strings.Contains(gotImpersonateGroups, "am:admin") {
-		t.Fatalf("Impersonate-Group: got %q, want am:admin", gotImpersonateGroups)
+	if gotImpersonateGroups != "" {
+		t.Fatalf("Impersonate-Group should be stripped, got %q", gotImpersonateGroups)
 	}
 	if gotAuth != "" {
 		t.Fatalf("user Authorization leaked: %q", gotAuth)

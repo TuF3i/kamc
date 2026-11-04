@@ -21,7 +21,7 @@ metadata:
   name: k8s-am-agent
   namespace: k8s-am-system
 ---
-# Agent 用 SA Token 访问 kube-apiserver（Impersonation + RBAC 第二道防线，§8）
+# Agent 用 SA Token 访问 kube-apiserver（平台 Casbin 授权，无 Impersonation）
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:

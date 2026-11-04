@@ -6,8 +6,8 @@
 //     官方 StreamTranslatorHandler / TunnelingHandler，WS→SPDY 翻译后经隧道送达。
 //
 // 安全收敛（设计文档既定）：Director 剥离 Authorization（FIX-7）；
-// Impersonation 统一经 handler 直写请求头（UpgradeAware/Tunneling handler
-// 均克隆转发入站头部，三条路径一致；exec 的本地中继见 handler/proxy.go）。
+// 集群侧不做 Impersonation——用户级授权由平台 Casbin 完成，Agent 以
+// ServiceAccount 身份访问 apiserver。
 package proxy
 
 import (
@@ -97,8 +97,8 @@ func (p *Pool) item(clusterID string) (*poolItem, error) {
 	rp := &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
 			// FIX-6: strip /proxy/{clusterID} 前缀，apiserver 收到干净路径。
-			// （Casbin 鉴权与 Impersonation 注入在 handler 层完成——必须基于
-			// strip 后的语义路径且发生在转发之前。）
+			// （Casbin 鉴权在 handler 层完成——必须基于 strip 后的语义路径
+			// 且发生在转发之前；集群侧不再注入 Impersonation。）
 			req.URL.Path = strings.TrimPrefix(req.URL.Path, "/proxy/"+clusterID)
 			if req.URL.Path == "" {
 				req.URL.Path = "/"

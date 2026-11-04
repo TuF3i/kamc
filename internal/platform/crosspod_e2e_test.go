@@ -126,8 +126,8 @@ func TestCrossPodForwardingE2E(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "PodList") {
 		t.Fatalf("response should come from upstream: %s", rec.Body.String())
 	}
-	if gotImpersonateUser != "admin-test" {
-		t.Fatalf("Impersonate-User: %q (中继必须字节透明)", gotImpersonateUser)
+	if gotImpersonateUser != "" {
+		t.Fatalf("Impersonate-User should be empty, got %q", gotImpersonateUser)
 	}
 
 	// 对照：A 本地直连同样可用

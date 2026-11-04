@@ -2,7 +2,6 @@ package handler
 
 import (
 	"log"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -23,8 +22,10 @@ import (
 // Proxy /proxy/{clusterID}/* —— API 代理（数据面，设计文档 §8.1 完整顺序）：
 //
 //	JWT 校验（中间件）→ 解析集群 → 剥离 Impersonate-*（防伪造）→
-//	Casbin 鉴权（RequestInfo 语义四元组，本地缓存零外部依赖）→
-//	注入平台控制的 Impersonate-User/Group → 经隧道转发。
+//	Casbin 鉴权（RequestInfo 语义四元组，本地缓存零外部依赖）→ 经隧道转发。
+//
+// 集群侧不再使用 Impersonation：Agent 以 ServiceAccount 身份访问 apiserver，
+// 用户级授权全部由平台 Casbin 完成（不依赖集群 RBAC）。
 //
 // 流式升级（§9）：WebSocket 请求按子协议分流——
 //   - `SPDY/3.1+portforward.k8s.io` → TunnelingHandler（SPDY over WS 直通上游）；
@@ -85,17 +86,13 @@ func (h *Handler) Proxy(w http.ResponseWriter, r *http.Request) {
 	// 4. 流式分流（§9）：WebSocket 升级请求交官方 handler；其余走 ReverseProxy
 	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 		h.auditDataPlane(r, clusterID, obj, act, true, "allowed-stream", start, reqDump, "", http.StatusSwitchingProtocols)
-		h.serveStream(w, r, clusterID, cleanPath, claims.Subject, claims.Groups)
+		h.serveStream(w, r, clusterID, cleanPath)
 		return
 	}
 
-	// 5a. 普通路径：头部注入 Impersonation（§8.1 第 5 步）
-	r.Header.Set("Impersonate-User", claims.Subject)
-	for _, g := range claims.Groups {
-		r.Header.Add("Impersonate-Group", g)
-	}
-
-	// 6. 经隧道转发（Authorization 由池 Director 剥离，FIX-7）
+	// 5. 经隧道转发（Authorization 由池 Director 剥离，FIX-7）。
+	// 集群侧不注入 Impersonation：授权由平台 Casbin 独立完成，apiserver
+	// 只看到 Agent SA 身份。
 	rp, err := h.proxies.For(clusterID)
 	if err != nil {
 		http.Error(w, "proxy init failed", http.StatusInternalServerError)
@@ -110,9 +107,10 @@ func (h *Handler) Proxy(w http.ResponseWriter, r *http.Request) {
 	h.auditDataPlane(r, clusterID, obj, act, true, "allowed", start, reqDump, cap.Dump(), cap.Status())
 }
 
-// serveStream 流式升级路径：Impersonation 走头部注入（Tunneling/UpgradeAware
-// handler 都克隆转发入站请求头），上游地址 = 占位 host + 本次请求的路径与 query。
-func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request, clusterID, cleanPath, user string, groups []string) {
+// serveStream 流式升级路径：上游地址 = 占位 host + 本次请求的路径与 query。
+// 集群侧不使用 Impersonation：port-forward 直接透传，exec/attach 由
+// StreamTranslator 以 Agent SA 身份直连上游（授权已完成于平台 Casbin）。
+func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request, clusterID, cleanPath string) {
 	transport, err := h.proxies.Transport(clusterID)
 	if err != nil {
 		http.Error(w, "proxy init failed", http.StatusInternalServerError)
@@ -122,12 +120,6 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request, clusterID,
 	if base == nil {
 		http.Error(w, "proxy init failed", http.StatusInternalServerError)
 		return
-	}
-
-	// 注入平台控制的 Impersonation（§8.1 第 5 步；伪造头已在外层剥离）
-	r.Header.Set("Impersonate-User", user)
-	for _, g := range groups {
-		r.Header.Add("Impersonate-Group", g)
 	}
 
 	if hasSPDYTunnelSubprotocol(r) {
@@ -141,35 +133,12 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request, clusterID,
 	}
 
 	// exec/attach：WS（v4/v5.channel.k8s.io）翻译为 SPDY（兼容 1.23/1.25 仅 SPDY 集群）。
-	//
-	// StreamTranslator 的 SPDY 客户端自建上游请求（dialerFor 只取拨号函数，
-	// 不透传任何头部），因此 Impersonation 无法经它传递——改用本地中继：
-	// translator 指向 127.0.0.1 中继监听，中继内 UpgradeAwareHandler 克隆
-	// 入站请求头（含上面注入的身份）后经隧道拨号真实上游。每次请求一个
-	// 临时监听，连接被 Hijack 后关闭监听不影响既有连接。
-	transportLocal := http.DefaultTransport // 中继在环回，无需隧道 dialer
-	relayLis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		http.Error(w, "relay listen failed", http.StatusInternalServerError)
-		return
-	}
-	defer relayLis.Close() // Hijack 后的连接不受影响
-
-	relaySrv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		// translator 自建的上游请求不含身份头，在此注入平台控制的 Impersonation
-		// （UpgradeAwareHandler 克隆转发；用户传入的伪造头已在外层剥离）
-		req.Header.Set("Impersonate-User", user)
-		for _, g := range groups {
-			req.Header.Add("Impersonate-Group", g)
-		}
-		ua := utilproxy.NewUpgradeAwareHandler(base, transport, false, true, errorResponder{})
-		ua.UseRequestLocation = true // 同上：保留 exec 路径与 query
-		ua.ServeHTTP(w, req)
-	}), ReadHeaderTimeout: 10 * time.Second}
-	go func() { _ = relaySrv.Serve(relayLis) }() // 随 listener 关闭退出，无需等待
-
-	location := url.URL{Scheme: "http", Host: relayLis.Addr().String(), Path: cleanPath, RawQuery: r.URL.RawQuery}
-	streamHandler := apiproxy.NewStreamTranslatorHandler(&location, transportLocal, 0, streamOptions(r))
+	// StreamTranslator 自建上游请求；直接指向真实上游（经隧道 transport 拨号），
+	// 不再需要仅为注入身份头而存在的本地中继。
+	location := *base
+	location.Path = cleanPath
+	location.RawQuery = r.URL.RawQuery
+	streamHandler := apiproxy.NewStreamTranslatorHandler(&location, transport, 0, streamOptions(r))
 	streamHandler.ServeHTTP(w, r)
 }
 

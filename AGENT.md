@@ -4,7 +4,7 @@
 
 kamc（Kubernetes Access Manager Center）是基于 Go 的多集群 Kubernetes 访问管理平台：
 用户经 Authentik SSO 登录，下载平台生成的 kubeconfig，kubectl 请求经平台 Casbin 鉴权后，
-通过 Agent 反向隧道（WebSocket + yamux）以 Impersonation 方式送达目标集群的 kube-apiserver。
+经平台 Casbin 授权后，通过 Agent 反向隧道（WebSocket + yamux）由 Agent 以 ServiceAccount 身份送达目标集群的 kube-apiserver（集群侧不做 Impersonation）。
 
 **动手前必读设计文档：[docs/design.md](docs/design.md)**（v2.0，含全部架构决策、
 v1.0 缺陷修复记录 BUG-1~8、高可用设计与故障模式分析）。
@@ -114,14 +114,14 @@ KAMC_API=http://127.0.0.1:8080 npm run dev
 - [x] Agent Token 管理：签发/列表/吊销、SHA256 哈希、轮换宽限期、注册 Token 1h TTL
 - [x] 隧道全链路：/tunnel 入口（Token 校验+WS 升级+Attach）→ Agent 数据面
       （ReverseProxy 反代 apiserver，101 升级标准库处理）→ /proxy/{clusterID} 代理
-      （strip 前缀 FIX-6、剥离 Impersonate-*/Authorization FIX-7）
+      （strip 前缀 FIX-6、剥离用户传入的 Impersonate-*/Authorization FIX-7）
 - [x] Agent Token 认证收尾：注册 Token 换长期 Token 一次性交换端点（§6.1）
 - [x] JWT 认证：auth 模块（RS256 密钥环/kid 零停机轮换/JWKS）+ OIDC 登录
       （/auth/login、/auth/callback）+ RequireJWT/RequireAdmin 中间件
-- [x] Casbin RequestInfo 鉴权（§5，act 锚定 FIX-8）+ /proxy Impersonation 注入
-      （§8.1 完整顺序，无鉴权开关已移除）
+- [x] Casbin RequestInfo 鉴权（§5，act 锚定 FIX-8）+ /proxy 平台侧授权
+      （集群侧不注入 Impersonation；无鉴权开关已移除）
 - [x] exec/port-forward 流式入口（§9）：WS 升级按子协议分流——channel.k8s.io →
-      StreamTranslatorHandler（WS→SPDY，本地中继注入 Impersonation）；
+      StreamTranslatorHandler（WS→SPDY，直接经隧道 transport 访问上游，无本地中继）；
       SPDY/3.1+portforward.k8s.io → TunnelingHandler；旧版 SPDY 经 ReverseProxy 直通。
       注意：UpgradeAwareHandler 必须开 UseRequestLocation（否则路径被 location 替换）
 - [x] 跨 Pod peer 转发（§7.2.4）：PeerRouter（RELAY 协议：头+回执+字节拼接；

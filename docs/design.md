@@ -15,7 +15,7 @@
 5. [基于 RequestInfo 的 Casbin 鉴权](#五基于-requestinfo-的-casbin-鉴权)
 6. [隧道数据平面：Dialer 模型](#六隧道数据平面dialer-模型)
 7. [高可用设计](#七高可用设计)
-8. [请求转发与 Impersonation](#八请求转发与-impersonation)
+8. [请求转发与平台侧 RBAC](#八请求转发与平台侧-rbac)
 9. [流式连接处理（exec / port-forward）](#九流式连接处理exec--port-forward)
 10. [接入层（Nginx）配置](#十接入层nginx配置)
 11. [部署拓扑与清单](#十一部署拓扑与清单)
@@ -45,7 +45,7 @@
 | --- | --- |
 | 平台是唯一授权决策点 | Casbin 在请求到达 Agent 前完成鉴权 |
 | Agent 是哑管道 | Agent 只负责转发，不做任何权限判断 |
-| 双重权限校验 | Casbin 第一道过滤，API Server RBAC 第二道防线 |
+| 平台侧唯一授权 | Casbin 完成用户级鉴权；集群侧不按用户切分权限（无 Impersonation） |
 | 无客户端证书依赖 | 兼容 Nginx 网关 TLS 终结架构 |
 | 数据面字节透明 | 平台内部与隧道只搬运字节流，HTTP 语义只在两端终结 |
 | 无单点（v2.0） | 隧道注册表外置、副本对等、Agent 多连接，任何单副本故障可自愈 |
@@ -68,7 +68,7 @@
 | BUG-4 | yamux 直接跑在 gorilla/websocket 上，缺少 `net.Conn` 适配，未定义心跳，NAT/LB 空闲超时会静默断链 | 明确 **binary frame NetConn 适配器**（gorilla 单写者约束）+ **双层心跳**：WS ping/pong 20s，yamux keepalive 30s，Nginx 隧道读超时必须大于心跳间隔 | §6.3 |
 | BUG-5 | Nginx 在 `location /` 写死 `proxy_set_header Connection "upgrade"` 破坏普通请求 keepalive；`proxy_read_timeout 3600s` 一刀切 | `$connection_upgrade` map 按需升级；**按路由分级超时**：控制面 API 60s、流式代理 3600s、Agent 隧道 75s（大于心跳间隔，加速死链检测） | §10 |
 | FIX-6 | v1.0 转发流程未说明 `/proxy/{clusterID}` 前缀剥离与 Host 重写，apiserver 将收到 `/proxy/cluster-a/api/v1/...` 直接 404 | 平台转发前 **strip 前缀、重写 Host** | §8.1 |
-| FIX-7 | 用户 JWT 会随请求透传到目标集群（进入 Agent 日志、apiserver 审计），且无效 token 可能干扰 apiserver 认证 | 平台注入 Impersonate 头的同时**清除 `Authorization` 头**，由 Agent 的 SA transport 注入 SA Token | §8.1 |
+| FIX-7 | 用户 JWT 会随请求透传到目标集群（进入 Agent 日志、apiserver 审计），且无效 token 可能干扰 apiserver 认证 | **清除 `Authorization` 头**，由 Agent 的 SA transport 注入 SA Token；同时剥离用户传入的 `Impersonate-*`（防止借 Agent SA 提权） | §8.1 |
 | FIX-8 | matcher `regexMatch(r.act, p.act)` **未锚定**：`delete` 会匹配 `deletecollection`，构成越权风险 | 锚定为 `regexMatch(r.act, "^(" + p.act + ")$")` | §5.2 |
 
 ---
@@ -110,7 +110,7 @@
 │ PostgreSQL(HA)│  │ Redis(HA)     │   │ 目标集群 A/B/C…            │
 │ 策略/集群/Token│  │ 隧道注册表(TTL) │   │  Agent ×2（各持 1 条隧道）  │
 │ 哈希/审计日志  │  │ casbin watcher│   │   → kube-apiserver:6443   │
-└───────────────┘  │ 限流          │   │   Impersonation + RBAC    │
+└───────────────┘  │ 限流          │   │   平台 Casbin 唯一授权     │
                    └───────────────┘   └──────────────────────────┘
 ```
 
@@ -119,10 +119,10 @@
 1. kubectl 携带 JWT 发起请求 → Nginx → **Pod-X**（任意副本）
 2. Pod-X 验证 JWT → 提取用户身份 → 解析集群 ID
 3. 剥离用户传入的所有 `Impersonate-*` 头 → Casbin 鉴权（本地策略缓存，无网络依赖）
-4. 鉴权通过 → 注入平台控制的 `Impersonate-User` / `Impersonate-Group` → strip `/proxy/{clusterID}` 前缀 → 清除 `Authorization`
+4. 鉴权通过 → strip `/proxy/{clusterID}` 前缀 → 清除 `Authorization`（不注入 Impersonation）
 5. 取隧道：本地有 → 直接用；**本地没有 → 查 Redis 注册表 → 经 peer yamux 会话转发到持有隧道的 Pod-Y，Pod-Y 将该字节流拼接到本地 Agent 隧道**（§7.2）
 6. Agent 用 SA transport 转发到 API Server（注入 SA Token）
-7. API Server 完成 Impersonation 认证 + RBAC 授权，响应原路返回（字节透传）
+7. API Server 以 Agent SA 身份完成认证授权，响应原路返回（字节透传；用户归属由平台审计）
 
 ### 3.3 组件清单
 
@@ -133,7 +133,7 @@
 | 鉴权服务 | 平台 | Casbin 策略管理、RequestInfo 解析 | 多副本，本地缓存 + watcher 同步（§7.6） |
 | 隧道管理器 | 平台 | 本机 Agent 隧道生命周期 + 注册表上报 | 多副本对等（§7.2） |
 | 跨 Pod 转发器 | 平台 | peer yamux 会话、RELAY 字节拼接 | 懒建立，故障即弃（§7.2） |
-| API 代理 | 平台 | HTTP 反代、Impersonation 注入、流式处理 | 多副本，无状态 |
+| API 代理 | 平台 | HTTP 反代、流式处理、Casbin 授权 | 多副本，无状态 |
 | Token 管理 | 平台 | Agent Token 生成、轮换、吊销 | 多副本，状态在 PG |
 | Audit 服务 | 平台 | 异步批量写审计日志 | 多副本，PG 故障时本地暂存（§12.2） |
 | Agent | 目标集群 | 隧道客户端、SA 转发 | 每集群 2 副本，双隧道（§7.4） |
@@ -674,9 +674,13 @@ func (m *Mesh) DialCluster(ctx context.Context, clusterID string) (net.Conn, err
 
 ---
 
-## 八、请求转发与 Impersonation
+## 八、请求转发与平台侧 RBAC
 
-### 8.1 平台侧中间件（v2.0 完整顺序）
+### 8.1 平台侧中间件（v3.1 完整顺序）
+
+> v3.1 起集群侧不再使用 Impersonation：Agent 以 ServiceAccount 身份访问
+> kube-apiserver，用户级授权全部由平台 Casbin 完成，不再要求目标集群为用户/
+> 组配置 RoleBinding。
 
 ```go
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -689,32 +693,28 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
     // 2. 解析集群 ID（/proxy/{clusterID}/...）
     clusterID := extractClusterID(r.URL.Path)
 
-    // 3. 剥离用户传入的所有 Impersonate-* 头（防伪造身份，顺序必须在 Casbin 之前）
+    // 3. 剥离用户传入的所有 Impersonate-* 头。
+    //    集群侧虽不再注入 Impersonation，也必须剥离：Agent SA 权限很高，
+    //    若放行用户伪造头，apiserver 会按该头切换身份，直接提权。
     stripImpersonateHeaders(r)
 
-    // 4. Casbin 鉴权（本地缓存，无网络调用）
+    // 4. Casbin 鉴权（本地缓存，无网络调用；唯一的用户级授权点）
     if allowed, _ := p.enforcer.Enforce(buildCasbinRequest(r, claims.Subject, clusterID)...); !allowed {
         audit.LogDenied(claims.Subject, clusterID, r)
         http.Error(w, "forbidden", 403); return
     }
 
-    // 5. 注入平台控制的 Impersonate 头
-    r.Header.Set("Impersonate-User", claims.Subject)
-    for _, g := range claims.Groups {
-        r.Header.Add("Impersonate-Group", g)
-    }
-
-    // 6. FIX-6：strip /proxy/{clusterID} 前缀，重写 Host
+    // 5. FIX-6：strip /proxy/{clusterID} 前缀，重写 Host
     r.URL.Path = strings.TrimPrefix(r.URL.Path, "/proxy/"+clusterID)
     r.Host = "kube-apiserver." + clusterID   // 占位；apiserver 不依赖 Host
 
-    // 7. FIX-7：清除用户 JWT，SA Token 由 Agent 的 transport 注入
+    // 6. FIX-7：清除用户 JWT，SA Token 由 Agent 的 transport 注入
     r.Header.Del("Authorization")
 
-    // 8. 审计（异步）
+    // 7. 审计（异步；user/groups 来自平台 JWT）
     audit.LogAllowed(claims.Subject, clusterID, r)
 
-    // 9. 经隧道 transport 转发（Dialer 模型，§6.2）
+    // 8. 经隧道 transport 转发（Dialer 模型，§6.2）
     p.transports.For(clusterID).ServeHTTP(w, r)
 }
 ```
@@ -731,14 +731,25 @@ func stripImpersonateHeaders(r *http.Request) {
 
 必须剥离的头：`Impersonate-User`、`Impersonate-Group`、`Impersonate-Uid`、`Impersonate-Extra-*`。
 
-### 8.2 双重权限校验
+### 8.2 授权模型
 
 | 层级 | 校验方 | 作用 |
 | --- | --- | --- |
-| 第一层 | 平台 Casbin | 快速拒绝、统一策略、审计 |
-| 第二层 | API Server RBAC | 最后防线，以 impersonated 身份校验；审计日志记录真实用户（`impersonatedUser`） |
+| 用户级 | 平台 Casbin | 唯一授权点：主体/集群/资源/动作四元组，允许即转发、拒绝即 403 |
+| 集群级 | Agent ServiceAccount 的 RBAC | 仅决定“平台代理能触达的最大范围”，不区分用户 |
 
-目标集群侧仍需按 §v1.0 方式为用户/用户组配置 RoleBinding（Casbin 与 RBAC 是**与**的关系，两边都要放行）。
+约束与后果：
+
+- **不再需要**在目标集群为用户/组配置 RoleBinding；平台策略生效即可。
+- Agent SA 的权限就是整个平台的权限上限：给 `cluster-admin` 最省事，但也意味着
+  平台一旦出现策略绕过，攻击面是整集群。更稳妥的做法是给 Agent 一个覆盖
+  允许资源/动词的专用 ClusterRole，把不需要的 API 收窄。
+- apiserver 审计、admission webhook、资源 owner 看到的是 Agent SA，而不是真实
+  用户；真实用户归属由平台审计（`audit_events`）负责。
+- 用户请求中的 `Authorization` 仍必须剥离，由 Agent transport 注入 SA Token
+  （FIX-7）；`Impersonate-*` 仍必须剥离（防依赖 Agent SA 权限提权）。
+
+---
 
 ---
 
@@ -1121,7 +1132,7 @@ github.com/prometheus/client_golang
 
 ### 14.2 参考资料
 
-- Kubernetes Authentication / Impersonation / RBAC（kubernetes.io 官方文档）
+- Kubernetes Authentication / Authorization / RBAC（kubernetes.io 官方文档）
 - KEP-4006: Transition SPDY to WebSockets
 - Rancher Manager Architecture（remotedialer 与 crt-token 轮换）
 - Casbin Documentation（keyMatch2 / domain 模型）

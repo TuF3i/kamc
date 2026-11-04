@@ -97,9 +97,9 @@ func TestKubeconfigEndToEnd(t *testing.T) {
 	if len(pods.Items) != 0 {
 		t.Fatalf("want empty PodList, got %d", len(pods.Items))
 	}
-	// 数据面语义：调用者身份注入、用户凭证不透传（Authorization 由 Agent 剥离）
-	if gotImpersonateUser != "admin-test" {
-		t.Fatalf("Impersonate-User: %q", gotImpersonateUser)
+	// 数据面语义：集群侧不注入 Impersonate、用户凭证不透传（Authorization 由 Agent 剥离）
+	if gotImpersonateUser != "" {
+		t.Fatalf("Impersonate-User should be empty, got %q", gotImpersonateUser)
 	}
 	if gotAuth != "" {
 		t.Fatalf("Authorization leaked: %q", gotAuth)

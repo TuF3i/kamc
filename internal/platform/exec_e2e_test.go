@@ -30,7 +30,7 @@ type execCapture struct {
 
 // newFakeExecServer 假 kube-apiserver 的 exec 端点：SPDY 服务端，
 // 把 STDIN 回环到 STDOUT（模式来自 apiserver 官方 streamtranslator 测试），
-// 并捕获 Impersonation 头供断言。
+// 并捕获上游请求头供断言（集群侧不再注入 Impersonation）。
 func newFakeExecServer(t *testing.T, captured *execCapture) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -76,7 +76,7 @@ func newFakeExecServer(t *testing.T, captured *execCapture) *httptest.Server {
 
 // TestExecEndToEnd exec 全链路（§9）：client-go 回退执行器（WS 优先，等价
 // kubectl 1.31+ 默认行为）→ 平台 StreamTranslator（WS→SPDY）→ 隧道 →
-// Agent 101 直通 → 假 apiserver（SPDY）。断言数据回环、Impersonation 注入、
+// Agent 101 直通 → 假 apiserver（SPDY）。断言数据回环、不注入 Impersonation、
 // 用户凭证不透传、无策略用户 403。
 func TestExecEndToEnd(t *testing.T) {
 	dsn := getenvOrSkip(t)
@@ -136,8 +136,8 @@ func TestExecEndToEnd(t *testing.T) {
 	if captured.Path != "/api/v1/namespaces/dev/pods/pod-1/exec" {
 		t.Fatalf("upstream path: %q (FIX-6 strip)", captured.Path)
 	}
-	if captured.ImpersonateUser != "admin-test" {
-		t.Fatalf("Impersonate-User: got %q, want admin-test (transport 层注入)", captured.ImpersonateUser)
+	if captured.ImpersonateUser != "" {
+		t.Fatalf("Impersonate-User should be empty (platform-only auth), got %q", captured.ImpersonateUser)
 	}
 	if captured.Authorization != "" {
 		t.Fatalf("Authorization leaked: %q", captured.Authorization)
