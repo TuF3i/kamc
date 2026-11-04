@@ -68,17 +68,13 @@ func (s *Service) SyncUserOnLogin(ctx context.Context, id *Identity) *errcode.Re
 	if id.Source == "" {
 		id.Source = modules.UserSourceLocal
 	}
+	for i := range id.Groups {
+		id.Groups[i] = strings.TrimSpace(id.Groups[i])
+	}
 	// 内置管理员固定组（去重——handler 侧可能已带）
 	if id.Username == s.adminUsername() && id.Source == modules.UserSourceLocal {
-		has := false
-		for _, g := range id.Groups {
-			if g == "am:admin" {
-				has = true
-				break
-			}
-		}
-		if !has {
-			id.Groups = append(id.Groups, "am:admin")
+		if !containsGroup(id.Groups, s.adminGroupName()) {
+			id.Groups = append(id.Groups, s.adminGroupName())
 		}
 	}
 
@@ -130,6 +126,12 @@ func (s *Service) SyncUserOnLogin(ctx context.Context, id *Identity) *errcode.Re
 				return errcode.ServerInternal(err)
 			}
 		}
+	}
+
+	// 平台管理员组：成员所在任一平台组被标记 is_admin，登录身份补上管理组
+	// 声明（RequireAdmin 依据）。只补 JWT 组，不写入用户的真实组集合。
+	if s.hasAdminGroup(ctx, id.Groups) && !containsGroup(id.Groups, s.adminGroupName()) {
+		id.Groups = append(id.Groups, s.adminGroupName())
 	}
 	return nil
 }
@@ -282,7 +284,7 @@ func (s *Service) ListGroups(ctx context.Context) ([]*modules.GroupDTO, *errcode
 			ms = []string{}
 		}
 		dtos = append(dtos, &modules.GroupDTO{
-			Name: g.Name, Desc: g.Desc, Source: g.Source, Members: ms, CreatedAt: g.CreatedAt,
+			Name: g.Name, Desc: g.Desc, Source: g.Source, IsAdmin: g.IsAdmin, Members: ms, CreatedAt: g.CreatedAt,
 		})
 	}
 	return dtos, nil
@@ -290,8 +292,9 @@ func (s *Service) ListGroups(ctx context.Context) ([]*modules.GroupDTO, *errcode
 
 // CreateGroupRequest 手动建组请求
 type CreateGroupRequest struct {
-	Name string `json:"name"`
-	Desc string `json:"desc"`
+	Name    string `json:"name"`
+	Desc    string `json:"desc"`
+	IsAdmin bool   `json:"is_admin"` // 平台管理员组：成员登录后获得管理面权限
 }
 
 // CreateGroup 手动创建组（local 来源）
@@ -304,17 +307,18 @@ func (s *Service) CreateGroup(ctx context.Context, req *CreateGroupRequest) (*mo
 	} else if !isNotFound(err) {
 		return nil, errcode.ServerInternal(err)
 	}
-	g := &modules.PlatformGroup{Name: req.Name, Desc: strings.TrimSpace(req.Desc), Source: "local"}
+	g := &modules.PlatformGroup{Name: req.Name, Desc: strings.TrimSpace(req.Desc), Source: "local", IsAdmin: req.IsAdmin}
 	if err := s.d.UpsertGroup(ctx, g); err != nil {
 		return nil, errcode.ServerInternal(err)
 	}
-	return &modules.GroupDTO{Name: g.Name, Desc: g.Desc, Source: g.Source, Members: []string{}, CreatedAt: g.CreatedAt}, nil
+	return &modules.GroupDTO{Name: g.Name, Desc: g.Desc, Source: g.Source, IsAdmin: g.IsAdmin, Members: []string{}, CreatedAt: g.CreatedAt}, nil
 }
 
 // UpdateGroupRequest 组编辑（nil 字段不更新）
 type UpdateGroupRequest struct {
-	Name *string `json:"name"`
-	Desc *string `json:"desc"`
+	Name    *string `json:"name"`
+	Desc    *string `json:"desc"`
+	IsAdmin *bool   `json:"is_admin"`
 }
 
 // UpdateGroup 编辑组：可改描述与名称（重命名会把用户 groups 字段中的旧名
@@ -345,8 +349,15 @@ func (s *Service) UpdateGroup(ctx context.Context, name string, req *UpdateGroup
 			newName = v
 		}
 	}
-	if req.Desc != nil {
-		if err := s.d.UpdateGroup(ctx, name, map[string]any{"desc": strings.TrimSpace(*req.Desc)}); err != nil {
+	if req.Desc != nil || req.IsAdmin != nil {
+		cols := map[string]any{}
+		if req.Desc != nil {
+			cols["desc"] = strings.TrimSpace(*req.Desc)
+		}
+		if req.IsAdmin != nil {
+			cols["is_admin"] = *req.IsAdmin
+		}
+		if err := s.d.UpdateGroup(ctx, name, cols); err != nil {
 			return nil, errcode.ServerInternal(err)
 		}
 	}
@@ -356,7 +367,11 @@ func (s *Service) UpdateGroup(ctx context.Context, name string, req *UpdateGroup
 		if req.Desc != nil {
 			desc = strings.TrimSpace(*req.Desc)
 		}
-		if err := s.d.UpsertGroup(ctx, &modules.PlatformGroup{Name: newName, Desc: desc, Source: g.Source}); err != nil {
+		isAdmin := g.IsAdmin
+		if req.IsAdmin != nil {
+			isAdmin = *req.IsAdmin
+		}
+		if err := s.d.UpsertGroup(ctx, &modules.PlatformGroup{Name: newName, Desc: desc, Source: g.Source, IsAdmin: isAdmin}); err != nil {
 			return nil, errcode.ServerInternal(err)
 		}
 		// 用户 groups 字段全量改名
@@ -520,3 +535,27 @@ func isNotFound(err error) bool { return errors.Is(err, gorm.ErrRecordNotFound) 
 
 // adminUsername 内置管理员账号名（同步时固定补 admin 组）
 func (s *Service) adminUsername() string { return "sysadmin" }
+
+// containsGroup 组集合是否已包含某组名
+func containsGroup(groups []string, name string) bool {
+	for _, g := range groups {
+		if g == name {
+			return true
+		}
+	}
+	return false
+}
+
+// hasAdminGroup 给定组中是否存在标记为平台管理员的组（查询失败按非管理员处理）。
+func (s *Service) hasAdminGroup(ctx context.Context, groups []string) bool {
+	for _, g := range groups {
+		if g == "" {
+			continue
+		}
+		grp, err := s.d.GetGroup(ctx, g)
+		if err == nil && grp.IsAdmin {
+			return true
+		}
+	}
+	return false
+}

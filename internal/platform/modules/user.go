@@ -103,11 +103,12 @@ func (u *PlatformUser) ToDTO() *UserDTO {
 }
 
 // PlatformGroup 平台组：成员关系存于用户表的 groups 字段，本表维护
-// 组的元信息（描述/来源），成员数查询时聚合。
+// 组的元信息（描述/来源/是否平台管理员组），成员数查询时聚合。
 type PlatformGroup struct {
 	Name      string    `gorm:"primaryKey;size:128" json:"name"`
 	Desc      string    `gorm:"size:512" json:"desc"`
 	Source    string    `gorm:"size:16;not null;default:sso" json:"source"` // sso/ldap/local
+	IsAdmin   bool      `gorm:"not null;default:false" json:"is_admin"`     // 成员登录后获得管理面权限
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -117,6 +118,7 @@ type GroupDTO struct {
 	Name      string    `json:"name"`
 	Desc      string    `json:"desc"`
 	Source    string    `json:"source"`
+	IsAdmin   bool      `json:"is_admin"`
 	Members   []string  `json:"members"` // 用户名列表（聚合自用户表）
 	CreatedAt time.Time `json:"created_at"`
 }

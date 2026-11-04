@@ -23,13 +23,28 @@ const maxClusterIDLen = 64
 
 // Service 集群管理业务
 type Service struct {
-	d     *dao.Dao
-	authz *authz.Enforcer
+	d          *dao.Dao
+	authz      *authz.Enforcer
+	adminGroup string // 平台管理员声明组（AM_ADMIN_GROUP）；组标记 is_admin 后成员登录时注入
 }
 
 // NewService 构造 Service（组合 Dao 与鉴权组件）
 func NewService(d *dao.Dao, authz *authz.Enforcer) *Service {
-	return &Service{d: d, authz: authz}
+	return &Service{d: d, authz: authz, adminGroup: "am:admin"}
+}
+
+// SetAdminGroup 设置平台管理员声明组（装配层按 AM_ADMIN_GROUP 调用）。
+func (s *Service) SetAdminGroup(group string) {
+	if group != "" {
+		s.adminGroup = group
+	}
+}
+
+func (s *Service) adminGroupName() string {
+	if s.adminGroup == "" {
+		return "am:admin"
+	}
+	return s.adminGroup
 }
 
 // Ping 数据库连通性（readyz）

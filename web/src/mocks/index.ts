@@ -40,16 +40,16 @@ const users: PlatformUserDTO[] = [
 ];
 
 const groups: GroupDTO[] = [
-  { name: 'am:admin', desc: '平台管理员组', source: 'local', members: ['sysadmin'], created_at: daysAgo(120) },
-  { name: 'dev-team', desc: '研发团队', source: 'sso', members: ['alice'], created_at: daysAgo(60) },
-  { name: 'qa-team', desc: '测试团队', source: 'ldap', members: ['bob'], created_at: daysAgo(45) },
+  { name: 'am:admin', desc: '平台管理员组', source: 'local', is_admin: true, members: ['sysadmin'], created_at: daysAgo(120) },
+  { name: 'dev-team', desc: '研发团队', source: 'sso', is_admin: false, members: ['alice'], created_at: daysAgo(60) },
+  { name: 'qa-team', desc: '测试团队', source: 'ldap', is_admin: false, members: ['bob'], created_at: daysAgo(45) },
 ];
 
 const policies: PolicyDTO[] = [
   { subject_type: 'org', subject: 'dev-team', cluster: 'prod-bj', namespace: '*', resource: 'deployments', verbs: ['get', 'list'], sub: 'org:dev-team', dom: 'prod-bj', obj: '*/deployments', act: 'get|list' },
   { subject_type: 'org', subject: 'dev-team', cluster: 'prod-bj', namespace: '', resource: 'deployments', verbs: ['get', 'list'], sub: 'org:dev-team', dom: 'prod-bj', obj: 'cluster/deployments', act: 'get|list' },
   { subject_type: 'user', subject: 'alice', cluster: 'prod-sh', namespace: 'default', resource: 'pods', verbs: ['get', 'list', 'watch'], sub: 'user:alice', dom: 'prod-sh', obj: 'default/pods', act: 'get|list|watch' },
-  { subject_type: 'user', subject: 'robot:robot-mock1', cluster: 'prod-bj', namespace: '*', resource: '*', verbs: ['*'], sub: 'user:robot:robot-mock1', dom: 'prod-bj', obj: '*', act: '.*' },
+  { subject_type: 'robot', subject: 'robot-mock1', cluster: 'prod-bj', namespace: '*', resource: '*', verbs: ['*'], sub: 'robot:robot-mock1', dom: 'prod-bj', obj: '*', act: '.*' },
 ];
 
 const robots: Robot[] = [
@@ -263,7 +263,10 @@ export async function mockApi<T>(method: string, rawPath: string, body?: unknown
   // 策略
   if (path === '/api/v1/policies' && m === 'GET') return data(policies);
   if (path === '/api/v1/policies' && m === 'POST') {
-    const subjType = payload.subject_type === 'org' ? 'org' : 'user';
+    const subjType =
+      payload.subject_type === 'org' || payload.subject_type === 'robot'
+        ? payload.subject_type
+        : 'user';
     const sub = `${subjType}:${payload.subject}`;
     const created: PolicyDTO[] = [];
     for (const rule of (payload.rules ?? []) as any[]) {
@@ -343,7 +346,7 @@ export async function mockApi<T>(method: string, rawPath: string, body?: unknown
     const name = String(payload.name ?? '').trim();
     if (!name) throw new ApiError('组名不能为空', 400, 10001);
     if (groups.some((g) => g.name === name)) throw new ApiError('组已存在', 400, 40007);
-    const g: GroupDTO = { name, desc: payload.desc || '', source: 'local', members: [], created_at: nowIso() };
+    const g: GroupDTO = { name, desc: payload.desc || '', source: 'local', is_admin: payload.is_admin === true, members: [], created_at: nowIso() };
     groups.push(g);
     return data(g);
   }
@@ -360,6 +363,7 @@ export async function mockApi<T>(method: string, rawPath: string, body?: unknown
         g.members = g.members.slice();
       }
       if (payload.desc !== undefined) g.desc = payload.desc;
+      if (payload.is_admin !== undefined) g.is_admin = payload.is_admin === true;
       return data(g);
     }
     if (m === 'DELETE') {

@@ -1,7 +1,8 @@
 package handler
 
 // 头像上传与签名 URL 服务：
-//   - POST /api/v1/users/{username}/avatar  上传图片（管理面，raw image body）
+//   - POST /api/v1/users/{username}/avatar  管理面上传指定用户头像
+//   - POST /api/v1/profile/avatar           当前用户修改自己的头像
 //   - GET  /avatars/{uid}?token=…           公开读取（token 为 HMAC 签名，
 //     供 <img src> 直接展示——img 无法携带 Authorization 头）
 //
@@ -24,6 +25,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/TuF3i/kamc/internal/platform/errcode"
+	"github.com/TuF3i/kamc/internal/platform/middleware"
 )
 
 // maxAvatarSize 头像文件上限（2MB）
@@ -53,14 +55,28 @@ func (h *Handler) verifyAvatarToken(uid, token string) bool {
 	return hmac.Equal([]byte(token), []byte(want))
 }
 
-// UploadAvatar POST /api/v1/users/{username}/avatar —— raw 图片体上传，
-// 保存为 <avatarDir>/<uid>，并写入签名 URL 到用户 avatar_url。
+// UploadAvatar POST /api/v1/users/{username}/avatar —— 管理面上传指定用户头像
+// （raw 图片体），保存为 <avatarDir>/<uid> 并写入签名 URL 到 avatar_url。
 func (h *Handler) UploadAvatar(w http.ResponseWriter, r *http.Request) {
+	username := chi.URLParam(r, "username")
+	h.uploadAvatar(w, r, username, "/api/v1/users/"+username+"/avatar")
+}
+
+// UploadAvatarSelf POST /api/v1/profile/avatar —— 当前登录用户修改自己的头像。
+func (h *Handler) UploadAvatarSelf(w http.ResponseWriter, r *http.Request) {
+	claims, ok := middleware.ClaimsFromCtx(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	h.uploadAvatar(w, r, claims.Subject, "/api/v1/profile/avatar")
+}
+
+func (h *Handler) uploadAvatar(w http.ResponseWriter, r *http.Request, username, auditPath string) {
 	if h.avatarDir == "" || len(h.avatarSecret) == 0 {
 		http.Error(w, "avatar storage disabled", http.StatusServiceUnavailable)
 		return
 	}
-	username := chi.URLParam(r, "username")
 	user, rsp := h.svc.GetUser(r.Context(), username)
 	if rsp != nil {
 		errcode.GenFinalResponse(w, nil, rsp)
@@ -96,7 +112,7 @@ func (h *Handler) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 		errcode.GenFinalResponse(w, nil, rsp)
 		return
 	}
-	h.auditPlatform(r, "avatar-upload", username, "", "/api/v1/users/"+username+"/avatar", true, ct)
+	h.auditPlatform(r, "avatar-upload", username, "", auditPath, true, ct)
 	errcode.GenFinalResponse(w, map[string]string{"avatar_url": url}, nil)
 }
 
@@ -115,10 +131,4 @@ func (h *Handler) ServeAvatar(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", http.DetectContentType(data))
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 	_, _ = w.Write(data)
-}
-
-// avatarRoutes 上传（管理面）与公开读取
-func avatarRoutes(r chi.Router, admin chi.Router, h *Handler) {
-	r.Get("/avatars/{uid}", h.ServeAvatar)
-	admin.Post("/users/{username}/avatar", h.UploadAvatar)
 }

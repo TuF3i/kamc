@@ -83,6 +83,24 @@ func TestOrgPolicy(t *testing.T) {
 	}
 }
 
+// TestRobotSubject 机器人独立主体：仅匹配 robot:<id> 直绑策略，不参与组策略。
+func TestRobotSubject(t *testing.T) {
+	e := newMemEnforcer(t, [][]string{
+		{"p", "robot:robot-1", "cluster-a", "dev/*", "get|list"},
+		{"p", "org:robot", "cluster-a", "prod/*", "get|list"},
+	})
+
+	if !enforceWith(t, e, "robot:robot-1", []string{"robot"}, "cluster-a", "GET", "/api/v1/namespaces/dev/pods", "") {
+		t.Fatal("robot direct policy should match")
+	}
+	if enforceWith(t, e, "robot:robot-1", []string{"robot"}, "cluster-a", "GET", "/api/v1/namespaces/prod/pods", "") {
+		t.Fatal("robot must not inherit org policies (even group named robot)")
+	}
+	if enforceWith(t, e, "robot:robot-2", []string{"robot"}, "cluster-a", "GET", "/api/v1/namespaces/dev/pods", "") {
+		t.Fatal("policy is bound to a specific robot")
+	}
+}
+
 // TestFix8ActAnchoring FIX-8 回归：`delete` 策略不得匹配 `deletecollection`。
 func TestFix8ActAnchoring(t *testing.T) {
 	e := newMemEnforcer(t, [][]string{

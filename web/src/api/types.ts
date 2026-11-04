@@ -87,7 +87,7 @@ export interface AuditEvent {
 }
 
 export interface PolicyDTO {
-  subject_type: 'org' | 'user' | 'legacy';
+  subject_type: 'org' | 'user' | 'robot' | 'legacy';
   subject: string;
   cluster: string;
   namespace: string;
@@ -109,7 +109,7 @@ export interface PolicyRuleInput {
 }
 
 export interface CreatePolicyInput {
-  subject_type: 'org' | 'user';
+  subject_type: 'org' | 'user' | 'robot';
   subject: string;
   cluster: string;
   rules: PolicyRuleInput[];
@@ -289,6 +289,7 @@ export interface GroupDTO {
   name: string;
   desc: string;
   source: string;
+  is_admin: boolean;
   members: string[];
   created_at: string;
 }

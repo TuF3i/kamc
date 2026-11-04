@@ -348,9 +348,6 @@ export function UsersTab() {
                   上传头像
                 </Button>
               </Upload>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                PNG/JPEG/WebP/GIF，≤2MB；上传后生成带 token 的平台 URL
-              </Typography.Text>
             </Space>
           </Form.Item>
           <Form.Item

@@ -27,8 +27,8 @@ type PolicyRuleInput struct {
 
 // CreatePolicyRequest POST /api/v1/policies
 type CreatePolicyRequest struct {
-	SubjectType string            `json:"subject_type"` // org / user
-	Subject     string            `json:"subject"`      // 组织名或用户 sub
+	SubjectType string            `json:"subject_type"` // org / user / robot
+	Subject     string            `json:"subject"`      // 组名、用户名或机器人 ID
 	Cluster     string            `json:"cluster"`
 	Rules       []PolicyRuleInput `json:"rules"`
 }
@@ -43,7 +43,7 @@ type RemovePolicyRequest struct {
 
 // PolicyDTO 策略列表项：原始四元组 + 便于 UI 展示的解析字段。
 type PolicyDTO struct {
-	SubjectType string   `json:"subject_type"` // org / user / legacy
+	SubjectType string   `json:"subject_type"` // org / user / robot / legacy
 	Subject     string   `json:"subject"`
 	Cluster     string   `json:"cluster"`
 	Namespace   string   `json:"namespace"`

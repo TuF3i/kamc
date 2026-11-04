@@ -16,6 +16,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/casbin/casbin/v2"
 	"github.com/casbin/casbin/v2/model"
@@ -115,12 +116,20 @@ func (en *Enforcer) Release() {
 }
 
 // Enforce 判定主体是否放行，优先级语义：
+//   - 机器人主体（sub 以 robot: 开头）只按自身直绑策略判定，不参与用户/
+//     组策略（机器人来源只有平台，权限独立配置）；
 //   - 用户策略存在（user:<sub> 命中或该主体在 dom 下有任何策略行）时，
 //     完全遮蔽组策略——只按用户策略判定；
 //   - 无用户策略时，多个组的策略叠加：任一 org:<group> 命中即放行。
 //
 // 任一步骤报错即返回错误（调用方 fail-closed）。
 func (en *Enforcer) Enforce(sub string, groups []string, dom, obj, act string) (bool, error) {
+	// 机器人：claims.Subject 本身即 robot:<id>（策略主体同为 robot:<id>），
+	// 组策略不参与。
+	if strings.HasPrefix(sub, "robot:") {
+		return en.e.Enforce(sub, dom, obj, act)
+	}
+
 	userSub := "user:" + sub
 
 	// 用户策略遮蔽：该用户在 dom 下有任何策略行（无论是否命中本次请求）

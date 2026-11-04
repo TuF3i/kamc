@@ -24,8 +24,9 @@ import type { ClusterResource, PolicyDTO } from '@/api/types';
 import { summarizeBatch } from '@/utils/batch';
 
 function subjectLabel(record: PolicyDTO): string {
-  if (record.subject_type === 'org') return '组织';
+  if (record.subject_type === 'org') return '组';
   if (record.subject_type === 'user') return '用户';
+  if (record.subject_type === 'robot') return '机器人';
   return '遗留';
 }
 
@@ -41,16 +42,16 @@ function resourceLabel(record: PolicyDTO): string {
 }
 
 interface PoliciesTabProps {
-  /** 仅显示主体匹配该前缀的策略（如机器人页传 robot:<id>） */
-  subjectPrefix?: string;
+  /** 主体范围：robot 仅显示机器人策略；缺省显示用户/组策略（机器人策略单独管理） */
+  subjectScope?: 'robot';
   /** 仅显示该集群的策略 */
   clusterFilter?: string;
-  /** 显示「创建策略」按钮（权限 Tab 传入；机器人页签不带） */
+  /** 显示「创建策略」按钮 */
   onCreate?: () => void;
 }
 
 /** 策略列表（权限 Tab 与机器人权限 Tab 共用）。 */
-export function PoliciesTab({ subjectPrefix, clusterFilter, onCreate }: PoliciesTabProps) {
+export function PoliciesTab({ subjectScope, clusterFilter, onCreate }: PoliciesTabProps) {
   const { message, modal } = App.useApp();
   const [policies, setPolicies] = useState<PolicyDTO[]>([]);
   const [loading, setLoading] = useState(true);
@@ -100,8 +101,11 @@ export function PoliciesTab({ subjectPrefix, clusterFilter, onCreate }: Policies
 
   const filtered = useMemo(() => {
     let list = policies;
-    if (subjectPrefix) {
-      list = list.filter((p) => p.sub === `user:${subjectPrefix}`);
+    if (subjectScope === 'robot') {
+      list = list.filter((p) => p.subject_type === 'robot');
+    } else {
+      // 机器人策略只在机器人页签维护
+      list = list.filter((p) => p.subject_type !== 'robot');
     }
     if (clusterFilter) {
       list = list.filter((p) => p.dom === clusterFilter);
@@ -118,7 +122,7 @@ export function PoliciesTab({ subjectPrefix, clusterFilter, onCreate }: Policies
         record.verbs.join(' '),
       ].some((value) => value.toLowerCase().includes(keyword)),
     );
-  }, [policies, search, subjectPrefix, clusterFilter]);
+  }, [policies, search, subjectScope, clusterFilter]);
 
   const policyKey = (record: PolicyDTO) => `${record.sub}|${record.dom}|${record.obj}|${record.act}`;
 
@@ -152,7 +156,11 @@ export function PoliciesTab({ subjectPrefix, clusterFilter, onCreate }: Policies
     const values = await editForm.validateFields();
     const namespaced = isNamespaced(editing);
     const subjectType =
-      editing.subject_type === 'org' || editing.sub.startsWith('org:') ? 'org' : 'user';
+      editing.subject_type === 'org'
+        ? 'org'
+        : editing.subject_type === 'robot'
+          ? 'robot'
+          : 'user';
     setEditSaving(true);
     try {
       // 编辑语义：删除旧四元组 + 按新规则重建（保持主体/集群不变）
@@ -226,7 +234,15 @@ export function PoliciesTab({ subjectPrefix, clusterFilter, onCreate }: Policies
       width: 260,
       render: (_, record) => (
         <Space size={6}>
-          <Tag color={record.subject_type === 'org' ? 'purple' : 'blue'}>
+          <Tag
+            color={
+              record.subject_type === 'org'
+                ? 'purple'
+                : record.subject_type === 'robot'
+                  ? 'geekblue'
+                  : 'blue'
+            }
+          >
             {subjectLabel(record)}
           </Tag>
           <code className="mono strong">{record.subject}</code>

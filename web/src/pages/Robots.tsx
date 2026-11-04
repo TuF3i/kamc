@@ -28,6 +28,7 @@ import { listClusters } from '@/api/clusters';
 import type { Cluster, CreateRobotResponse, Robot } from '@/api/types';
 import { PageHeader } from '@/components/PageHeader';
 import { PoliciesTab } from '@/components/access/PoliciesTab';
+import { PolicyEditor } from '@/components/PolicyEditor';
 import { CopyButton } from '@/components/CopyButton';
 import { fmtTime } from '@/utils/format';
 import { downloadTextFile } from '@/utils/download';
@@ -54,6 +55,9 @@ export function Robots() {
   const [robotTab, setRobotTab] = useState<'list' | 'policies'>('list');
   const [created, setCreated] = useState<CreateRobotResponse | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorRobot, setEditorRobot] = useState<string>();
+  const [policiesKey, setPoliciesKey] = useState(0);
   const [form] = Form.useForm<RobotForm>();
 
   const load = async () => {
@@ -165,7 +169,8 @@ export function Robots() {
 
   const configurePolicy = (robot: Robot) => {
     setRobotTab('policies');
-    void robot; // 列表页签内切换；策略过滤由 PoliciesTab 主体前缀统一承担
+    setEditorRobot(robot.id);
+    setEditorOpen(true);
   };
 
   const columns: TableColumnsType<Robot> = [
@@ -344,7 +349,16 @@ export function Robots() {
           {
             key: 'policies',
             label: '权限',
-            children: <PoliciesTab subjectPrefix="robot:" />,
+            children: (
+              <PoliciesTab
+                key={policiesKey}
+                subjectScope="robot"
+                onCreate={() => {
+                  setEditorRobot(undefined);
+                  setEditorOpen(true);
+                }}
+              />
+            ),
           },
         ]}
       />
@@ -433,12 +447,7 @@ export function Robots() {
               type="info"
               showIcon
               message="机器人目前还没有权限"
-              description={
-                <span>
-                  请到权限页为 <code className="mono">user:{created.robot.sub}</code>{' '}
-                  配置策略，或点击机器人列表中的「配置策略」。
-                </span>
-              }
+              description="机器人是独立主体，请点击机器人列表中的「配置策略」为其单独授予权限（不依赖用户或组）。"
             />
             <pre className="code-block">{created.kubeconfig}</pre>
             <Space>
@@ -450,6 +459,17 @@ export function Robots() {
           </div>
         ) : null}
       </Modal>
+
+      <PolicyEditor
+        open={editorOpen}
+        clusters={clusters}
+        robots={robots}
+        robotOnly
+        initialSubjectType="robot"
+        initialSubject={editorRobot}
+        onClose={() => setEditorOpen(false)}
+        onCreated={() => setPoliciesKey((k) => k + 1)}
+      />
     </div>
   );
 }

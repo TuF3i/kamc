@@ -8,8 +8,7 @@ import { ScriptsTab } from '@/components/access/ScriptsTab';
 import { UsersTab } from '@/components/access/UsersTab';
 import { PolicyEditor } from '@/components/PolicyEditor';
 import { listClusters } from '@/api/clusters';
-import { listRobots } from '@/api/robots';
-import type { Cluster, Robot } from '@/api/types';
+import type { Cluster } from '@/api/types';
 
 type AccessTab = 'users' | 'groups' | 'policies' | 'scripts';
 
@@ -17,18 +16,14 @@ export function Access() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState<AccessTab>((searchParams.get('tab') as AccessTab) || 'users');
   const [clusters, setClusters] = useState<Cluster[]>([]);
-  const [robots, setRobots] = useState<Robot[]>([]);
   const [editorOpen, setEditorOpen] = useState(false);
   const [initialSubjectType, setInitialSubjectType] = useState<'org' | 'user'>('user');
   const [initialSubject, setInitialSubject] = useState<string>();
   const [policiesKey, setPoliciesKey] = useState(0);
 
   useEffect(() => {
-    void Promise.all([listClusters(), listRobots()])
-      .then(([clusterList, robotList]) => {
-        setClusters(clusterList);
-        setRobots(robotList);
-      })
+    void listClusters()
+      .then(setClusters)
       .catch(() => undefined);
   }, []);
 
@@ -74,7 +69,6 @@ export function Access() {
                 <PolicyEditor
                   open={editorOpen}
                   clusters={clusters}
-                  robots={robots}
                   initialSubjectType={initialSubjectType}
                   initialSubject={initialSubject}
                   onClose={() => setEditorOpen(false)}

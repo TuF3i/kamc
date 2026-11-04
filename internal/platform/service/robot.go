@@ -81,13 +81,13 @@ func (s *Service) CreateRobot(ctx context.Context, r *modules.Robot) (*modules.R
 	return r.ToDTO(time.Now()), nil
 }
 
-// DeleteRobot 删除机器人，并清理 user:<robot sub> 的全部直接策略。
+// DeleteRobot 删除机器人，并清理 robot:<id> 的全部直接策略。
 func (s *Service) DeleteRobot(ctx context.Context, id string) (*modules.Robot, *errcode.Response) {
 	r, rsp := s.GetRobotModel(ctx, id)
 	if rsp != nil {
 		return nil, rsp
 	}
-	if _, rsp := s.RemovePoliciesBySubject(ctx, "user:"+r.Sub); rsp != nil {
+	if _, rsp := s.RemovePoliciesBySubject(ctx, r.Sub); rsp != nil {
 		return nil, rsp
 	}
 	rows, err := s.d.DeleteRobot(ctx, r.ID)

@@ -13,6 +13,12 @@ func TestSubjectValue(t *testing.T) {
 	if got, rsp := subjectValue("user", "uid-alice"); rsp != nil || got != "user:uid-alice" {
 		t.Fatalf("user: got=%q rsp=%v", got, rsp)
 	}
+	if got, rsp := subjectValue("robot", "robot-1"); rsp != nil || got != "robot:robot-1" {
+		t.Fatalf("robot: got=%q rsp=%v", got, rsp)
+	}
+	if _, rsp := subjectValue("robot", "robot:robot-1"); rsp == nil {
+		t.Fatal("prefixed robot id should be rejected")
+	}
 	if _, rsp := subjectValue("role", "x"); rsp == nil {
 		t.Fatal("role subject type should be rejected")
 	}
@@ -92,5 +98,14 @@ func TestPolicyDTOFromRow(t *testing.T) {
 	wild := policyDTOFromRow([]string{"user:u", "c", "*", ".*"})
 	if wild.Namespace != "*" || wild.Resource != "*" || len(wild.Verbs) != 1 || wild.Verbs[0] != "*" {
 		t.Fatalf("wildcard: %+v", wild)
+	}
+
+	robot := policyDTOFromRow([]string{"robot:robot-1", "c", "dev/pods", "get"})
+	if robot.SubjectType != "robot" || robot.Subject != "robot-1" {
+		t.Fatalf("robot: %+v", robot)
+	}
+	legacyRobot := policyDTOFromRow([]string{"user:robot:robot-1", "c", "dev/pods", "get"})
+	if legacyRobot.SubjectType != "robot" || legacyRobot.Subject != "robot-1" {
+		t.Fatalf("legacy robot: %+v", legacyRobot)
 	}
 }

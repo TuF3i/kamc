@@ -27,17 +27,18 @@ func validatePolicyFields(fields ...string) *errcode.Response {
 	return nil
 }
 
-// subjectValue 把 UI 的 org/user + 名称转换为 Casbin 主体前缀。
+// subjectValue 把 UI 的 org/user/robot + 名称转换为 Casbin 主体前缀。
+// 机器人主体只来自平台（机器人 ID 由平台生成），不参与用户/组策略。
 func subjectValue(subjectType, subject string) (string, *errcode.Response) {
 	kind := strings.ToLower(strings.TrimSpace(subjectType))
-	if kind != "org" && kind != "user" {
+	if kind != "org" && kind != "user" && kind != "robot" {
 		return "", errcode.ErrInvalidParam
 	}
 	name := strings.TrimSpace(subject)
 	if name == "" || len(name) > maxPolicyFieldLen {
 		return "", errcode.ErrInvalidParam
 	}
-	if strings.HasPrefix(name, "org:") || strings.HasPrefix(name, "user:") {
+	if strings.HasPrefix(name, "org:") || strings.HasPrefix(name, "user:") || strings.HasPrefix(name, "robot:") {
 		return "", errcode.ErrInvalidParam
 	}
 	return kind + ":" + name, nil
@@ -163,9 +164,15 @@ func policyDTOFromRow(row []string) modules.PolicyDTO {
 	}
 	sub, dom, obj, act := row[0], row[1], row[2], row[3]
 	subjectType, subject := "legacy", sub
-	if strings.HasPrefix(sub, "user:") {
+	switch {
+	case strings.HasPrefix(sub, "robot:"):
+		subjectType, subject = "robot", strings.TrimPrefix(sub, "robot:")
+	case strings.HasPrefix(sub, "user:robot:"):
+		// 旧版本把机器人策略写成 user:robot:<id>；启动迁移会改写，此处兜底
+		subjectType, subject = "robot", strings.TrimPrefix(sub, "user:robot:")
+	case strings.HasPrefix(sub, "user:"):
 		subjectType, subject = "user", strings.TrimPrefix(sub, "user:")
-	} else if strings.HasPrefix(sub, "org:") {
+	case strings.HasPrefix(sub, "org:"):
 		subjectType, subject = "org", strings.TrimPrefix(sub, "org:")
 	}
 	namespace, resource, subresource := parseObj(obj)

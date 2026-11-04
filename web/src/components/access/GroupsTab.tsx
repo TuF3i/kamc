@@ -11,6 +11,7 @@ import {
   Popconfirm,
   Select,
   Space,
+  Switch,
   Table,
   Tag,
   Typography,
@@ -44,13 +45,13 @@ export function GroupsTab() {
   const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [form] = Form.useForm<{ name: string; desc: string }>();
+  const [form] = Form.useForm<{ name: string; desc: string; is_admin: boolean }>();
 
   const [editing, setEditing] = useState<GroupDTO | null>(null);
   const [editSaving, setEditSaving] = useState(false);
   const [memberBusy, setMemberBusy] = useState(false);
   const [memberToAdd, setMemberToAdd] = useState<string>();
-  const [editForm] = Form.useForm<{ name: string; desc: string }>();
+  const [editForm] = Form.useForm<{ name: string; desc: string; is_admin: boolean }>();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -76,7 +77,7 @@ export function GroupsTab() {
     const values = await form.validateFields();
     setCreating(true);
     try {
-      await createGroup(values.name.trim(), values.desc?.trim() || '');
+      await createGroup(values.name.trim(), values.desc?.trim() || '', values.is_admin === true);
       message.success(`组 ${values.name.trim()} 已创建`);
       setCreateOpen(false);
       form.resetFields();
@@ -91,7 +92,7 @@ export function GroupsTab() {
   const openEdit = (g: GroupDTO) => {
     setEditing(g);
     setMemberToAdd(undefined);
-    editForm.setFieldsValue({ name: g.name, desc: g.desc });
+    editForm.setFieldsValue({ name: g.name, desc: g.desc, is_admin: g.is_admin });
   };
 
   const submitEdit = async () => {
@@ -102,6 +103,7 @@ export function GroupsTab() {
       const updated = await updateGroup(editing.name, {
         name: values.name.trim(),
         desc: values.desc?.trim() || '',
+        is_admin: values.is_admin === true,
       });
       message.success(`组 ${updated.name} 已更新`);
       setEditing(null);
@@ -164,11 +166,12 @@ export function GroupsTab() {
       title: '组名',
       dataIndex: 'name',
       key: 'name',
-      width: 220,
-      render: (name: string) => (
+      width: 260,
+      render: (name: string, g) => (
         <Space size={8}>
           <TeamOutlined style={{ color: '#7cb3ff' }} />
           <code className="mono strong">{name}</code>
+          {g.is_admin ? <Tag color="gold">平台管理员</Tag> : null}
         </Space>
       ),
     },
@@ -264,12 +267,14 @@ export function GroupsTab() {
               { required: true, message: '请输入组名' },
               { max: 128, message: '组名最长 128 字符' },
             ]}
-            extra="策略主体 org:<组名> 中的组名"
           >
             <Input placeholder="dev-team" autoComplete="off" />
           </Form.Item>
           <Form.Item name="desc" label="描述">
             <Input.TextArea placeholder="可选" rows={3} maxLength={500} />
+          </Form.Item>
+          <Form.Item name="is_admin" label="平台管理员" valuePropName="checked">
+            <Switch />
           </Form.Item>
         </Form>
       </Modal>
@@ -301,6 +306,9 @@ export function GroupsTab() {
               </Form.Item>
               <Form.Item name="desc" label="描述">
                 <Input.TextArea rows={2} maxLength={500} />
+              </Form.Item>
+              <Form.Item name="is_admin" label="平台管理员" valuePropName="checked">
+                <Switch />
               </Form.Item>
             </Form>
 

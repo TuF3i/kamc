@@ -147,11 +147,11 @@ KAMC_API=http://127.0.0.1:8080 npm run dev
 - [x] Prometheus 指标（§12.3）：/metrics（平台侧；Agent 侧无 HTTP 端口属后续）
 - [x] 部署产物：deploy/（nginx、平台/Agent manifests、NetworkPolicy、README
       含上线前人工验收清单——真实集群演练属上线前人工项）
-- [x] 权限策略重构：移除用户/角色/绑定体系，策略主体直接为
-      `user:<sub>` 或 `org:<Authentik group>`；策略匹配集群、namespace、
-      资源（GVR）与动作。Authentik API 提供组织/用户下拉；集群 GVR/动词
-      通过 Agent 隧道实时 discovery（5 分钟缓存）。Robot 作为 `user:<sub>`
-      主体直接授权，删除时清理其策略。
+- [x] 权限策略重构：策略主体分三类——`user:<username>`（平台用户目录）、
+      `org:<group>`（IdP/平台组）、`robot:<robot id>`（平台签发，独立主体，
+      只在机器人页配置）；用户策略优先并完全遮蔽组策略，多组策略取并集；
+      组可标记 `is_admin`，成员登录时在 JWT 中注入管理组声明。集群 GVR/动词
+      通过 Agent 隧道实时 discovery（5 分钟缓存）。
 - [x] Web 前端（web/，React 18 + Ant Design 5 + TypeScript + Vite）：
       登录（SSO + 用户名密码）、概览、集群/Token 管理、权限策略编辑器、
       机器人、审计、kubeconfig 下载、exec 终端（xterm + v5.channel.k8s.io WS，

@@ -25,14 +25,17 @@ import type {
 interface PolicyEditorProps {
   open: boolean;
   clusters: Cluster[];
-  robots: Robot[];
-  initialSubjectType?: 'org' | 'user';
+  /** 机器人主体候选（机器人页使用；标准权限页不传） */
+  robots?: Robot[];
+  /** 仅允许机器人主体：机器人页的独立权限入口 */
+  robotOnly?: boolean;
+  initialSubjectType?: SubjectType;
   initialSubject?: string;
   onClose: () => void;
   onCreated: () => void;
 }
 
-type SubjectType = 'org' | 'user';
+type SubjectType = 'org' | 'user' | 'robot';
 
 interface RuleDraft {
   key: number;
@@ -59,14 +62,15 @@ function newRule(key: number): RuleDraft {
 export function PolicyEditor({
   open,
   clusters,
-  robots,
+  robots = [],
+  robotOnly = false,
   initialSubjectType,
   initialSubject,
   onClose,
   onCreated,
 }: PolicyEditorProps) {
   const { message } = App.useApp();
-  const [subjectType, setSubjectType] = useState<SubjectType>('user');
+  const [subjectType, setSubjectType] = useState<SubjectType>(robotOnly ? 'robot' : 'user');
   const [subject, setSubject] = useState<string>();
   const [cluster, setCluster] = useState<string>();
   const [directoryOptions, setDirectoryOptions] = useState<DirectoryOption[]>([]);
@@ -81,14 +85,23 @@ export function PolicyEditor({
   const ruleSeq = useRef(2);
   const searchTimer = useRef<number>();
 
+  /** 机器人主体候选：值使用机器人 ID（后端拼 robot:<id> 与 Token sub 对齐） */
   const robotOptions = useMemo<DirectoryOption[]>(
-    () => robots.map((r) => ({ value: r.sub, label: `机器人 · ${r.name}（${r.sub}）` })),
+    () => robots.map((r) => ({ value: r.id, label: `${r.name}（${r.sub}）` })),
     [robots],
   );
 
   const loadDirectory = async (type: SubjectType, query: string) => {
-    setDirectoryLoading(true);
     setDirectoryError(null);
+    if (type === 'robot') {
+      const q = query.trim().toLowerCase();
+      setDirectoryOptions(
+        robotOptions.filter((o) => !q || o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q)),
+      );
+      setDirectoryLoading(false);
+      return;
+    }
+    setDirectoryLoading(true);
     try {
       const q = query.trim().toLowerCase();
       const options: DirectoryOption[] =
@@ -108,23 +121,10 @@ export function PolicyEditor({
                 value: u.username,
                 label: `${u.nickname || u.username}（${u.username}）`,
               }));
-      const extra =
-        type === 'user'
-          ? robotOptions.filter(
-              (o) =>
-                !query ||
-                o.label.toLowerCase().includes(query.toLowerCase()) ||
-                o.value.toLowerCase().includes(query.toLowerCase()),
-            )
-          : [];
-      const merged = new Map<string, DirectoryOption>();
-      for (const option of [...options, ...extra]) {
-        merged.set(option.value, option);
-      }
-      setDirectoryOptions(Array.from(merged.values()));
+      setDirectoryOptions(options);
     } catch (err) {
       setDirectoryError(err instanceof Error ? err.message : '平台用户/组加载失败');
-      setDirectoryOptions(type === 'user' ? robotOptions : []);
+      setDirectoryOptions([]);
     } finally {
       setDirectoryLoading(false);
     }
@@ -132,7 +132,7 @@ export function PolicyEditor({
 
   useEffect(() => {
     if (!open) return;
-    const type = initialSubjectType ?? 'user';
+    const type = initialSubjectType ?? (robotOnly ? 'robot' : 'user');
     setSubjectType(type);
     setSubject(initialSubject);
     setCluster(undefined);
@@ -282,7 +282,7 @@ export function PolicyEditor({
 
   const submit = async () => {
     if (!subject) {
-      message.warning('请选择组织或用户');
+      message.warning('请选择主体');
       return;
     }
     if (!cluster) {
@@ -335,7 +335,7 @@ export function PolicyEditor({
 
   return (
     <Drawer
-      title="创建策略"
+      title={robotOnly ? '配置机器人策略' : '创建策略'}
       open={open}
       onClose={onClose}
       width={860}
@@ -356,21 +356,34 @@ export function PolicyEditor({
             <span className="policy-step">1</span>
             <span>选择匹配主体</span>
           </div>
-          <Radio.Group
-            value={subjectType}
-            optionType="button"
-            buttonStyle="solid"
-            onChange={(e) => onSubjectTypeChange(e.target.value as SubjectType)}
-            options={[
-              { value: 'user', label: '用户' },
-              { value: 'org', label: '组织' },
-            ]}
-          />
+          {robotOnly ? (
+            <Space size={8}>
+              <Tag color="geekblue">机器人</Tag>
+              <Typography.Text type="secondary">机器人主体由平台签发，仅使用自身策略</Typography.Text>
+            </Space>
+          ) : (
+            <Radio.Group
+              value={subjectType}
+              optionType="button"
+              buttonStyle="solid"
+              onChange={(e) => onSubjectTypeChange(e.target.value as SubjectType)}
+              options={[
+                { value: 'user', label: '用户' },
+                { value: 'org', label: '组' },
+              ]}
+            />
+          )}
           <Select
             showSearch
             allowClear
             className="policy-subject-select"
-            placeholder={subjectType === 'org' ? '选择 Authentik 组织' : '选择 Authentik 用户或机器人'}
+            placeholder={
+              subjectType === 'org'
+                ? '选择组'
+                : subjectType === 'robot'
+                  ? '选择机器人'
+                  : '选择用户'
+            }
             value={subject}
             loading={directoryLoading}
             filterOption={false}
@@ -383,7 +396,7 @@ export function PolicyEditor({
             <Alert
               type="warning"
               showIcon
-              message="Authentik 目录不可用"
+              message="用户/组目录不可用"
               description={directoryError}
             />
           ) : null}

@@ -57,10 +57,10 @@ func TestRobotPolicyE2E(t *testing.T) {
 		t.Fatalf("robot kubeconfig missing token for %s", created.Robot.Sub)
 	}
 
-	// 为机器人主体创建直接策略
+	// 为机器人主体创建直接策略（独立主体：subject 为机器人 ID）
 	_, ar = call(t, rt, http.MethodPost, "/api/v1/policies", map[string]any{
-		"subject_type": "user",
-		"subject":      created.Robot.Sub,
+		"subject_type": "robot",
+		"subject":      created.Robot.ID,
 		"cluster":      clusterID,
 		"rules": []map[string]any{
 			{"namespace": "", "resource": "*", "namespaced": false, "verbs": []string{"*"}},
@@ -108,7 +108,7 @@ func TestRobotPolicyE2E(t *testing.T) {
 		t.Fatalf("decode policies: %v", err)
 	}
 	for _, policy := range policies {
-		if policy.Sub == "user:"+created.Robot.Sub {
+		if policy.Sub == created.Robot.Sub {
 			t.Fatalf("robot policy should be removed after delete: %+v", policy)
 		}
 	}

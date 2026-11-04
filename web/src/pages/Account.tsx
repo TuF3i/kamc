@@ -1,19 +1,40 @@
 import { useEffect, useState } from 'react';
-import { Card, Descriptions, Space, Tag } from 'antd';
+import { App, Button, Card, Descriptions, Space, Tag, Upload } from 'antd';
+import { UploadOutlined } from '@ant-design/icons';
 import { useAuthStore } from '@/stores/auth';
+import { uploadAvatarSelf } from '@/api/users';
 import { PageHeader } from '@/components/PageHeader';
 import { fmtRemaining, fmtTime, remainingSeconds } from '@/utils/format';
 
 export function Account() {
+  const { message } = App.useApp();
   const claims = useAuthStore((s) => s.claims);
   const profile = useAuthStore((s) => s.profile);
   const isAdmin = useAuthStore((s) => s.isAdmin);
+  const refreshProfile = useAuthStore((s) => s.refreshProfile);
   const [, setTick] = useState(0);
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     const timer = window.setInterval(() => setTick((v) => v + 1), 1000);
     return () => window.clearInterval(timer);
   }, []);
+
+  const uploadOwnAvatar = (file: File) => {
+    if (file.size > 2 * 1024 * 1024) {
+      message.error('头像文件过大（上限 2MB）');
+      return Upload.LIST_IGNORE;
+    }
+    setUploading(true);
+    void uploadAvatarSelf(file)
+      .then(async () => {
+        await refreshProfile();
+        message.success('头像已更新');
+      })
+      .catch((err) => message.error(err instanceof Error ? err.message : '头像上传失败'))
+      .finally(() => setUploading(false));
+    return false;
+  };
 
   const secondsLeft = remainingSeconds(claims?.exp);
 
@@ -37,6 +58,20 @@ export function Account() {
           <div>
             <div className="profile-name">{profile?.nickname || claims?.sub || '—'}</div>
             <div className="profile-sub">{claims?.email || '未设置邮箱'}</div>
+            <Upload
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              showUploadList={false}
+              beforeUpload={uploadOwnAvatar}
+            >
+              <Button
+                size="small"
+                icon={<UploadOutlined />}
+                loading={uploading}
+                style={{ marginTop: 8 }}
+              >
+                更换头像
+              </Button>
+            </Upload>
           </div>
         </div>
 

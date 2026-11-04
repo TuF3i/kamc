@@ -534,6 +534,46 @@ paths:
                       data: {$ref: '#/components/schemas/PlatformUser'}
         '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
 
+  /api/v1/profile/avatar:
+    post:
+      tags: [认证]
+      summary: 修改自己的头像（自服务）
+      description: |
+        仅需 JWT：上传 raw 图片体（image/png、image/jpeg、image/webp、
+        image/gif，≤2MB），保存到平台头像目录并返回带签名 token 的展示 URL。
+      security:
+        - platformJWT: []
+      requestBody:
+        required: true
+        content:
+          image/png:
+            schema: {type: string, format: binary}
+          image/jpeg:
+            schema: {type: string, format: binary}
+          image/webp:
+            schema: {type: string, format: binary}
+          image/gif:
+            schema: {type: string, format: binary}
+      responses:
+        '200':
+          description: 新头像 URL
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          avatar_url: {type: string}
+        '400':
+          description: 类型/大小非法（纯文本）
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '503':
+          description: 头像存储未启用（纯文本）
+
   /api/v1/clusters/{id}/info:
     get:
       tags: [集群]
@@ -1130,7 +1170,7 @@ components:
     PolicyDTO:
       type: object
       properties:
-        subject_type: {type: string, enum: [org, user, legacy]}
+        subject_type: {type: string, enum: [org, user, robot, legacy]}
         subject: {type: string}
         cluster: {type: string}
         namespace: {type: string, description: "* 表示全部命名空间；cluster-scoped 为空"}
@@ -1159,7 +1199,7 @@ components:
       type: object
       required: [subject_type, subject, cluster, rules]
       properties:
-        subject_type: {type: string, enum: [org, user]}
+        subject_type: {type: string, enum: [org, user, robot], description: 'subject 语义：robot 时为机器人 ID（平台签发）'}
         subject: {type: string, example: dev-team}
         cluster: {type: string, example: prod-bj}
         rules:

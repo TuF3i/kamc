@@ -7,10 +7,17 @@ import (
 	"github.com/TuF3i/kamc/internal/platform/modules"
 )
 
-// SetupPolicy 建 Casbin 策略表（幂等）
+// SetupPolicy 建 Casbin 策略表（幂等）并迁移机器人主体前缀。
 func (d *Dao) SetupPolicy(ctx context.Context) error {
 	if err := d.db.WithContext(ctx).AutoMigrate(&modules.PolicyRule{}); err != nil {
 		return fmt.Errorf("dao -> migrate policy_rule: %w", err)
+	}
+	// 旧版本把机器人策略挂为 user:robot:<id>；机器人独立主体后统一为
+	// robot:<id>（与 Robot Token 的 sub 一致）。
+	if err := d.db.WithContext(ctx).Exec(
+		"UPDATE policy_rules SET v0 = REPLACE(v0, 'user:robot:', 'robot:') WHERE v0 LIKE 'user:robot:%'",
+	).Error; err != nil {
+		return fmt.Errorf("dao -> migrate robot policy subjects: %w", err)
 	}
 	return nil
 }

@@ -250,9 +250,11 @@ users:
 ## 五、基于 RequestInfo 的 Casbin 鉴权
 
 > **v3.0 权限模型变更**：移除 `g` 角色/用户绑定；策略主体直接为
-> `user:<sub>` 或 `org:<Authentik group>`，鉴权时对用户与 JWT groups
-> 逐候选匹配。权限页使用 Authentik API 选择组织/用户，并通过 Agent 隧道
-> discovery 获取集群 GVR/动词/namespace。下方 v2.0 的 `g` 示例仅保留历史说明。
+> `user:<username>`（平台用户目录）、`org:<group>`（IdP/平台组）或
+> `robot:<robot id>`（平台签发，独立主体），鉴权时对用户与 JWT groups
+> 逐候选匹配；用户策略优先并完全遮蔽组策略，多组策略取并集。权限页使用
+> 平台用户/组目录选择主体，并通过 Agent 隧道 discovery 获取集群
+> GVR/动词/namespace。下方 v2.0 的 `g` 示例仅保留历史说明。
 
 ### 5.1 为什么不能用原始 URL 匹配（BUG-2 修复说明）
 

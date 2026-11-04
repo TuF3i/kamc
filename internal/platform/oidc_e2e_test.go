@@ -207,7 +207,7 @@ func TestOIDCBrowserBridgeE2E(t *testing.T) {
 		t.Fatalf("read body: %v", err)
 	}
 	body := string(raw)
-	if !strings.Contains(body, `localStorage.setItem('kamc_token',"`) || !strings.Contains(body, `location.replace('/')`) {
+	if !strings.Contains(body, `localStorage.setItem('kamc_token',"`) || !strings.Contains(body, `location.replace('/#/')`) {
 		t.Fatalf("bridge page malformed: %s", body)
 	}
 }

@@ -62,48 +62,47 @@ npm run dev:mock   # mock 模式：完全脱离后端，使用前端内置模拟
 | `/` | 概览（系统统计 + 近 7 天登录/操作/拦截折线图） | 管理员 |
 | `/clusters` | 集群列表：注册、搜索、注销（输入完整 ID 确认） | 管理员 |
 | `/clusters/:id` | 集群详情：概况 / Agent Token / Agent 安装 / kubeconfig | 管理员 |
-| `/platform` | 平台信息：设置 / SSO / 数据库 / 缓存 / Authentik / Go 运行时 | 管理员 |
-| `/access` | 权限策略列表与四段式策略编辑器 | 管理员 |
-| `/audit` | 审计日志查询（用户/集群/条数） | 管理员 |
+| `/platform` | 平台信息：设置 / SSO / 数据库 / 缓存 / Go 运行时 | 管理员 |
+| `/access` | 用户 / 组 / 权限策略 / 映射脚本四个 Tab | 管理员 |
+| `/audit` | 审计日志查询（平台日志 / 集群日志） | 管理员 |
 | `/robots` | CICD 机器人：签发长期 kubeconfig、配置策略、下载、吊销 | 管理员 |
 | `/kubeconfig` | 独立 kubeconfig 下载页（普通用户默认落地页） | 登录 |
-| `/account` | 当前身份详细信息 | 登录 |
+| `/account` | 个人中心：身份详情、修改头像 | 登录 |
 
 ## 权限模型与策略编辑器
 
-权限页只保留策略，不再有用户/角色/绑定 Tab。策略主体直接是：
+权限页四个 Tab：**用户**（SSO/LDAP 登录自动同步 + 手动创建）、**组**
+（平台组与 IdP 组聚合视图，可标记平台管理员）、**权限**（用户/组策略）、
+**映射脚本**（Lua）。
 
-- **组织**：Authentik Group，存为 `org:<group name>`；
-- **用户**：Authentik User，存为 `user:<subject>`（Robot 也是 `user:robot:<id>`）。
+策略主体分三类：
+
+- **用户**：`user:<username>`，来源为平台用户目录；
+- **组**：`org:<group name>`，成员关系来自登录同步或平台维护；
+- **机器人**：`robot:<robot id>`，来源只有平台（Agent 页签发），权限在
+  机器人页的「权限」Tab 单独配置，不参与用户/组策略。
+
+用户策略优先：某用户在某集群下存在任意策略行时，只按用户策略判定；否则
+多个组的策略并集判定（任一命中即放行）。机器人只按自身直绑策略判定。
 
 创建策略的 Drawer 从上到下四段：
 
-1. **主体**：用户/组织单选；组织与用户来自 Authentik API，用户下拉额外合并本平台 Robot。
+1. **主体**：用户/组单选；机器人页固定为机器人主体（下拉选择已签发机器人）。
 2. **集群**：单选；选择后调用 `GET /api/v1/clusters/{id}/resources` 加载 GVR、动词和 namespace。
 3. **资源与动作**：可添加多条；每条选择资源（可含 subresource）、namespace（`*` 或具体值）和多选动作；资源 `*` 自动授予全部动作 `*`。
 4. **通配与预览**：展示最终展开的 `p, sub, dom, obj, act` 行。
 
 后端展开规则：namespace `*` 生成 `*/resource` 并补充 `cluster/resource` 覆盖全命名空间 list；cluster-scoped 资源生成 `cluster/resource`；具体 namespace 生成 `<ns>/resource`。
 
-## Authentik 目录
-
-策略页的组织/用户下拉由平台后端代理 Authentik API：
-
-- `AUTHENTIK_API_URL`（为空时从 `OIDC_ISSUER` origin 推导）
-- `AUTHENTIK_API_TOKEN`（必填，读取 core users/groups）
-- `AUTHENTIK_USER_SUB_FIELD`（默认 `uid`，可选 `username`/`pk`）
-- `AUTHENTIK_CACHE_TTL`（默认 `60s`）
-
-未配置 Token 时目录接口返回 503，编辑器会显示配置错误。
-
 ## Robot 权限
 
-Robot 不再绑定角色。创建机器人只填名称与集群，之后：
+创建机器人只填名称与集群，机器人是独立主体（Token sub = `robot:<id>`）：
 
-- 在权限页为 `user:robot:<id>` 创建策略；或
-- 在机器人列表点击「配置策略」，自动跳转权限页并预填机器人主体。
+- 在机器人页「权限」Tab 创建策略，主体固定为机器人；
+- 在机器人列表点击「配置策略」，直接打开抽屉并预填该机器人；
+- 主权限页不展示机器人策略，避免与用户/组策略混用。
 
-删除机器人会吊销 JWT、清理该主体的全部直接策略并删除记录。
+删除机器人会吊销 JWT、清理 `robot:<id>` 的全部直接策略并删除记录。
 
 ## 认证与 API 约定
 

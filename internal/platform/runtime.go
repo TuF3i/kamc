@@ -173,6 +173,7 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		return nil, fmt.Errorf("platform -> build authz: %w", err)
 	}
 	svc := service.NewService(d, authzEn)
+	svc.SetAdminGroup(envDefault("AM_ADMIN_GROUP", "am:admin"))
 
 	// 认证服务：密钥环（Secret 挂载）或开发环境临时密钥（重启失效，打警告）；
 	// Token 吊销：Redis 可用时跨副本同步（惰性周期拉取，鉴权热路径只查本地

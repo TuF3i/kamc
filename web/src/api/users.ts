@@ -40,21 +40,18 @@ export function deleteUser(username: string): Promise<void> {
   return apiDelete<void>(`/api/v1/users/${encodeURIComponent(username)}`);
 }
 
-/** 上传头像（raw image body）；返回带签名 token 的展示 URL。 */
-export async function uploadAvatar(username: string, file: File): Promise<string> {
-  if (import.meta.env.VITE_APP_MODE === 'mock') {
-    const dataUrl = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.onerror = () => reject(new Error('读取头像文件失败'));
-      reader.readAsDataURL(file);
-    });
-    const { mockSetAvatar } = await import('@/mocks');
-    mockSetAvatar(username, dataUrl);
-    return dataUrl;
-  }
+async function readAsDataURL(file: File): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error('读取头像文件失败'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function postAvatar(path: string, file: File): Promise<string> {
   const { getToken } = await import('./http');
-  const res = await fetch(`/api/v1/users/${encodeURIComponent(username)}/avatar`, {
+  const res = await fetch(path, {
     method: 'POST',
     headers: {
       'Content-Type': file.type,
@@ -71,14 +68,36 @@ export async function uploadAvatar(username: string, file: File): Promise<string
   return url;
 }
 
+/** 管理面上传指定用户头像（raw image body）；返回带签名 token 的展示 URL。 */
+export async function uploadAvatar(username: string, file: File): Promise<string> {
+  if (import.meta.env.VITE_APP_MODE === 'mock') {
+    const dataUrl = await readAsDataURL(file);
+    const { mockSetAvatar } = await import('@/mocks');
+    mockSetAvatar(username, dataUrl);
+    return dataUrl;
+  }
+  return postAvatar(`/api/v1/users/${encodeURIComponent(username)}/avatar`, file);
+}
+
+/** 当前登录用户修改自己的头像（自服务，仅需 JWT）。 */
+export async function uploadAvatarSelf(file: File): Promise<string> {
+  if (import.meta.env.VITE_APP_MODE === 'mock') {
+    const dataUrl = await readAsDataURL(file);
+    const { mockSetAvatar } = await import('@/mocks');
+    mockSetAvatar('sysadmin', dataUrl); // mock 固定登录用户
+    return dataUrl;
+  }
+  return postAvatar('/api/v1/profile/avatar', file);
+}
+
 // ── 组 ──
 
 export function listGroups(): Promise<GroupDTO[]> {
   return apiGet<GroupDTO[]>('/api/v1/groups');
 }
 
-export function createGroup(name: string, desc: string): Promise<GroupDTO> {
-  return apiPost<GroupDTO>('/api/v1/groups', { name, desc });
+export function createGroup(name: string, desc: string, isAdmin = false): Promise<GroupDTO> {
+  return apiPost<GroupDTO>('/api/v1/groups', { name, desc, is_admin: isAdmin });
 }
 
 export function deleteGroup(name: string): Promise<void> {
@@ -88,7 +107,7 @@ export function deleteGroup(name: string): Promise<void> {
 /** 编辑组（重命名会同步用户组字段；引用旧组名的策略需手动调整）。 */
 export function updateGroup(
   name: string,
-  input: { name?: string; desc?: string },
+  input: { name?: string; desc?: string; is_admin?: boolean },
 ): Promise<GroupDTO> {
   return apiPatch<GroupDTO>(`/api/v1/groups/${encodeURIComponent(name)}`, input);
 }
