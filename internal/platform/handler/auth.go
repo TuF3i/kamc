@@ -309,8 +309,8 @@ func (h *Handler) issueJWTWithSync(w http.ResponseWriter, r *http.Request, id *s
 }
 
 // writeLoginBridge 浏览器登录桥接页：OIDC 回调落在后端路径上，SPA 需要拿到
-// JWT 才能继续——桥接页写入同源 localStorage 后跳回根路径。token 经
-// json.Marshal 转义为字符串字面量嵌入脚本，避免注入。
+// JWT 才能继续——桥接页写入同源 localStorage 后跳回 SPA 根（hash 路由）。
+// token 经 json.Marshal 转义为字符串字面量嵌入脚本，避免注入。
 func writeLoginBridge(w http.ResponseWriter, token string) {
 	literal, err := json.Marshal(token)
 	if err != nil {
@@ -321,6 +321,6 @@ func writeLoginBridge(w http.ResponseWriter, token string) {
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = fmt.Fprintf(w, `<!doctype html><html><body><script>
 try{localStorage.setItem('kamc_token',%s);}catch(e){}
-location.replace('/');
+location.replace('/#/');
 </script></body></html>`, literal)
 }

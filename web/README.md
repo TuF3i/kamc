@@ -118,7 +118,7 @@ Robot 不再绑定角色。创建机器人只填名称与集群，之后：
   `sysadmin/sysadmin123`，返回与 OIDC 相同的 `IssuedCredential`。
 - **管理员判定**：`GET /api/v1/clusters` 返回 200 = 管理员，403 = 普通用户；
   `/auth/me` 没有 `is_admin` 字段。
-- **401**：清理 token 并跳 `/login?expired=1`；403 不视为登录失效。
+- **401**：清理 token 并跳 `/#/login?expired=1`；403 不视为登录失效。
 - **kubeconfig**：必须带 Authorization 头 `fetch` 后以 Blob 下载，不能
   `window.open`；文件名取 `Content-Disposition`。
 - **数据面**：`/proxy/{clusterID}/...` 返回原生 Kubernetes JSON，不是平台信封。

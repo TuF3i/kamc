@@ -42,9 +42,23 @@ export function setToken(token: string): void {
   }
 }
 
+/** 当前 hash 路由路径（hash 路由下 window.location.pathname 恒为 /）。 */
+function currentRoutePath(): string {
+  const hash = window.location.hash.replace(/^#/, '');
+  return hash.split('?')[0] || '/';
+}
+
 function redirectToLogin(): void {
-  if (window.location.pathname !== '/login') {
-    window.location.assign('/login?expired=1');
+  if (currentRoutePath() !== '/login') {
+    // 先清空前端登录态（RequireAuth 监听该事件），再切 hash；同时写
+    // sessionStorage 标记，避免 Router 用 redirect 参数覆盖 URL 后丢失提示。
+    window.dispatchEvent(new Event('kamc:unauthorized'));
+    try {
+      sessionStorage.setItem('kamc:expired', '1');
+    } catch {
+      // 隐私模式忽略
+    }
+    window.location.assign('/#/login?expired=1');
   }
 }
 

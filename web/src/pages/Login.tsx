@@ -22,6 +22,7 @@ export function Login() {
   const [mode, setMode] = useState<LoginMode>(MOCK ? 'password' : 'sso');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sessionNotice, setSessionNotice] = useState({ expired: false, loggedOut: false });
 
   const token = useAuthStore((s) => s.token);
   const claims = useAuthStore((s) => s.claims);
@@ -32,8 +33,24 @@ export function Login() {
   const rawRedirect = searchParams.get('redirect') || '/';
   const redirect =
     rawRedirect.startsWith('/') && !rawRedirect.startsWith('//') ? rawRedirect : '/';
-  const expired = searchParams.get('expired') === '1';
-  const loggedOut = searchParams.get('logged_out') === '1';
+  const expired = searchParams.get('expired') === '1' || sessionNotice.expired;
+  const loggedOut = searchParams.get('logged_out') === '1' || sessionNotice.loggedOut;
+
+  // 401 / 登出发生在 hash 路由切换过程中时，URL query 可能被 redirect 参数
+  // 覆盖；用 sessionStorage 标记兜底，确保提示仍能显示。
+  useEffect(() => {
+    try {
+      const expiredFlag = sessionStorage.getItem('kamc:expired') === '1';
+      const logoutFlag = sessionStorage.getItem('kamc:logged_out') === '1';
+      if (expiredFlag) sessionStorage.removeItem('kamc:expired');
+      if (logoutFlag) sessionStorage.removeItem('kamc:logged_out');
+      if (expiredFlag || logoutFlag) {
+        setSessionNotice({ expired: expiredFlag, loggedOut: logoutFlag });
+      }
+    } catch {
+      // 隐私模式下 sessionStorage 不可用
+    }
+  }, []);
 
   useEffect(() => {
     if (token && !checked) {

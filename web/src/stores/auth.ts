@@ -129,7 +129,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
     setToken('');
     set({ token: '', claims: null, profile: null, isAdmin: false, checked: false, error: null });
-    window.location.assign('/login?logged_out=1');
+    try {
+      sessionStorage.setItem('kamc:logged_out', '1');
+    } catch {
+      // 隐私模式忽略
+    }
+    window.location.assign('/#/login?logged_out=1');
   },
 
   clearLocal: () => {

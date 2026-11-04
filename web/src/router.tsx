@@ -1,5 +1,5 @@
 import { lazy, Suspense, type ReactNode } from 'react';
-import { createBrowserRouter } from 'react-router-dom';
+import { createHashRouter } from 'react-router-dom';
 import { FullScreenLoading, RequireAdmin, RequireAuth } from '@/components/RequireAuth';
 import { AppLayout } from '@/layouts/AppLayout';
 import { Login } from '@/pages/Login';
@@ -23,7 +23,7 @@ function page(node: ReactNode): ReactNode {
   return <Suspense fallback={<FullScreenLoading tip="正在加载页面…" />}>{node}</Suspense>;
 }
 
-export const router = createBrowserRouter([
+export const router = createHashRouter([
   { path: '/login', element: <Login /> },
   {
     path: '/',

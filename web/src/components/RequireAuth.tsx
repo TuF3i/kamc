@@ -14,13 +14,25 @@ export function FullScreenLoading({ tip = '正在校验登录状态…' }: { tip
   );
 }
 
+/** 当前 hash 路由路径（hash 路由下 window.location.pathname 恒为 /）。 */
+function currentHashPath(): string {
+  const hash = window.location.hash.replace(/^#/, '');
+  return hash.split('?')[0] || '/';
+}
+
 /** 需要登录：无 token 跳登录页；有 token 但未校验时先调用 /auth/me。 */
-export function RequireAuth({ children }: { children: ReactNode }) {
-  const token = useAuthStore((s) => s.token);
+export function RequireAuth({ children }: { children: ReactNode }) {  const token = useAuthStore((s) => s.token);
   const claims = useAuthStore((s) => s.claims);
   const checked = useAuthStore((s) => s.checked);
   const restore = useAuthStore((s) => s.restore);
+  const clearLocal = useAuthStore((s) => s.clearLocal);
   const location = useLocation();
+
+  useEffect(() => {
+    const onUnauthorized = () => clearLocal();
+    window.addEventListener('kamc:unauthorized', onUnauthorized);
+    return () => window.removeEventListener('kamc:unauthorized', onUnauthorized);
+  }, [clearLocal]);
 
   useEffect(() => {
     if (token && !checked) {
@@ -29,6 +41,11 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   }, [token, checked, restore]);
 
   if (!token) {
+    // 401 后 http 层已把地址切到 #/login（可能伴随 reload）；此时不要用
+    // redirect 参数覆盖它，否则 expired/logged_out 提示会丢失。
+    if (currentHashPath() === '/login') {
+      return <FullScreenLoading />;
+    }
     const redirect = encodeURIComponent(`${location.pathname}${location.search}`);
     return <Navigate to={`/login?redirect=${redirect}`} replace />;
   }
