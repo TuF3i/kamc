@@ -71,21 +71,190 @@ const tokens: Record<string, TokenDTO[]> = {
   staging: [{ cluster_id: 'staging', kind: 'register', status: 'active', expires_at: daysAgo(-0.04), created_at: daysAgo(0.01) }],
 };
 
+const requestDump = (method: string, path: string, body?: string) =>
+  `${method} ${path} HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nAccept: application/json\r\nAuthorization: ***\r\nUser-Agent: kubectl/v1.31\r\n\r\n${body ?? '(无 body)'}`;
+
+const responseDump = (status: number, body: unknown) => {
+  const text =
+    status === 201
+      ? 'Created'
+      : status === 101
+        ? 'Switching Protocols'
+        : status >= 500
+          ? 'Internal Server Error'
+          : status >= 400
+            ? 'Forbidden'
+            : 'OK';
+  return `HTTP/1.1 ${status} ${text}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(body, null, 2)}`;
+};
+
+const listBody = (kind: string, count: number) => ({
+  kind,
+  apiVersion: 'v1',
+  items: Array.from({ length: count }, (_, i) => ({
+    metadata: { name: `${kind.replace(/List$/, '').toLowerCase()}-${i + 1}`, namespace: 'default' },
+    status: { phase: 'Running' },
+  })),
+});
+
+interface ClusterSeed {
+  timestamp: string;
+  user: string;
+  groups?: string;
+  cluster: string;
+  verb: string;
+  object: string;
+  method?: string;
+  path?: string;
+  allowed?: boolean;
+  reason?: string;
+  source_ip?: string;
+  user_agent?: string;
+  geo_country?: string;
+  geo_region?: string;
+  geo_city?: string;
+  status_code?: number;
+  latency_ms?: number;
+  response_kind?: string;
+  items?: number;
+}
+
+function clusterEvent(seed: ClusterSeed): AuditEvent {
+  const methodByVerb: Record<string, string> = {
+    get: 'GET',
+    list: 'GET',
+    watch: 'GET',
+    create: 'POST',
+    update: 'PUT',
+    patch: 'PATCH',
+    delete: 'DELETE',
+    deletecollection: 'DELETE',
+  };
+  const allowed = seed.allowed !== false;
+  const method = seed.method ?? methodByVerb[seed.verb] ?? 'GET';
+  const path =
+    seed.path ?? `/proxy/${seed.cluster}/api/v1/namespaces/default/${seed.object.split('/').pop()}`;
+  const status = seed.status_code ?? (allowed ? 200 : 403);
+  const requestBody =
+    method === 'GET'
+      ? '(无 body)'
+      : JSON.stringify({ apiVersion: 'v1', kind: 'Pod', metadata: { name: 'demo' } }, null, 2);
+  const responseBody = responseDump(
+    status,
+    allowed
+      ? listBody(seed.response_kind ?? 'PodList', seed.items ?? 3)
+      : { kind: 'Status', status: 'Failure', reason: seed.reason ?? 'Forbidden', code: status },
+  );
+  return {
+    id: nextID(),
+    kind: 'cluster',
+    event: 'k8s-api',
+    timestamp: seed.timestamp,
+    user: seed.user,
+    groups: seed.groups ?? '',
+    cluster: seed.cluster,
+    method,
+    path,
+    object: seed.object,
+    verb: seed.verb,
+    allowed,
+    reason: seed.reason ?? (allowed ? 'allowed' : 'denied-casbin'),
+    source_ip: seed.source_ip ?? '198.51.100.7',
+    forwarded_for: seed.source_ip ?? '198.51.100.7',
+    user_agent: seed.user_agent ?? 'kubectl/v1.31',
+    geo_country: seed.geo_country ?? 'CN',
+    geo_region: seed.geo_region ?? 'Shanghai',
+    geo_city: seed.geo_city ?? 'Shanghai',
+    status_code: status,
+    request_body: requestDump(method, path, requestBody),
+    response_body: responseBody,
+    latency_ms: seed.latency_ms ?? (allowed ? 32 : 4),
+  };
+}
+
+interface PlatformSeed {
+  timestamp: string;
+  event: string;
+  user: string;
+  groups?: string;
+  cluster?: string;
+  method?: string;
+  path: string;
+  allowed?: boolean;
+  reason?: string;
+  source_ip?: string;
+  user_agent?: string;
+  geo_country?: string;
+  geo_region?: string;
+  geo_city?: string;
+  status_code?: number;
+}
+
+function platformEvent(seed: PlatformSeed): AuditEvent {
+  const allowed = seed.allowed !== false;
+  return {
+    id: nextID(),
+    kind: 'platform',
+    event: seed.event,
+    timestamp: seed.timestamp,
+    user: seed.user,
+    groups: seed.groups ?? '',
+    cluster: seed.cluster ?? '',
+    method: seed.method ?? 'POST',
+    path: seed.path,
+    verb: '',
+    allowed,
+    reason: seed.reason ?? (allowed ? 'ok' : 'bad-credentials'),
+    source_ip: seed.source_ip ?? '127.0.0.1',
+    forwarded_for: seed.source_ip ?? '',
+    user_agent: seed.user_agent ?? '',
+    geo_country: seed.geo_country ?? '',
+    geo_region: seed.geo_region ?? '',
+    geo_city: seed.geo_city ?? '',
+    status_code: seed.status_code ?? (allowed ? 200 : 401),
+    latency_ms: 0,
+  };
+}
+
 const auditPlatform: AuditEvent[] = [
-  { id: nextID(), kind: 'platform', event: 'login-success', timestamp: daysAgo(0.02), user: 'sysadmin', groups: 'am:admin', cluster: '', method: 'POST', path: '/auth/password-login', verb: '', allowed: true, reason: 'ok', source_ip: '203.0.113.9', forwarded_for: '203.0.113.9', user_agent: 'Mozilla/5.0 (X11; Linux x86_64)', geo_country: 'CN', geo_region: 'Beijing', geo_city: 'Beijing', status_code: 200 },
-  { id: nextID(), kind: 'platform', event: 'kubeconfig-download', timestamp: daysAgo(0.1), user: 'alice', groups: 'dev-team', cluster: 'prod-bj', method: 'GET', path: '/api/v1/clusters/prod-bj/kubeconfig', verb: '', allowed: true, reason: 'mode=exec', source_ip: '198.51.100.7', user_agent: 'curl/8.14.1', geo_country: 'CN', geo_region: 'Shanghai', geo_city: 'Shanghai', status_code: 200 },
-  { id: nextID(), kind: 'platform', event: 'token-issue', timestamp: daysAgo(0.3), user: 'sysadmin', groups: 'am:admin', cluster: 'prod-bj', method: 'POST', path: '/api/v1/clusters/prod-bj/tokens', verb: '', allowed: true, reason: 'kind=longterm', source_ip: '127.0.0.1', user_agent: 'curl/8.14.1' },
-  { id: nextID(), kind: 'platform', event: 'login-failed', timestamp: daysAgo(0.6), user: 'unknown', groups: '', cluster: '', method: 'POST', path: '/auth/password-login', verb: '', allowed: false, reason: 'bad-credentials', source_ip: '203.0.113.44', user_agent: 'python-requests/2.32', geo_country: 'US', geo_region: 'California', geo_city: 'Los Angeles' },
-  { id: nextID(), kind: 'platform', event: 'policy-create', timestamp: daysAgo(1), user: 'sysadmin', groups: 'am:admin', cluster: 'prod-bj', method: 'POST', path: '/api/v1/policies', verb: '', allowed: true, reason: 'user/alice', source_ip: '127.0.0.1', user_agent: 'Mozilla/5.0' },
-  { id: nextID(), kind: 'platform', event: 'robot-create', timestamp: daysAgo(20), user: 'sysadmin', groups: 'am:admin', cluster: 'prod-bj', method: 'POST', path: '/api/v1/robots', verb: '', allowed: true, reason: 'ci-deployer', source_ip: '127.0.0.1', user_agent: 'Mozilla/5.0' },
+  platformEvent({ timestamp: daysAgo(0.02), event: 'login-success', user: 'sysadmin', groups: 'am:admin', path: '/auth/password-login', user_agent: 'Mozilla/5.0 ZCode/3.16.3 Chrome/146.0 Electron/41.0', geo_country: 'CN', geo_region: 'Beijing', geo_city: 'Beijing', source_ip: '203.0.113.9' }),
+  platformEvent({ timestamp: daysAgo(0.12), event: 'login-success', user: 'alice', groups: 'dev-team', path: '/auth/password-login', user_agent: 'Mozilla/5.0 Chrome/146.0 Safari/537.36', geo_country: 'CN', geo_region: 'Shanghai', geo_city: 'Shanghai', source_ip: '198.51.100.7' }),
+  platformEvent({ timestamp: daysAgo(0.4), event: 'kubeconfig-download', user: 'alice', groups: 'dev-team', cluster: 'prod-bj', method: 'GET', path: '/api/v1/clusters/prod-bj/kubeconfig', user_agent: 'Mozilla/5.0 Chrome/146.0', geo_country: 'CN', geo_region: 'Shanghai', geo_city: 'Shanghai', source_ip: '198.51.100.7' }),
+  platformEvent({ timestamp: daysAgo(0.6), event: 'login-failed', user: 'unknown', path: '/auth/password-login', allowed: false, reason: 'bad-credentials', user_agent: 'python-requests/2.32', geo_country: 'US', geo_region: 'California', geo_city: 'Los Angeles', source_ip: '203.0.113.44' }),
+  platformEvent({ timestamp: daysAgo(0.8), event: 'token-issue', user: 'ci-deployer', cluster: 'prod-bj', path: '/api/v1/clusters/prod-bj/tokens', user_agent: 'k8s-am-login/0.1', geo_country: 'US', geo_region: 'California', geo_city: 'San Jose', source_ip: '203.0.113.80' }),
+  platformEvent({ timestamp: daysAgo(1.1), event: 'login-success', user: 'bob', groups: 'qa-team', path: '/auth/password-login', user_agent: 'curl/8.14.1', geo_country: 'CN', geo_region: 'Beijing', geo_city: 'Beijing', source_ip: '203.0.113.21' }),
+  platformEvent({ timestamp: daysAgo(1.4), event: 'token-issue', user: 'sysadmin', groups: 'am:admin', cluster: 'prod-bj', path: '/api/v1/clusters/prod-bj/tokens', user_agent: 'curl/8.14.1', geo_country: 'CN', geo_region: 'Beijing', geo_city: 'Beijing', source_ip: '127.0.0.1' }),
+  platformEvent({ timestamp: daysAgo(2.2), event: 'login-success', user: 'alice', groups: 'dev-team', path: '/auth/password-login', user_agent: 'Mozilla/5.0 ZCode/3.16.3 Chrome/146.0', geo_country: 'SG', geo_region: 'Singapore', geo_city: 'Singapore', source_ip: '198.51.100.31' }),
+  platformEvent({ timestamp: daysAgo(2.8), event: 'policy-create', user: 'sysadmin', groups: 'am:admin', cluster: 'prod-bj', path: '/api/v1/policies', user_agent: 'Mozilla/5.0 Chrome/146.0', geo_country: 'CN', geo_region: 'Beijing', geo_city: 'Beijing', source_ip: '203.0.113.9' }),
+  platformEvent({ timestamp: daysAgo(3.3), event: 'login-failed', user: 'alice', groups: 'dev-team', path: '/auth/password-login', allowed: false, reason: 'bad-credentials', user_agent: 'Mozilla/5.0 Chrome/146.0', geo_country: 'DE', geo_region: 'Hesse', geo_city: 'Frankfurt', source_ip: '203.0.113.55' }),
+  platformEvent({ timestamp: daysAgo(3.8), event: 'login-success', user: 'bob', groups: 'qa-team', path: '/auth/password-login', user_agent: 'Mozilla/5.0 Chrome/146.0', geo_country: 'RU', geo_region: 'Moscow', geo_city: 'Moscow', source_ip: '203.0.113.66' }),
+  platformEvent({ timestamp: daysAgo(4.1), event: 'logout', user: 'bob', groups: 'qa-team', path: '/auth/logout', user_agent: 'curl/8.14.1', geo_country: 'CN', geo_region: 'Beijing', geo_city: 'Beijing', source_ip: '203.0.113.21' }),
+  platformEvent({ timestamp: daysAgo(5), event: 'user-update', user: 'sysadmin', groups: 'am:admin', path: '/api/v1/users/alice', method: 'PATCH', user_agent: 'Mozilla/5.0 Chrome/146.0', geo_country: 'CN', geo_region: 'Guangdong', geo_city: 'Shenzhen', source_ip: '203.0.113.9' }),
+  platformEvent({ timestamp: daysAgo(6.0), event: 'login-success', user: 'sysadmin', groups: 'am:admin', path: '/auth/password-login', user_agent: 'Mozilla/5.0 ZCode/3.16.3 Chrome/146.0', geo_country: 'JP', geo_region: 'Tokyo', geo_city: 'Tokyo', source_ip: '203.0.113.100' }),
 ];
 
-const clusterDump = `GET /api/v1/nodes HTTP/1.1\r\nAccept: application/json\r\nAuthorization: ***\r\nUser-Agent: kubectl/v1.31\r\n\r\n(无 body)`;
-const clusterResp = `HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\n  "kind": "NodeList",\n  "apiVersion": "v1",\n  "items": [\n    {\n      "kind": "Node",\n      "metadata": {\n        "name": "node-1",\n        "labels": {\n          "node-role.kubernetes.io/worker": ""\n        }\n      },\n      "status": {\n        "conditions": [\n          {\n            "type": "Ready",\n            "status": "True"\n          }\n        ]\n      }\n    }\n  ]\n}`;
 const auditCluster: AuditEvent[] = [
-  { id: nextID(), kind: 'cluster', event: 'k8s-api', timestamp: daysAgo(0.01), user: 'alice', groups: 'dev-team', cluster: 'prod-bj', method: 'GET', path: '/proxy/prod-bj/api/v1/nodes', object: 'cluster/nodes', verb: 'list', allowed: true, reason: 'allowed', source_ip: '198.51.100.7', forwarded_for: '198.51.100.7', user_agent: 'kubectl/v1.31', geo_country: 'CN', geo_region: 'Shanghai', geo_city: 'Shanghai', status_code: 200, request_body: clusterDump, response_body: clusterResp, latency_ms: 36 },
-  { id: nextID(), kind: 'cluster', event: 'k8s-api', timestamp: daysAgo(0.05), user: 'alice', groups: 'dev-team', cluster: 'prod-bj', method: 'DELETE', path: '/proxy/prod-bj/apis/apps/v1/namespaces/default/deployments/legacy-api', object: 'default/deployments', verb: 'delete', allowed: false, reason: 'denied-casbin', source_ip: '198.51.100.7', user_agent: 'kubectl/v1.31', geo_country: 'CN', geo_region: 'Shanghai', geo_city: 'Shanghai', status_code: 403 },
-  { id: nextID(), kind: 'cluster', event: 'k8s-api', timestamp: daysAgo(0.4), user: 'sysadmin', groups: 'am:admin', cluster: 'prod-sh', method: 'POST', path: '/proxy/prod-sh/api/v1/namespaces/default/pods', object: 'default/pods', verb: 'create', allowed: true, reason: 'allowed', source_ip: '203.0.113.9', user_agent: 'kubectl/v1.31', geo_country: 'CN', geo_region: 'Beijing', geo_city: 'Beijing', status_code: 201, request_body: `POST /api/v1/namespaces/default/pods HTTP/1.1\r\nContent-Type: application/json\r\nAuthorization: ***\r\n\r\n{\n  "apiVersion": "v1",\n  "kind": "Pod",\n  "metadata": {\n    "name": "demo"\n  }\n}`, response_body: `HTTP/1.1 201 Created\r\nContent-Type: application/json\r\n\r\n{\n  "kind": "Pod",\n  "metadata": {\n    "name": "demo"\n  }\n}`, latency_ms: 52 },
+  clusterEvent({ timestamp: daysAgo(0.01), user: 'alice', groups: 'dev-team', cluster: 'prod-bj', verb: 'list', object: 'cluster/nodes', path: '/proxy/prod-bj/api/v1/nodes', geo_country: 'CN', geo_region: 'Shanghai', geo_city: 'Shanghai', source_ip: '198.51.100.7', response_kind: 'NodeList', items: 6, latency_ms: 36 }),
+  clusterEvent({ timestamp: daysAgo(0.05), user: 'alice', groups: 'dev-team', cluster: 'prod-bj', verb: 'delete', object: 'default/deployments', path: '/proxy/prod-bj/apis/apps/v1/namespaces/default/deployments/legacy-api', allowed: false, reason: 'denied-casbin', geo_country: 'CN', geo_region: 'Shanghai', geo_city: 'Shanghai', source_ip: '198.51.100.7', items: 0, latency_ms: 4 }),
+  clusterEvent({ timestamp: daysAgo(0.12), user: 'bob', groups: 'qa-team', cluster: 'prod-sh', verb: 'get', object: 'default/pods', path: '/proxy/prod-sh/api/v1/namespaces/default/pods/web-0', geo_country: 'CN', geo_region: 'Beijing', geo_city: 'Beijing', source_ip: '203.0.113.21', response_kind: 'Pod', items: 1, latency_ms: 28 }),
+  clusterEvent({ timestamp: daysAgo(0.22), user: 'sysadmin', groups: 'am:admin', cluster: 'prod-bj', verb: 'create', object: 'default/pods', path: '/proxy/prod-bj/api/v1/namespaces/default/pods', status_code: 201, geo_country: 'CN', geo_region: 'Beijing', geo_city: 'Beijing', source_ip: '203.0.113.9', items: 1, latency_ms: 78 }),
+  clusterEvent({ timestamp: daysAgo(0.35), user: 'alice', groups: 'dev-team', cluster: 'prod-bj', verb: 'get', object: 'default/pods/logs', path: '/proxy/prod-bj/api/v1/namespaces/default/pods/api-0/log', geo_country: 'CN', geo_region: 'Shanghai', geo_city: 'Shanghai', source_ip: '198.51.100.7', response_kind: 'PodLog', items: 9, latency_ms: 24 }),
+  clusterEvent({ timestamp: daysAgo(0.5), user: 'ci-deployer', groups: 'robot', cluster: 'prod-bj', verb: 'get', object: 'cluster/nodes', path: '/proxy/prod-bj/api/v1/nodes', geo_country: 'US', geo_region: 'California', geo_city: 'San Jose', source_ip: '203.0.113.80', user_agent: 'kubectl/v1.31', response_kind: 'NodeList', items: 4, latency_ms: 61 }),
+  clusterEvent({ timestamp: daysAgo(0.7), user: 'bob', groups: 'qa-team', cluster: 'prod-sh', verb: 'create', object: 'default/pods/exec', path: '/proxy/prod-sh/api/v1/namespaces/default/pods/web-0/exec', status_code: 101, geo_country: 'CN', geo_region: 'Beijing', geo_city: 'Beijing', source_ip: '203.0.113.21', response_kind: 'Stream', items: 1, latency_ms: 12 }),
+  clusterEvent({ timestamp: daysAgo(0.9), user: 'alice', groups: 'dev-team', cluster: 'prod-bj', verb: 'list', object: 'default/deployments', path: '/proxy/prod-bj/apis/apps/v1/namespaces/default/deployments', geo_country: 'CN', geo_region: 'Shanghai', geo_city: 'Shanghai', source_ip: '198.51.100.7', user_agent: 'k8s-am-login/0.1', response_kind: 'DeploymentList', items: 5, latency_ms: 41 }),
+  clusterEvent({ timestamp: daysAgo(1.2), user: 'sysadmin', groups: 'am:admin', cluster: 'prod-sh', verb: 'patch', object: 'default/configmaps', path: '/proxy/prod-sh/api/v1/namespaces/default/configmaps/app-config', geo_country: 'CN', geo_region: 'Beijing', geo_city: 'Beijing', source_ip: '203.0.113.9', response_kind: 'ConfigMap', items: 1, latency_ms: 33 }),
+  clusterEvent({ timestamp: daysAgo(1.6), user: 'bob', groups: 'qa-team', cluster: 'prod-sh', verb: 'list', object: 'default/secrets', path: '/proxy/prod-sh/api/v1/namespaces/default/secrets', allowed: false, reason: 'denied-casbin', geo_country: 'CN', geo_region: 'Beijing', geo_city: 'Beijing', source_ip: '203.0.113.21', items: 0, latency_ms: 3 }),
+  clusterEvent({ timestamp: daysAgo(1.9), user: 'alice', groups: 'dev-team', cluster: 'prod-bj', verb: 'create', object: 'default/pods', path: '/proxy/prod-bj/api/v1/namespaces/default/pods', status_code: 201, geo_country: 'CN', geo_region: 'Shanghai', geo_city: 'Shanghai', source_ip: '198.51.100.7', items: 1, latency_ms: 94 }),
+  clusterEvent({ timestamp: daysAgo(2.4), user: 'sysadmin', groups: 'am:admin', cluster: 'prod-bj', verb: 'delete', object: 'default/pods', path: '/proxy/prod-bj/api/v1/namespaces/default/pods/old-0', geo_country: 'CN', geo_region: 'Beijing', geo_city: 'Beijing', source_ip: '203.0.113.9', response_kind: 'Status', items: 1, latency_ms: 19 }),
+  clusterEvent({ timestamp: daysAgo(2.9), user: 'alice', groups: 'dev-team', cluster: 'prod-bj', verb: 'list', object: 'default/events', path: '/proxy/prod-bj/api/v1/namespaces/default/events', geo_country: 'CN', geo_region: 'Shanghai', geo_city: 'Shanghai', source_ip: '198.51.100.7', response_kind: 'EventList', items: 12, latency_ms: 27 }),
+  clusterEvent({ timestamp: daysAgo(3.2), user: 'ci-deployer', groups: 'robot', cluster: 'prod-bj', verb: 'update', object: 'default/deployments', path: '/proxy/prod-bj/apis/apps/v1/namespaces/default/deployments', geo_country: 'US', geo_region: 'Oregon', geo_city: 'Portland', source_ip: '203.0.113.81', user_agent: 'kubectl/v1.30', response_kind: 'Deployment', items: 1, latency_ms: 57 }),
+  clusterEvent({ timestamp: daysAgo(3.7), user: 'bob', groups: 'qa-team', cluster: 'prod-sh', verb: 'get', object: 'cluster/services', path: '/proxy/prod-sh/api/v1/services', geo_country: 'CN', geo_region: 'Beijing', geo_city: 'Beijing', source_ip: '203.0.113.21', user_agent: 'Go-http-client/2.0', response_kind: 'ServiceList', items: 3, latency_ms: 22 }),
+  clusterEvent({ timestamp: daysAgo(4.3), user: 'grace', groups: 'dev-team', cluster: 'prod-bj', verb: 'get', object: 'default/pods', path: '/proxy/prod-bj/api/v1/namespaces/default/pods/api-0', geo_country: 'CN', geo_region: 'Guangdong', geo_city: 'Shenzhen', source_ip: '198.51.100.88', user_agent: 'kubectl/v1.31', response_kind: 'Pod', items: 1, latency_ms: 15 }),
+  clusterEvent({ timestamp: daysAgo(4.9), user: 'sysadmin', groups: 'am:admin', cluster: 'prod-sh', verb: 'create', object: 'cluster/namespaces', path: '/proxy/prod-sh/api/v1/namespaces', status_code: 201, geo_country: 'CN', geo_region: 'Beijing', geo_city: 'Beijing', source_ip: '203.0.113.9', response_kind: 'Namespace', items: 1, latency_ms: 44 }),
+  clusterEvent({ timestamp: daysAgo(5.4), user: 'bob', groups: 'qa-team', cluster: 'prod-sh', verb: 'delete', object: 'default/pods', path: '/proxy/prod-sh/api/v1/namespaces/default/pods/web-0', allowed: false, reason: 'denied-casbin', geo_country: 'CN', geo_region: 'Beijing', geo_city: 'Beijing', source_ip: '203.0.113.21', items: 0, latency_ms: 5 }),
+  clusterEvent({ timestamp: daysAgo(6.1), user: 'alice', groups: 'dev-team', cluster: 'prod-bj', verb: 'get', object: 'default/configmaps', path: '/proxy/prod-bj/api/v1/namespaces/default/configmaps/app-config', geo_country: 'CN', geo_region: 'Shanghai', geo_city: 'Shanghai', source_ip: '198.51.100.7', user_agent: 'Mozilla/5.0 Chrome/146.0', response_kind: 'ConfigMap', items: 1, latency_ms: 18 }),
+  clusterEvent({ timestamp: daysAgo(6.2), user: 'ci-deployer', groups: 'robot', cluster: 'prod-sh', verb: 'list', object: 'cluster/pods', path: '/proxy/prod-sh/api/v1/pods', geo_country: 'JP', geo_region: 'Tokyo', geo_city: 'Tokyo', source_ip: '203.0.113.102', user_agent: 'kubectl/v1.31', response_kind: 'PodList', items: 8, latency_ms: 49 }),
+  clusterEvent({ timestamp: daysAgo(6.3), user: 'eve', cluster: 'prod-bj', verb: 'list', object: 'default/secrets', path: '/proxy/prod-bj/api/v1/namespaces/default/secrets', allowed: false, reason: 'denied-casbin', geo_country: 'RU', geo_region: 'Moscow', geo_city: 'Moscow', source_ip: '203.0.113.66', user_agent: 'curl/8.14.1', items: 0, latency_ms: 2 }),
 ];
 
 const mockClaims = {
@@ -445,6 +614,7 @@ export async function mockApi<T>(method: string, rawPath: string, body?: unknown
   // 审计
   if (path === '/api/v1/audit') {
     const kind = q.get('kind');
+    const event = q.get('event');
     const limit = Number(q.get('limit') ?? 200);
     const source =
       kind === 'cluster'
@@ -454,7 +624,8 @@ export async function mockApi<T>(method: string, rawPath: string, body?: unknown
           : [...auditPlatform, ...auditCluster].sort((a, b) =>
               b.timestamp.localeCompare(a.timestamp),
             );
-    return data(source.slice(0, limit));
+    const filtered = event ? source.filter((item) => item.event === event) : source;
+    return data(filtered.slice(0, limit));
   }
 
   throw new ApiError(`mock: 未实现的接口 ${m} ${path}`, 404, 40400);

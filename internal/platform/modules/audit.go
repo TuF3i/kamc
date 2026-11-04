@@ -16,7 +16,7 @@ const (
 type AuditEvent struct {
 	ID        int64     `gorm:"primaryKey" json:"id"`
 	Kind      AuditKind `gorm:"size:16;not null;default:cluster;index" json:"kind"`
-	Event     string    `gorm:"size:64" json:"event"` // 事件名（login-success/kubeconfig-download/k8s-api…）
+	Event     string    `gorm:"size:64;index" json:"event"` // 事件名（login-success/kubeconfig-download/k8s-api…）
 	Timestamp time.Time `gorm:"index" json:"timestamp"`
 	User      string    `gorm:"size:128;index" json:"user"`
 	Groups    string    `gorm:"size:1024" json:"groups"` // JSON 数组字符串

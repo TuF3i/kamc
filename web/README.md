@@ -59,7 +59,7 @@ npm run dev:mock   # mock 模式：完全脱离后端，使用前端内置模拟
 | 路由 | 页面 | 权限 |
 | --- | --- | --- |
 | `/login` | 登录（默认 SSO，可切换用户名密码） | 公开 |
-| `/` | 概览（系统统计 + 近 7 天登录/操作/拦截折线图） | 管理员 |
+| `/` | 概览（集群/身份 KPI、7 天趋势、GeoIP、资源/动作、用户/组、UA、报文体量与最近请求） | 管理员 |
 | `/clusters` | 集群列表：注册、搜索、注销（输入完整 ID 确认） | 管理员 |
 | `/clusters/:id` | 集群详情：概况 / Agent Token / Agent 安装 / kubeconfig | 管理员 |
 | `/platform` | 平台信息：设置 / SSO / 数据库 / 缓存 / Go 运行时 | 管理员 |
@@ -122,6 +122,7 @@ npm run dev:mock   # mock 模式：完全脱离后端，使用前端内置模拟
   `window.open`；文件名取 `Content-Disposition`。
 - **数据面**：`/proxy/{clusterID}/...` 返回原生 Kubernetes JSON，不是平台信封。
 - **审计**：`groups` 是逗号分隔字符串；`limit` ≤ 0 或 > 1000 会被后端强制为 100；
+  `event=k8s-api` 可精确过滤数据面代理事件（概览统计使用该过滤）；
   异步批量落库，查询可能有约 0.5s 延迟。
 
 ## 目录结构

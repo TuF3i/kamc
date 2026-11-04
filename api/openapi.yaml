@@ -697,6 +697,7 @@ paths:
         - {name: kind, in: query, schema: {type: string, enum: [platform, cluster]}}
         - {name: user, in: query, schema: {type: string}}
         - {name: cluster, in: query, schema: {type: string}}
+        - {name: event, in: query, schema: {type: string, description: '事件名精确匹配（如 k8s-api）'}}
         - {name: limit, in: query, schema: {type: integer, default: 100, maximum: 1000}}
       responses:
         '200':

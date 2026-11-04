@@ -36,7 +36,7 @@ var sensitiveHeaders = map[string]bool{
 	"impersonate-uid":     true,
 }
 
-// ListAudit GET /api/v1/audit?kind=&user=&cluster=&limit= —— 审计查询（管理面）。
+// ListAudit GET /api/v1/audit?kind=&user=&cluster=&event=&limit= —— 审计查询（管理面）。
 // kind=platform|cluster 过滤；缺省返回全部（兼容旧调用）。
 func (h *Handler) ListAudit(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -44,6 +44,7 @@ func (h *Handler) ListAudit(w http.ResponseWriter, r *http.Request) {
 		r.URL.Query().Get("kind"),
 		r.URL.Query().Get("user"),
 		r.URL.Query().Get("cluster"),
+		r.URL.Query().Get("event"),
 		limit)
 	if err != nil {
 		errcode.GenFinalResponse(w, nil, errcode.ServerInternal(err))

@@ -34,8 +34,8 @@ func (d *Dao) InsertBatch(ctx context.Context, events []*modules.AuditEvent) err
 // AuditEventRow 查询结果行
 type AuditEventRow = modules.AuditEvent
 
-// ListAuditEvents 管理面审计查询（按时间倒序，可按用户/集群过滤）
-func (d *Dao) ListAuditEvents(ctx context.Context, kind, user, cluster string, limit int) ([]modules.AuditEvent, error) {
+// ListAuditEvents 管理面审计查询（按时间倒序，可按用户/集群/事件名过滤）
+func (d *Dao) ListAuditEvents(ctx context.Context, kind, user, cluster, event string, limit int) ([]modules.AuditEvent, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
@@ -48,6 +48,9 @@ func (d *Dao) ListAuditEvents(ctx context.Context, kind, user, cluster string, l
 	}
 	if cluster != "" {
 		q = q.Where("cluster = ?", cluster)
+	}
+	if event != "" {
+		q = q.Where("event = ?", event)
 	}
 	var list []modules.AuditEvent
 	if err := q.Order("id DESC").Limit(limit).Find(&list).Error; err != nil {
