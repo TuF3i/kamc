@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"sort"
 	"strconv"
@@ -68,27 +67,15 @@ type requestMeta struct {
 }
 
 // meta 解析一次请求的对端信息。
-// X-Forwarded-For 取最左（原始客户端）且保留完整链用于展示；IP 选择顺序：
-// XFF 首项 → X-Real-IP → RemoteAddr。部署层（Nginx）负责覆盖伪造头。
+// 对端 IP 统一取 X-Forwarded-For 首项（原始客户端），保留完整链用于展示；
+// 不再回退 X-Real-IP 或连接地址——部署层（Nginx/Traefik）必须注入并覆盖
+// 该头，缺失时 IP 留空。GeoIP 未配置数据库时为空。
 func (h *Handler) meta(r *http.Request) requestMeta {
 	m := requestMeta{UserAgent: truncate(r.UserAgent(), 512)}
 	if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
 		m.ForwardedFor = truncate(xff, 512)
 		if first, _, _ := strings.Cut(xff, ","); strings.TrimSpace(first) != "" {
 			m.IP = strings.TrimSpace(first)
-		}
-	}
-	if m.IP == "" {
-		if xr := strings.TrimSpace(r.Header.Get("X-Real-IP")); xr != "" {
-			m.IP = xr
-		}
-	}
-	if m.IP == "" {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			m.IP = r.RemoteAddr
-		} else {
-			m.IP = host
 		}
 	}
 	if h.geo != nil {
