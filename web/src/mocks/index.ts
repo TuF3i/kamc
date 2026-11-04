@@ -34,7 +34,7 @@ const clusters: Cluster[] = [
 ];
 
 const users: PlatformUserDTO[] = [
-  { uid: 'u-sysadmin', username: 'sysadmin', nickname: '系统管理员', avatar_url: '', groups: ['am:admin'], source: 'local', email: 'sysadmin@example.com', metadata: {}, last_login: nowIso(), created_at: daysAgo(120) },
+  { uid: 'u-sysadmin', username: 'sysadmin', nickname: '系统管理员', avatar_url: '/icon-mark.png', groups: ['am:admin'], source: 'local', email: 'sysadmin@example.com', metadata: {}, last_login: nowIso(), created_at: daysAgo(120) },
   { uid: 'u-alice', username: 'alice', nickname: '爱丽丝', avatar_url: '', groups: ['dev-team'], source: 'sso', email: 'alice@example.com', metadata: { dept: '平台研发' }, last_login: daysAgo(0.5), created_at: daysAgo(60) },
   { uid: 'u-bob', username: 'bob', nickname: 'Bob', avatar_url: '', groups: ['qa-team'], source: 'ldap', email: 'bob@example.com', metadata: {}, last_login: daysAgo(2), created_at: daysAgo(45) },
 ];
@@ -197,6 +197,9 @@ export async function mockApi<T>(method: string, rawPath: string, body?: unknown
   if (path === '/auth/me') return data(mockClaims);
   if (path === '/auth/logout') return data({ logout: true });
   if (path === '/version') return data({ version: 'dev', commit: 'mock', component: 'platform' });
+
+  // 自服务资料（头像等展示字段）
+  if (path === '/api/v1/profile') return data(findUser(mockClaims.sub));
 
   // 概览 / 平台
   if (path === '/api/v1/system') return data(systemInfo);

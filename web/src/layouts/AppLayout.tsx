@@ -52,6 +52,7 @@ export function AppLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const claims = useAuthStore((s) => s.claims);
+  const profile = useAuthStore((s) => s.profile);
   const isAdmin = useAuthStore((s) => s.isAdmin);
   const signOut = useAuthStore((s) => s.signOut);
 
@@ -103,7 +104,7 @@ export function AppLayout() {
 
         <Dropdown menu={userMenu} trigger={['click']} placement="bottomRight">
           <button type="button" className="nav-panel nav-user">
-            <Avatar size={30} className="user-avatar">
+            <Avatar size={30} className="user-avatar" src={profile?.avatar_url || undefined}>
               {avatarChar}
             </Avatar>
             <span className="user-name">{displayName}</span>

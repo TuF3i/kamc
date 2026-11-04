@@ -6,6 +6,7 @@ import { fmtRemaining, fmtTime, remainingSeconds } from '@/utils/format';
 
 export function Account() {
   const claims = useAuthStore((s) => s.claims);
+  const profile = useAuthStore((s) => s.profile);
   const isAdmin = useAuthStore((s) => s.isAdmin);
   const [, setTick] = useState(0);
 
@@ -26,9 +27,15 @@ export function Account() {
 
       <Card className="soft-card">
         <div className="profile-hero">
-          <div className="profile-avatar">{(claims?.sub ?? '?').slice(0, 1).toUpperCase()}</div>
+          <div className="profile-avatar">
+            {profile?.avatar_url ? (
+              <img src={profile.avatar_url} alt="头像" />
+            ) : (
+              (claims?.sub ?? '?').slice(0, 1).toUpperCase()
+            )}
+          </div>
           <div>
-            <div className="profile-name">{claims?.sub ?? '—'}</div>
+            <div className="profile-name">{profile?.nickname || claims?.sub || '—'}</div>
             <div className="profile-sub">{claims?.email || '未设置邮箱'}</div>
           </div>
         </div>

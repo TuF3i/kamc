@@ -3,6 +3,11 @@ import type { GroupDTO, PlatformUserDTO, UserScript } from './types';
 
 // ── 用户 ──
 
+/** 当前登录用户的平台资料（自服务；头像等展示字段不在 JWT 里）。 */
+export function getProfile(): Promise<PlatformUserDTO> {
+  return apiGet<PlatformUserDTO>('/api/v1/profile');
+}
+
 export function listUsers(): Promise<PlatformUserDTO[]> {
   return apiGet<PlatformUserDTO[]>('/api/v1/users');
 }

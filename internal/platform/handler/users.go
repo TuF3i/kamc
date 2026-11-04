@@ -11,8 +11,21 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/TuF3i/kamc/internal/platform/errcode"
+	"github.com/TuF3i/kamc/internal/platform/middleware"
 	"github.com/TuF3i/kamc/internal/platform/service"
 )
+
+// GetProfile GET /api/v1/profile —— 当前登录用户的平台资料（自服务，仅需 JWT）。
+// JWT 只承载身份与组，头像/昵称等展示字段由本接口读取，避免改资料要重新登录。
+func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request) {
+	claims, ok := middleware.ClaimsFromCtx(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	data, rsp := h.svc.GetUser(r.Context(), claims.Subject)
+	errcode.GenFinalResponse(w, data, rsp)
+}
 
 // CreateUser POST /api/v1/users —— 手动创建本地用户（SSO/LDAP 之外的来源）
 func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {

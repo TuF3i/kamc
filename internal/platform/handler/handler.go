@@ -151,6 +151,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 		// 自服务：仅需 JWT（产物只含调用者自己的身份）
 		api.Group(func(user chi.Router) {
 			user.Use(mw.RequireJWT(h.auth))
+			user.Get("/profile", h.GetProfile)
 			user.Get("/clusters/{id}/kubeconfig", h.GetKubeconfig)
 		})
 

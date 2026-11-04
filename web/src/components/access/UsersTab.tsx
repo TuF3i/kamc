@@ -18,6 +18,7 @@ import {
 } from 'antd';
 import { DeleteOutlined, EditOutlined, PlusOutlined, SearchOutlined, UploadOutlined } from '@ant-design/icons';
 import { createUser, deleteUser, listUsers, updateUser, uploadAvatar } from '@/api/users';
+import { useAuthStore } from '@/stores/auth';
 import type { PlatformUserDTO, UserSource } from '@/api/types';
 
 const SOURCE_META: Record<UserSource, { label: string; color: string }> = {
@@ -38,6 +39,8 @@ interface EditState {
 /** 用户 Tab：平台用户目录（SSO/LDAP 登录自动同步，可编辑昵称/邮箱/组）。 */
 export function UsersTab() {
   const { message, modal } = App.useApp();
+  const selfName = useAuthStore((s) => s.claims?.sub);
+  const refreshProfile = useAuthStore((s) => s.refreshProfile);
   const [users, setUsers] = useState<PlatformUserDTO[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -106,6 +109,7 @@ export function UsersTab() {
         avatar_url: values.avatar_url?.trim() || '',
       });
       message.success(`用户 ${editing.user.username} 已更新`);
+      if (editing.user.username === selfName) void refreshProfile();
       setEditing(null);
       await load();
     } catch (err) {
@@ -330,6 +334,7 @@ export function UsersTab() {
                       setEditing((prev) =>
                         prev ? { user: { ...prev.user, avatar_url: url } } : prev,
                       );
+                      if (editing?.user.username === selfName) void refreshProfile();
                       message.success('头像已上传');
                     })
                     .catch((err) =>

@@ -4,16 +4,18 @@ import {
   Button,
   Card,
   Descriptions,
+  Drawer,
   Form,
   Input,
   Select,
+  Space,
   Table,
   Tabs,
   Tag,
   Typography,
   type TableColumnsType,
 } from 'antd';
-import { ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { EyeOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import { listAudit, type AuditQuery } from '@/api/audit';
 import type { AuditEvent } from '@/api/types';
 import { PageHeader } from '@/components/PageHeader';
@@ -74,8 +76,31 @@ function metaItems(record: AuditEvent) {
   ];
 }
 
+/** 固定的右侧详情列：点击后从侧面打开事件全文。 */
+function detailColumn(onOpen: (record: AuditEvent) => void): TableColumnsType<AuditEvent>[number] {
+  return {
+    title: '',
+    key: 'detail',
+    width: 88,
+    fixed: 'right',
+    render: (_, record) => (
+      <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => onOpen(record)}>
+        详情
+      </Button>
+    ),
+  };
+}
+
 /** 平台日志表：登录/Token/下载/管理动作。 */
-function PlatformTable({ events, loading }: { events: AuditEvent[]; loading: boolean }) {
+function PlatformTable({
+  events,
+  loading,
+  onOpen,
+}: {
+  events: AuditEvent[];
+  loading: boolean;
+  onOpen: (record: AuditEvent) => void;
+}) {
   const columns: TableColumnsType<AuditEvent> = [
     {
       title: '时间',
@@ -134,6 +159,7 @@ function PlatformTable({ events, loading }: { events: AuditEvent[]; loading: boo
       ellipsis: true,
       render: (reason: string) => <ReasonTag reason={reason} />,
     },
+    detailColumn(onOpen),
   ];
 
   return (
@@ -145,16 +171,6 @@ function PlatformTable({ events, loading }: { events: AuditEvent[]; loading: boo
         loading={loading}
         pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: [20, 50, 100], showTotal: (t) => `共 ${t} 条平台事件` }}
         scroll={{ x: 1200 }}
-        expandable={{
-          expandedRowRender: (record) => (
-            <Descriptions size="small" column={{ xs: 1, md: 2 }} bordered>
-              {metaItems(record)}
-              <Descriptions.Item label="路径" span={2}>
-                <code className="mono">{record.path || '—'}</code>
-              </Descriptions.Item>
-            </Descriptions>
-          ),
-        }}
       />
     </Card>
   );
@@ -251,7 +267,15 @@ function AuditBody({ title, body }: { title: string; body?: string }) {
 }
 
 /** 集群日志表：数据面 API 操作（资源/动作/状态 + 原始请求响应）。 */
-function ClusterTable({ events, loading }: { events: AuditEvent[]; loading: boolean }) {
+function ClusterTable({
+  events,
+  loading,
+  onOpen,
+}: {
+  events: AuditEvent[];
+  loading: boolean;
+  onOpen: (record: AuditEvent) => void;
+}) {
   const columns: TableColumnsType<AuditEvent> = [
     {
       title: '时间',
@@ -329,6 +353,7 @@ function ClusterTable({ events, loading }: { events: AuditEvent[]; loading: bool
       sorter: (a, b) => (a.latency_ms ?? 0) - (b.latency_ms ?? 0),
       render: (v?: number) => (v ? `${v} ms` : '—'),
     },
+    detailColumn(onOpen),
   ];
 
   return (
@@ -340,28 +365,77 @@ function ClusterTable({ events, loading }: { events: AuditEvent[]; loading: bool
         loading={loading}
         pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: [20, 50, 100], showTotal: (t) => `共 ${t} 条集群操作` }}
         scroll={{ x: 1400 }}
-        expandable={{
-          expandedRowRender: (record) => (
-            <div className="audit-expand">
-              <Descriptions size="small" column={{ xs: 1, md: 2 }} bordered>
-                {metaItems(record)}
-                <Descriptions.Item label="原始请求" span={2}>
-                  <code className="mono" style={{ wordBreak: 'break-all' }}>{record.path || '—'}</code>
-                </Descriptions.Item>
-                <Descriptions.Item label="鉴权对象" span={2}>
-                  <code className="mono">{record.object || '—'}</code>
-                </Descriptions.Item>
-                <Descriptions.Item label="拒绝/放行原因" span={2}>
-                  <ReasonTag reason={record.reason} />
-                </Descriptions.Item>
-              </Descriptions>
-              <AuditBody title="请求报文" body={record.request_body} />
-              <AuditBody title="响应报文" body={record.response_body} />
-            </div>
-          ),
-        }}
       />
     </Card>
+  );
+}
+
+/** 事件详情抽屉：从右侧滑出，展示完整对端上下文与原始 HTTP 报文。 */
+function AuditDetailDrawer({
+  event,
+  onClose,
+}: {
+  event: AuditEvent | null;
+  onClose: () => void;
+}) {
+  const isCluster = event?.kind === 'cluster';
+  return (
+    <Drawer
+      open={event !== null}
+      onClose={onClose}
+      width={780}
+      title={
+        event ? (
+          <Space size={8} wrap>
+            <Tag color={isCluster ? 'geekblue' : 'blue'}>{isCluster ? '集群操作' : '平台事件'}</Tag>
+            <code className="mono strong">{event.event || '事件详情'}</code>
+            <AuditResultTag allowed={event.allowed} />
+          </Space>
+        ) : (
+          '事件详情'
+        )
+      }
+      styles={{ body: { padding: 20 } }}
+      destroyOnHidden
+    >
+      {event ? (
+        <>
+          <Descriptions size="small" column={1} bordered>
+            {metaItems(event)}
+            <Descriptions.Item label="集群">
+              {event.cluster ? <code className="mono">{event.cluster}</code> : '—'}
+            </Descriptions.Item>
+            <Descriptions.Item label="动作 / 鉴权对象">
+              {event.verb ? <Tag color="blue">{event.verb}</Tag> : null}
+              {event.object ? (
+                <code className="mono" style={{ marginInlineStart: event.verb ? 8 : 0 }}>
+                  {event.object}
+                </code>
+              ) : !event.verb ? (
+                '—'
+              ) : null}
+            </Descriptions.Item>
+            <Descriptions.Item label="HTTP 状态">
+              {event.status_code ? <Tag>{event.status_code}</Tag> : '—'}
+            </Descriptions.Item>
+            <Descriptions.Item label="路径">
+              <code className="mono" style={{ wordBreak: 'break-all' }}>
+                {event.path || '—'}
+              </code>
+            </Descriptions.Item>
+            <Descriptions.Item label="结果说明">
+              <ReasonTag reason={event.reason} />
+            </Descriptions.Item>
+          </Descriptions>
+          {isCluster || event.request_body ? (
+            <AuditBody title="请求报文" body={event.request_body} />
+          ) : null}
+          {isCluster || event.response_body ? (
+            <AuditBody title="响应报文" body={event.response_body} />
+          ) : null}
+        </>
+      ) : null}
+    </Drawer>
   );
 }
 
@@ -370,6 +444,7 @@ export function Audit() {
   const [events, setEvents] = useState<Record<Kind, AuditEvent[]>>({ platform: [], cluster: [] });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [detail, setDetail] = useState<AuditEvent | null>(null);
   const [form] = Form.useForm<FilterForm>();
 
   const load = useCallback(async (target: Kind, query: AuditQuery = {}) => {
@@ -473,10 +548,12 @@ export function Audit() {
       </Card>
 
       {kind === 'platform' ? (
-        <PlatformTable events={events.platform} loading={loading} />
+        <PlatformTable events={events.platform} loading={loading} onOpen={setDetail} />
       ) : (
-        <ClusterTable events={events.cluster} loading={loading} />
+        <ClusterTable events={events.cluster} loading={loading} onOpen={setDetail} />
       )}
+
+      <AuditDetailDrawer event={detail} onClose={() => setDetail(null)} />
     </div>
   );
 }

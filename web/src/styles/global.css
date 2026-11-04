@@ -1496,6 +1496,14 @@ body {
   color: #fff;
   background: linear-gradient(135deg, #4c9aff, #13c2c2);
   box-shadow: 0 10px 28px rgba(76, 154, 255, 0.25);
+  overflow: hidden;
+}
+
+.profile-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
 }
 
 .profile-name {
