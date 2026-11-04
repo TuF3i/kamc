@@ -155,7 +155,7 @@ export function Login() {
             <Form<PasswordForm>
               layout="vertical"
               onFinish={onPasswordLogin}
-              initialValues={{ username: 'sysadmin', password: 'sysadmin123' }}
+              initialValues={MOCK ? { username: 'sysadmin', password: 'sysadmin123' } : undefined}
             >
               <Form.Item
                 name="username"
