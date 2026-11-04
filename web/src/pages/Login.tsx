@@ -162,7 +162,7 @@ export function Login() {
                 label="用户名"
                 rules={[{ required: true, message: '请输入用户名' }]}
               >
-                <Input prefix={<UserOutlined />} placeholder="用户名（平台账号 / LDAP 账号）" autoComplete="username" />
+                <Input prefix={<UserOutlined />} placeholder="请输入用户名" autoComplete="username" />
               </Form.Item>
               <Form.Item
                 name="password"
@@ -171,7 +171,7 @@ export function Login() {
               >
                 <Input.Password
                   prefix={<LockOutlined />}
-                  placeholder="••••••••"
+                  placeholder="请输入密码"
                   autoComplete="current-password"
                 />
               </Form.Item>
