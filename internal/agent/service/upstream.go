@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/hashicorp/yamux"
 )
@@ -100,21 +102,56 @@ func BuildUpstream(cfg Config) (*url.URL, http.RoundTripper, error) {
 	}
 
 	var tr http.RoundTripper = base
-	if b, err := os.ReadFile(saTokenFile); err == nil && len(strings.TrimSpace(string(b))) > 0 {
-		tr = &bearerTransport{base: base, token: strings.TrimSpace(string(b))}
+	if fileExists(saTokenFile) {
+		// 投射 SA Token 由 kubelet 周期轮换；每次请求按 mtime 检查并重读，
+		// 避免进程启动后一直使用过期 Token（默认 1h 到期）。
+		tr = &bearerTransport{base: base, source: &fileTokenSource{path: saTokenFile}}
 	}
 	return u, tr, nil
 }
 
-// bearerTransport 静态 Bearer Token 注入（SA 凭证不落请求头之外的地方）
+// fileTokenSource 读取 SA Token 文件；mtime 变化时刷新，读失败沿用上次值。
+type fileTokenSource struct {
+	path    string
+	mu      sync.Mutex
+	token   string
+	modTime time.Time
+}
+
+func (s *fileTokenSource) Token() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	info, err := os.Stat(s.path)
+	if err != nil {
+		return s.token
+	}
+	if s.token != "" && !info.ModTime().After(s.modTime) {
+		return s.token
+	}
+	b, err := os.ReadFile(s.path)
+	if err != nil {
+		return s.token
+	}
+	token := strings.TrimSpace(string(b))
+	if token == "" {
+		return s.token
+	}
+	s.token, s.modTime = token, info.ModTime()
+	return token
+}
+
+// bearerTransport 每个请求注入当前 SA Token（不落日志/不落请求头之外的地方）
 type bearerTransport struct {
-	base  http.RoundTripper
-	token string
+	base   http.RoundTripper
+	source *fileTokenSource
 }
 
 func (b *bearerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	token := b.source.Token()
 	r2 := r.Clone(r.Context())
-	r2.Header.Set("Authorization", "Bearer "+b.token)
+	if token != "" {
+		r2.Header.Set("Authorization", "Bearer "+token)
+	}
 	return b.base.RoundTrip(r2)
 }
 

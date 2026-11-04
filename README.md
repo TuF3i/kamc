@@ -11,7 +11,7 @@ kubernetes Access Manager Center
 
 ```bash
 make build   # 仅后端：bin/kamc-platform、bin/kamc-agent、bin/k8s-am-login
-make release # 生产构建：先构建前端（web/dist），再编译后端
+make release # 生产构建：先构建前端（data/web），再编译后端
 make test
 ```
 
@@ -28,6 +28,15 @@ export DATABASE_URL="host=127.0.0.1 port=5432 user=postgres password=postgres db
 curl http://127.0.0.1:8080/healthz
 ```
 
+## 容器镜像
+
+```bash
+make image-platform VERSION=v1.0.0   # kamc-platform:v1.0.0（含 data/web）
+make image-agent    VERSION=v1.0.0   # kamc-agent:v1.0.0
+```
+
+镜像构建需要本机 Docker；`deploy/` 清单中的 `__IMAGE__` 可直接使用上述 tag。
+
 ## 前端
 
 管理前端在 [web/](web/README.md)，技术栈 React 18 + Ant Design 5 + TypeScript + Vite：
@@ -36,11 +45,12 @@ curl http://127.0.0.1:8080/healthz
 cd web
 npm install
 KAMC_API=http://127.0.0.1:8080 npm run dev   # http://localhost:5173
-npm run build                                # 产出 web/dist/
+npm run build                                # 产出 data/web/
 ```
 
 开发登录可使用内置账号 `sysadmin / sysadmin123`（`AM_PASSWORD_LOGIN_USER` /
-`AM_PASSWORD_LOGIN_PASSWORD` 可覆盖，生产必须修改）；生产使用 Authentik SSO。
+`AM_PASSWORD_LOGIN_PASSWORD` 可覆盖）；生产清单默认 `AM_PASSWORD_LOGIN=0` 并禁止
+默认凭据启动，生产使用 Authentik SSO。
 前端必须与平台同源部署（平台无 CORS），生产反代配置见 web/README.md。
 
 ## 部署

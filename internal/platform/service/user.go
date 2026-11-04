@@ -71,6 +71,19 @@ func (s *Service) SyncUserOnLogin(ctx context.Context, id *Identity) *errcode.Re
 	for i := range id.Groups {
 		id.Groups[i] = strings.TrimSpace(id.Groups[i])
 	}
+	existing, err := s.d.GetUser(ctx, id.Username)
+	if err != nil && !isNotFound(err) {
+		return errcode.ServerInternal(err)
+	}
+	// 保留平台本地组的成员关系：IdP 登录只覆盖外部组，平台手工维护的
+	// local 组不被下一次 SSO/LDAP 登录冲掉。
+	if err == nil {
+		for _, g := range splitUserGroups(existing.Groups) {
+			if grp, gerr := s.d.GetGroup(ctx, g); gerr == nil && grp.Source == "local" && !containsGroup(id.Groups, g) {
+				id.Groups = append(id.Groups, g)
+			}
+		}
+	}
 	// 内置管理员固定组（去重——handler 侧可能已带）
 	if id.Username == s.adminUsername() && id.Source == modules.UserSourceLocal {
 		if !containsGroup(id.Groups, s.adminGroupName()) {
@@ -87,7 +100,6 @@ func (s *Service) SyncUserOnLogin(ctx context.Context, id *Identity) *errcode.Re
 		Email:     id.Email,
 		Metadata:  "{}",
 	}
-	existing, err := s.d.GetUser(ctx, id.Username)
 	switch {
 	case err == nil:
 		u.UID = existing.UID // username 不变，保留 uid
@@ -321,8 +333,8 @@ type UpdateGroupRequest struct {
 	IsAdmin *bool   `json:"is_admin"`
 }
 
-// UpdateGroup 编辑组：可改描述与名称（重命名会把用户 groups 字段中的旧名
-// 全量替换为新名；引用该组的策略（org:<旧名>）不会自动迁移，需另行调整）。
+// UpdateGroup 编辑组：可改描述与名称（重命名会同步用户 groups 字段与
+// org:<旧名> 策略主体；外部组由 IdP 管理，不允许改名）。
 func (s *Service) UpdateGroup(ctx context.Context, name string, req *UpdateGroupRequest) (*modules.GroupDTO, *errcode.Response) {
 	if req == nil {
 		return nil, errcode.ErrInvalidParam
@@ -345,6 +357,9 @@ func (s *Service) UpdateGroup(ctx context.Context, name string, req *UpdateGroup
 				return nil, errcode.ErrGroupExists
 			} else if !isNotFound(err) {
 				return nil, errcode.ServerInternal(err)
+			}
+			if g.Source != "local" {
+				return nil, errcode.ErrGroupExternal
 			}
 			newName = v
 		}
@@ -394,6 +409,9 @@ func (s *Service) UpdateGroup(ctx context.Context, name string, req *UpdateGroup
 				}
 			}
 		}
+		if _, err := s.authz.RenameSubject("org:"+name, "org:"+newName); err != nil {
+			return nil, errcode.ServerInternal(err)
+		}
 		if _, err := s.d.DeleteGroup(ctx, name); err != nil && !isNotFound(err) {
 			return nil, errcode.ServerInternal(err)
 		}
@@ -418,11 +436,15 @@ func (s *Service) AddGroupMember(ctx context.Context, group, username string) *e
 	if group == "" || username == "" {
 		return errcode.ErrInvalidParam
 	}
-	if _, err := s.d.GetGroup(ctx, group); err != nil {
+	grp, err := s.d.GetGroup(ctx, group)
+	if err != nil {
 		if isNotFound(err) {
 			return errcode.ErrGroupNotFound
 		}
 		return errcode.ServerInternal(err)
+	}
+	if grp.Source != "local" {
+		return errcode.ErrGroupExternal
 	}
 	u, err := s.d.GetUser(ctx, username)
 	if err != nil {
@@ -450,6 +472,16 @@ func (s *Service) RemoveGroupMember(ctx context.Context, group, username string)
 	username = strings.TrimSpace(username)
 	if group == "" || username == "" {
 		return errcode.ErrInvalidParam
+	}
+	grp, err := s.d.GetGroup(ctx, group)
+	if err != nil {
+		if isNotFound(err) {
+			return errcode.ErrGroupNotFound
+		}
+		return errcode.ServerInternal(err)
+	}
+	if grp.Source != "local" {
+		return errcode.ErrGroupExternal
 	}
 	u, err := s.d.GetUser(ctx, username)
 	if err != nil {
@@ -497,8 +529,43 @@ func (s *Service) SetAvatarURL(ctx context.Context, username, url string) *errco
 	return nil
 }
 
-// DeleteGroup 删除组（不清理用户 groups 字段——下次登录同步收敛；策略需另行清理）
+// DeleteGroup 删除组：同时清理 org:<name> 策略与所有用户的组归属，
+// 避免留下不可见的孤儿策略/成员关系。
 func (s *Service) DeleteGroup(ctx context.Context, name string) *errcode.Response {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errcode.ErrInvalidParam
+	}
+	if _, err := s.d.GetGroup(ctx, name); err != nil {
+		if isNotFound(err) {
+			return errcode.ErrGroupNotFound
+		}
+		return errcode.ServerInternal(err)
+	}
+	if _, rsp := s.RemovePoliciesBySubject(ctx, "org:"+name); rsp != nil {
+		return rsp
+	}
+	users, err := s.d.ListUsers(ctx)
+	if err != nil {
+		return errcode.ServerInternal(err)
+	}
+	for _, u := range users {
+		groups := splitUserGroups(u.Groups)
+		out := make([]string, 0, len(groups))
+		changed := false
+		for _, g := range groups {
+			if g == name {
+				changed = true
+				continue
+			}
+			out = append(out, g)
+		}
+		if changed {
+			if err := s.d.UpdateUser(ctx, u.Username, map[string]any{"groups": modulesJoinGroups(out)}); err != nil {
+				return errcode.ServerInternal(err)
+			}
+		}
+	}
 	rows, err := s.d.DeleteGroup(ctx, name)
 	if err != nil {
 		return errcode.ServerInternal(err)

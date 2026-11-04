@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
+  App,
   Button,
   Card,
+  DatePicker,
   Form,
   Input,
   Select,
@@ -12,8 +14,9 @@ import {
   Typography,
   type TableColumnsType,
 } from 'antd';
+import type { Dayjs } from 'dayjs';
 import { EyeOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
-import { listAudit, type AuditQuery } from '@/api/audit';
+import { getAudit, listAudit, type AuditQuery } from '@/api/audit';
 import type { AuditEvent } from '@/api/types';
 import { PageHeader } from '@/components/PageHeader';
 import { AuditDetailDrawer } from '@/components/AuditDetailDrawer';
@@ -25,6 +28,9 @@ type Kind = 'platform' | 'cluster';
 interface FilterForm {
   user?: string;
   cluster?: string;
+  event?: string;
+  allowed?: 'all' | 'allow' | 'deny';
+  range?: [Dayjs, Dayjs];
   limit: number;
 }
 
@@ -255,18 +261,20 @@ function ClusterTable({
 }
 
 export function Audit() {
+  const { message } = App.useApp();
   const [kind, setKind] = useState<Kind>('platform');
   const [events, setEvents] = useState<Record<Kind, AuditEvent[]>>({ platform: [], cluster: [] });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<AuditEvent | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [form] = Form.useForm<FilterForm>();
 
   const load = useCallback(async (target: Kind, query: AuditQuery = {}) => {
     setLoading(true);
     setError(null);
     try {
-      const list = await listAudit({ ...query, kind: target, limit: query.limit ?? 200 });
+      const list = await listAudit({ ...query, kind: target, limit: query.limit ?? 200, summary: true });
       setEvents((prev) => ({ ...prev, [target]: list }));
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载审计日志失败');
@@ -275,18 +283,35 @@ export function Audit() {
     }
   }, []);
 
+  const buildQuery = (values: FilterForm): AuditQuery => ({
+    user: values.user?.trim() || undefined,
+    cluster: values.cluster?.trim() || undefined,
+    event: values.event?.trim() || undefined,
+    allowed: values.allowed === 'allow' ? true : values.allowed === 'deny' ? false : undefined,
+    from: values.range?.[0]?.startOf('day').toISOString(),
+    to: values.range?.[1]?.endOf('day').toISOString(),
+    limit: values.limit ?? 200,
+  });
+
   useEffect(() => {
     void load('platform', { limit: 200 });
     void load('cluster', { limit: 200 });
   }, [load]);
 
   const search = async () => {
-    const values = form.getFieldsValue();
-    await load(kind, {
-      user: values.user?.trim() || undefined,
-      cluster: values.cluster?.trim() || undefined,
-      limit: values.limit ?? 200,
-    });
+    await load(kind, buildQuery(form.getFieldsValue()));
+  };
+
+  const openDetail = async (record: AuditEvent) => {
+    setDetail(record);
+    setDetailLoading(true);
+    try {
+      setDetail(await getAudit(record.id));
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '加载审计详情失败');
+    } finally {
+      setDetailLoading(false);
+    }
   };
 
   return (
@@ -297,13 +322,7 @@ export function Audit() {
         extra={
           <Button
             icon={<ReloadOutlined />}
-            onClick={() =>
-              void load(kind, {
-                user: form.getFieldValue('user')?.trim() || undefined,
-                cluster: form.getFieldValue('cluster')?.trim() || undefined,
-                limit: form.getFieldValue('limit') ?? 200,
-              })
-            }
+            onClick={() => void load(kind, buildQuery(form.getFieldsValue()))}
           >
             刷新
           </Button>
@@ -338,7 +357,7 @@ export function Audit() {
         <Form<FilterForm>
           form={form}
           layout="inline"
-          initialValues={{ limit: 200 }}
+          initialValues={{ limit: 200, allowed: 'all' }}
           onFinish={() => void search()}
           className="audit-filter"
         >
@@ -347,6 +366,22 @@ export function Audit() {
           </Form.Item>
           <Form.Item name="cluster" label="集群">
             <Input placeholder="精确匹配集群 ID" allowClear className="mono" />
+          </Form.Item>
+          <Form.Item name="event" label="事件">
+            <Input placeholder="如 k8s-api" allowClear className="mono" />
+          </Form.Item>
+          <Form.Item name="allowed" label="结果">
+            <Select
+              style={{ width: 100 }}
+              options={[
+                { value: 'all', label: '全部' },
+                { value: 'allow', label: '允许' },
+                { value: 'deny', label: '拒绝' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item name="range" label="时间">
+            <DatePicker.RangePicker showTime={false} allowClear />
           </Form.Item>
           <Form.Item name="limit" label="条数">
             <Select
@@ -363,12 +398,12 @@ export function Audit() {
       </Card>
 
       {kind === 'platform' ? (
-        <PlatformTable events={events.platform} loading={loading} onOpen={setDetail} />
+        <PlatformTable events={events.platform} loading={loading} onOpen={openDetail} />
       ) : (
-        <ClusterTable events={events.cluster} loading={loading} onOpen={setDetail} />
+        <ClusterTable events={events.cluster} loading={loading} onOpen={openDetail} />
       )}
 
-      <AuditDetailDrawer event={detail} onClose={() => setDetail(null)} />
+      <AuditDetailDrawer event={detail} loading={detailLoading} onClose={() => setDetail(null)} />
     </div>
   );
 }

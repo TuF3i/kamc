@@ -6,6 +6,7 @@ import dayjs from 'dayjs';
 import 'dayjs/locale/zh-cn';
 import '@/styles/global.css';
 import App from '@/App';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { themeConfig } from '@/theme';
 
 dayjs.locale('zh-cn');
@@ -19,7 +20,9 @@ ReactDOM.createRoot(root).render(
   <React.StrictMode>
     <ConfigProvider locale={zhCN} theme={themeConfig}>
       <AntApp>
-        <App />
+        <ErrorBoundary>
+          <App />
+        </ErrorBoundary>
       </AntApp>
     </ConfigProvider>
   </React.StrictMode>,

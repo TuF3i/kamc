@@ -3,10 +3,14 @@ package audit
 // Syslog 导出（集群操作日志专用）：RFC5424 over UDP/TCP，JSON 作为 MSG。
 //
 // 环境变量（装配层传入）：
-//   - AM_SYSLOG_ADDR   udp://host:514 或 tcp://host:514（空 = 不导出）
-//   - AM_SYSLOG_TAG    应用名，默认 kamc-cluster-audit
+//   - AM_SYSLOG_ADDR        udp://host:514、tcp://host:514 或 tls://host:6514（空 = 不导出）
+//   - AM_SYSLOG_TAG         应用名，默认 kamc-cluster-audit
+//   - AM_SYSLOG_CA_FILE     tls 模式可选 CA（默认系统根证书）
+//   - AM_SYSLOG_INSECURE    tls 模式跳过证书校验（仅开发，默认 false）
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -27,10 +31,11 @@ const (
 
 // Syslog 远程日志导出器（懒连接；发送失败计数并丢弃，不阻塞审计主循环）
 type Syslog struct {
-	network string // udp / tcp
+	network string // udp / tcp / tls
 	addr    string
 	tag     string
 	host    string
+	tlsConf *tls.Config
 	failed  atomic.Int64
 
 	mu   sync.Mutex
@@ -48,8 +53,8 @@ func NewSyslogFromEnv() *Syslog {
 		network = strings.ToLower(n)
 		addr = a
 	}
-	if network != "udp" && network != "tcp" {
-		return nil // 仅支持 udp/tcp；tls 交给中继（如 rsyslog）
+	if network != "udp" && network != "tcp" && network != "tls" {
+		return nil
 	}
 	tag := os.Getenv("AM_SYSLOG_TAG")
 	if tag == "" {
@@ -59,7 +64,26 @@ func NewSyslogFromEnv() *Syslog {
 	if host == "" {
 		host = "-"
 	}
-	return &Syslog{network: network, addr: addr, tag: tag, host: host}
+	cfg := &Syslog{network: network, addr: addr, tag: tag, host: host}
+	if network == "tls" {
+		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+		if caFile := strings.TrimSpace(os.Getenv("AM_SYSLOG_CA_FILE")); caFile != "" {
+			pem, err := os.ReadFile(caFile)
+			if err != nil {
+				return nil
+			}
+			pool := x509.NewCertPool()
+			if !pool.AppendCertsFromPEM(pem) {
+				return nil
+			}
+			tlsCfg.RootCAs = pool
+		}
+		if os.Getenv("AM_SYSLOG_INSECURE") == "1" {
+			tlsCfg.InsecureSkipVerify = true
+		}
+		cfg.tlsConf = tlsCfg
+	}
+	return cfg
 }
 
 // Failed 累计发送失败次数
@@ -92,7 +116,14 @@ func (s *Syslog) sendOne(ev *modules.AuditEvent) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.conn == nil {
-		conn, err := net.DialTimeout(s.network, s.addr, 2*time.Second)
+		var conn net.Conn
+		var err error
+		if s.network == "tls" {
+			dialer := &net.Dialer{Timeout: 2 * time.Second}
+			conn, err = tls.DialWithDialer(dialer, "tcp", s.addr, s.tlsConf)
+		} else {
+			conn, err = net.DialTimeout(s.network, s.addr, 2*time.Second)
+		}
 		if err != nil {
 			return err
 		}

@@ -10,7 +10,7 @@ LDFLAGS := -X github.com/TuF3i/kamc/internal/version.Version=$(VERSION) \
 WEB_DIR  := web
 WEB_OUT  := data/web
 
-.PHONY: build release web platform agent k8s-am-login test vet fmt tidy clean
+.PHONY: build release web platform agent k8s-am-login image-platform image-agent test vet fmt tidy clean
 
 # 仅后端三件套（开发迭代用）
 build: platform agent k8s-am-login
@@ -34,6 +34,15 @@ agent:
 
 k8s-am-login:
 	go build -ldflags "$(LDFLAGS)" -o bin/k8s-am-login ./cmd/k8s-am-login
+
+# 容器镜像（需要本机 docker；tag 默认 VERSION）
+image-platform:
+	docker build -t kamc-platform:$(VERSION) \
+		--build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -f Dockerfile .
+
+image-agent:
+	docker build -t kamc-agent:$(VERSION) \
+		--build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -f Dockerfile.agent .
 
 test:
 	go test -count=1 ./...

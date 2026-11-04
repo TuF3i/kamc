@@ -68,7 +68,8 @@ web/                 管理前端（React 18 + Ant Design 5 + Vite + TypeScript�
 | `JWT_KEYRING_DIR` | 临时密钥 | JWT 签名密钥环目录（Secret 挂载，*.pem 文件名即 kid；未配置用临时密钥并告警） |
 | `AM_JWT_ISSUER` / `AM_JWT_AUD` | `https://kamc.local` / `kamc` | 平台 JWT iss/aud |
 | `AM_ADMIN_GROUP` | `am:admin` | 管理面用户组（JWT groups 内） |
-| `AM_PASSWORD_LOGIN` | 启用 | 内置账号密码登录开关（`0` 关闭） |
+| `AM_ENV` | `development` | `production` 时拒绝默认 sysadmin/sysadmin123 启动 |
+| `AM_PASSWORD_LOGIN` | 启用 | 内置账号密码登录开关（`0` 关闭；生产清单默认关闭） |
 | `AM_PASSWORD_LOGIN_USER` | `sysadmin` | 内置管理员账号（生产必须覆盖） |
 | `AM_PASSWORD_LOGIN_PASSWORD` | `sysadmin123` | 内置管理员密码（生产必须覆盖） |
 | `AM_ROBOT_TOKEN_TTL` | `8760h` | Robot 长期 JWT 有效期（Go duration，默认 365 天） |
@@ -82,10 +83,14 @@ web/                 管理前端（React 18 + Ant Design 5 + Vite + TypeScript�
 | `AM_KUBECONFIG_CA_FILE` | — | kubeconfig 嵌入的平台 CA（可选） |
 | `PLATFORM_INSECURE`（Agent） | — | 跳过平台证书校验（开发环境自签） |
 | `AM_RATE_LIMIT` | 0（不限） | 数据面每用户每分钟最大请求数（Redis 共享窗口） |
+| `AM_LOGIN_RATE_LIMIT` | 30 | 登录尝试/分钟/IP（0=关闭） |
 | `AM_AUDIT_SPILL_FILE` | `/tmp/kamc-audit-spill.jsonl` | 审计本地暂存文件（PG 故障时） |
+| `AM_AUDIT_RETENTION` | `720h` | 审计保留期（0=不清理）；每小时后台清理 |
 | `AM_GEOIP_DB` | — | MaxMind GeoLite2/GeoIP2 `.mmdb` 路径（审计地理信息；未配置不解析） |
-| `AM_SYSLOG_ADDR` | — | 集群审计 syslog 导出地址，`udp://host:514` 或 `tcp://host:514`（空=不导出） |
+| `AM_SYSLOG_ADDR` | — | 集群审计 syslog 导出地址，`udp://`、`tcp://` 或 `tls://host:6514`（空=不导出） |
 | `AM_SYSLOG_TAG` | `kamc-cluster-audit` | syslog APP-NAME |
+| `AM_SYSLOG_CA_FILE` | 系统根证书 | TLS 模式自定义 CA |
+| `AM_SYSLOG_INSECURE` | off | TLS 模式跳过证书校验（仅开发） |
 | `AM_AVATAR_DIR` | `data/avatar` | 用户头像文件存储目录 |
 | `AM_AVATAR_SECRET` | 派生 | 头像 URL 签名密钥（不配则由部署配置派生，保证重启后 URL 有效） |
 | `AM_WEB_DIR` | `data/web` | 前端构建产物目录（后端同进程托管页面；不存在则纯 API） |
@@ -154,8 +159,8 @@ KAMC_API=http://127.0.0.1:8080 npm run dev
       通过 Agent 隧道实时 discovery（5 分钟缓存）。
 - [x] Web 前端（web/，React 18 + Ant Design 5 + TypeScript + Vite）：
       登录（SSO + 用户名密码）、概览、集群/Token 管理、权限策略编辑器、
-      机器人、审计、kubeconfig 下载、exec 终端（xterm + v5.channel.k8s.io WS，
-      access_token 查询参数凭证——仅 WS 升级接受）。浏览器接入后端配合：
+      机器人、审计、kubeconfig 下载；exec/port-forward 流式代理（无内置终端 UI，
+      浏览器 WebSocket 可用 access_token 查询参数——仅 WS 升级接受）。浏览器接入后端配合：
       /auth/callback 浏览器导航返回桥接页（写 localStorage['kamc_token'] 后跳
       SPA）。开发：KAMC_API=… npm run dev；生产构建 dist/ + 同源反代
       （web/README.md）

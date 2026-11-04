@@ -574,6 +574,317 @@ paths:
         '503':
           description: 头像存储未启用（纯文本）
 
+  /api/v1/users:
+    get:
+      tags: [用户目录]
+      summary: 平台用户列表
+      security: [{platformJWT: []}]
+      responses:
+        '200':
+          description: 用户列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {type: array, items: {$ref: '#/components/schemas/PlatformUser'}}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+    post:
+      tags: [用户目录]
+      summary: 手动创建本地用户
+      security: [{platformJWT: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username]
+              properties:
+                username: {type: string}
+                nickname: {type: string}
+                email: {type: string}
+                avatar_url: {type: string}
+      responses:
+        '200':
+          description: 创建结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/PlatformUser'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+  /api/v1/users/{username}:
+    patch:
+      tags: [用户目录]
+      summary: 编辑用户资料
+      security: [{platformJWT: []}]
+      parameters: [{name: username, in: path, required: true, schema: {type: string}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                nickname: {type: string}
+                email: {type: string}
+                avatar_url: {type: string}
+                groups: {type: array, items: {type: string}}
+      responses:
+        '200':
+          description: 更新结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/PlatformUser'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+    delete:
+      tags: [用户目录]
+      summary: 删除用户并吊销其已签发 Token
+      security: [{platformJWT: []}]
+      parameters: [{name: username, in: path, required: true, schema: {type: string}}]
+      responses:
+        '200': {$ref: '#/components/responses/EnvelopeOnly'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+  /api/v1/groups:
+    get:
+      tags: [用户目录]
+      summary: 平台组列表（成员聚合自用户表）
+      security: [{platformJWT: []}]
+      responses:
+        '200':
+          description: 组列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {type: array, items: {$ref: '#/components/schemas/PlatformGroup'}}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+    post:
+      tags: [用户目录]
+      summary: 创建本地组
+      security: [{platformJWT: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string}
+                desc: {type: string}
+                is_admin: {type: boolean, description: 成员登录后获得平台管理面权限}
+      responses:
+        '200':
+          description: 创建结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/PlatformGroup'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+  /api/v1/groups/{name}:
+    patch:
+      tags: [用户目录]
+      summary: 编辑组（本地组可改名；外部组由 IdP 管理）
+      security: [{platformJWT: []}]
+      parameters: [{name: name, in: path, required: true, schema: {type: string}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: {type: string}
+                desc: {type: string}
+                is_admin: {type: boolean}
+      responses:
+        '200':
+          description: 更新结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/PlatformGroup'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+    delete:
+      tags: [用户目录]
+      summary: 删除组并清理成员与 org 策略
+      security: [{platformJWT: []}]
+      parameters: [{name: name, in: path, required: true, schema: {type: string}}]
+      responses:
+        '200': {$ref: '#/components/responses/EnvelopeOnly'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+  /api/v1/groups/{name}/members:
+    post:
+      tags: [用户目录]
+      summary: 添加组成员（仅本地组）
+      security: [{platformJWT: []}]
+      parameters: [{name: name, in: path, required: true, schema: {type: string}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username]
+              properties: {username: {type: string}}
+      responses:
+        '200': {$ref: '#/components/responses/EnvelopeOnly'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+  /api/v1/groups/{name}/members/{username}:
+    delete:
+      tags: [用户目录]
+      summary: 移除组成员（仅本地组）
+      security: [{platformJWT: []}]
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: username, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {$ref: '#/components/responses/EnvelopeOnly'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+  /api/v1/scripts:
+    get:
+      tags: [映射脚本]
+      summary: 映射脚本列表
+      security: [{platformJWT: []}]
+      parameters: [{name: all, in: query, schema: {type: integer, enum: [0, 1]}}]
+      responses:
+        '200':
+          description: 脚本列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {type: array, items: {$ref: '#/components/schemas/UserScript'}}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+  /api/v1/scripts/{name}:
+    get:
+      tags: [映射脚本]
+      summary: 脚本详情
+      security: [{platformJWT: []}]
+      parameters: [{name: name, in: path, required: true, schema: {type: string}}]
+      responses:
+        '200':
+          description: 脚本
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/UserScript'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+    put:
+      tags: [映射脚本]
+      summary: 保存脚本
+      security: [{platformJWT: []}]
+      parameters: [{name: name, in: path, required: true, schema: {type: string}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: {type: string}
+                enabled: {type: boolean}
+      responses:
+        '200':
+          description: 保存结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/UserScript'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+    delete:
+      tags: [映射脚本]
+      summary: 删除脚本
+      security: [{platformJWT: []}]
+      parameters: [{name: name, in: path, required: true, schema: {type: string}}]
+      responses:
+        '200': {$ref: '#/components/responses/EnvelopeOnly'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+  /api/v1/scripts/{name}/execute:
+    post:
+      tags: [映射脚本]
+      summary: 执行/试跑脚本
+      security: [{platformJWT: []}]
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: dry_run, in: query, schema: {type: integer, enum: [0, 1]}}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sub: {type: string}
+                email: {type: string}
+                groups: {type: array, items: {type: string}}
+                source: {type: string}
+      responses:
+        '200':
+          description: 执行结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          dry_run: {type: boolean}
+                          actions: {type: array, items: {type: object}}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+
   /api/v1/clusters/{id}/info:
     get:
       tags: [集群]
@@ -698,6 +1009,10 @@ paths:
         - {name: user, in: query, schema: {type: string}}
         - {name: cluster, in: query, schema: {type: string}}
         - {name: event, in: query, schema: {type: string, description: '事件名精确匹配（如 k8s-api）'}}
+        - {name: from, in: query, schema: {type: string, format: date-time}}
+        - {name: to, in: query, schema: {type: string, format: date-time}}
+        - {name: allowed, in: query, schema: {type: integer, enum: [0, 1]}}
+        - {name: summary, in: query, schema: {type: integer, enum: [0, 1], description: '1=不返回 request_body/response_body，仅返回长度'}}
         - {name: limit, in: query, schema: {type: integer, default: 100, maximum: 1000}}
       responses:
         '200':
@@ -712,6 +1027,31 @@ paths:
                       data:
                         type: array
                         items: {$ref: '#/components/schemas/AuditEvent'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
+
+  /api/v1/audit/{id}:
+    get:
+      tags: [审计]
+      summary: 单条审计详情
+      description: 返回完整请求/响应报文（列表 summary 模式只返回长度）。
+      security:
+        - platformJWT: []
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+      responses:
+        '200':
+          description: 事件详情
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/AuditEvent'}
+        '400':
+          description: 事件 ID 非法（JSON 信封错误）
         '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
         '403': {$ref: '#/components/responses/PlainTextForbidden'}
 
@@ -1098,6 +1438,11 @@ components:
       content:
         text/plain:
           schema: {type: string}
+    EnvelopeOnly:
+      description: 仅统一信封，无业务数据
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Envelope'}
 
   schemas:
     Envelope:
@@ -1224,6 +1569,25 @@ components:
           type: array
           items: {$ref: '#/components/schemas/PolicyDTO'}
 
+    PlatformGroup:
+      type: object
+      properties:
+        name: {type: string}
+        desc: {type: string}
+        source: {type: string, enum: [sso, ldap, local]}
+        is_admin: {type: boolean, description: 成员登录时获得管理组声明}
+        members: {type: array, items: {type: string}}
+        created_at: {type: string, format: date-time}
+
+    UserScript:
+      type: object
+      properties:
+        name: {type: string}
+        content: {type: string}
+        enabled: {type: boolean}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
     PlatformUser:
       type: object
       properties:
@@ -1265,6 +1629,8 @@ components:
         status_code: {type: integer}
         request_body: {type: string, description: 完整请求报文（起始行+头+格式化 JSON body，body 上限 16KB，敏感头脱敏）}
         response_body: {type: string, description: 完整响应报文（状态行+头+格式化 JSON body，body 上限 16KB，gzip 自动解压）}
+        request_size: {type: integer, description: 请求报文字符数（summary 模式替代 request_body）}
+        response_size: {type: integer, description: 响应报文字符数（summary 模式替代 response_body）}
         latency_ms: {type: integer, format: int64}
 
     SystemInfo:

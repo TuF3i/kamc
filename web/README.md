@@ -122,7 +122,8 @@ npm run dev:mock   # mock 模式：完全脱离后端，使用前端内置模拟
   `window.open`；文件名取 `Content-Disposition`。
 - **数据面**：`/proxy/{clusterID}/...` 返回原生 Kubernetes JSON，不是平台信封。
 - **审计**：`groups` 是逗号分隔字符串；`limit` ≤ 0 或 > 1000 会被后端强制为 100；
-  `event=k8s-api` 可精确过滤数据面代理事件（概览统计使用该过滤）；
+  `event=k8s-api`、`from`/`to`、`allowed` 可组合过滤；列表支持 `summary=1`
+  （不返回报文正文，仅返回长度），详情走 `GET /api/v1/audit/{id}`；
   异步批量落库，查询可能有约 0.5s 延迟。
 
 ## 目录结构

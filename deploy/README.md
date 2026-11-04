@@ -11,6 +11,15 @@
 | `platform/manifests.yaml` | 平台 Deployment/Service/headless/PDB/NetworkPolicy/Secret 模板 |
 | `agent/manifests.yaml` | Agent SA/RBAC/Secret/Deployment（双副本） |
 
+## 镜像构建
+
+```bash
+make image-platform VERSION=v1.0.0
+make image-agent VERSION=v1.0.0
+```
+
+`kamc-platform` 镜像已包含 `data/web` 前端产物；Agent 镜像只含隧道客户端。
+
 ## 前置条件
 
 - 平台集群（运行主控）、目标集群 1.23+（目标集群内部署 Agent）
@@ -47,6 +56,10 @@ base64 -w0 jwt-1.pem                        # __JWT1_PEM_BASE64__
 
 ## 运维要点
 
+- **Agent SA 权限即平台上限**：集群侧不做用户级 Impersonation，用户授权全部由平台 Casbin 完成。
+  当前 Agent 模板绑定 `cluster-admin`（最省事）；安全要求高时请替换为覆盖所需 API 的专用
+  ClusterRole，并保留 `Impersonate-*` 请求头剥离（这是防提权的必要条件）。
+
 - **滚动升级**：平台 `maxUnavailable: 0`，Agent 隧道经 1001 通知自动重连其他副本；
   进行中的 exec/port-forward 会断（§7.5 已知取舍）
 - **JWT 轮换**：新密钥 `jwt-2.pem` 加入 Secret → 存量过期后移除 `jwt-1.pem`（§4.3）
@@ -66,5 +79,7 @@ base64 -w0 jwt-1.pem                        # __JWT1_PEM_BASE64__
 - [ ] PostgreSQL 停机：kubectl 访问不受影响；审计落本地 spill 并恢复回放
 - [ ] Authentik 停机：存量 JWT 有效期内可用
 - [ ] exec / port-forward 双协议验证（kubectl 1.31+ WebSocket 与降级 SPDY）
-- [ ] 限流阈值验证（429 + Retry-After）
+- [ ] 限流阈值验证（429 + Retry-After；数据面 `AM_RATE_LIMIT`、登录 `AM_LOGIN_RATE_LIMIT`）
+- [ ] 确认 `AM_PASSWORD_LOGIN=0` 或已配置非默认密码（生产清单默认关闭）
+- [ ] 审计保留期 `AM_AUDIT_RETENTION` 与 syslog TLS 目标已确认
 - [ ] 踢出用户后全部副本 5s 内生效

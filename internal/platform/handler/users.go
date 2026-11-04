@@ -7,6 +7,8 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/go-chi/chi/v5"
 
@@ -57,10 +59,26 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	errcode.GenFinalResponse(w, data, rsp)
 }
 
-// DeleteUser DELETE /api/v1/users/{username}
+// DeleteUser DELETE /api/v1/users/{username} —— 删除账号并立即吊销其已签发 Token。
 func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
-	rsp := h.svc.DeleteUser(r.Context(), chi.URLParam(r, "username"))
-	h.auditPlatform(r, "user-delete", chi.URLParam(r, "username"), "", "/api/v1/users/"+chi.URLParam(r, "username"), errcode.IsSuccess(rsp), "delete")
+	username := chi.URLParam(r, "username")
+	user, rsp := h.svc.GetUser(r.Context(), username)
+	if rsp != nil {
+		errcode.GenFinalResponse(w, nil, rsp)
+		return
+	}
+	// 先吊销再删除：吊销失败则不删（避免账号已删但 Token 仍可用）。
+	if h.auth != nil {
+		if err := h.auth.RevokeUser(r.Context(), username); err != nil {
+			errcode.GenFinalResponse(w, nil, errcode.ServerInternal(err))
+			return
+		}
+	}
+	rsp = h.svc.DeleteUser(r.Context(), username)
+	if errcode.IsSuccess(rsp) && user != nil && h.avatarDir != "" {
+		_ = os.Remove(filepath.Join(h.avatarDir, user.UID))
+	}
+	h.auditPlatform(r, "user-delete", username, "", "/api/v1/users/"+username, errcode.IsSuccess(rsp), "delete+revoke")
 	errcode.GenFinalResponse(w, nil, rsp)
 }
 

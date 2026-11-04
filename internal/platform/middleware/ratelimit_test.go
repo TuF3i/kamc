@@ -94,3 +94,38 @@ func TestRateLimitMiddleware(t *testing.T) {
 		}
 	}
 }
+
+// TestLoginRateLimit 登录限流按 XFF 首项计数，不依赖 JWT。
+func TestLoginRateLimit(t *testing.T) {
+	handler := LoginRateLimit(NewMemoryRateLimiter(time.Minute, 2), 2, time.Minute)(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
+	)
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/auth/password-login", nil)
+		req.Header.Set("X-Forwarded-For", "203.0.113.5, 10.0.0.1")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("request %d: want 200, got %d", i+1, rec.Code)
+		}
+	}
+	req := httptest.NewRequest(http.MethodPost, "/auth/password-login", nil)
+	req.Header.Set("X-Forwarded-For", "203.0.113.5, 10.0.0.1")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("3rd request: want 429, got %d", rec.Code)
+	}
+	if rec.Header().Get("Retry-After") != "60" {
+		t.Fatalf("Retry-After: %q", rec.Header().Get("Retry-After"))
+	}
+
+	// 不同 IP 独立计数
+	req = httptest.NewRequest(http.MethodPost, "/auth/password-login", nil)
+	req.Header.Set("X-Forwarded-For", "203.0.113.6")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("different IP: want 200, got %d", rec.Code)
+	}
+}

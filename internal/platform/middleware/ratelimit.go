@@ -11,8 +11,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -140,4 +142,48 @@ func RateLimit(limiter RateLimiter, limit int, window time.Duration) func(http.H
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// LoginRateLimit 登录入口限流：按客户端 IP 计数（密码/LDAP 登录防爆破）。
+// 不依赖 JWT；X-Forwarded-For 首项优先（部署层负责覆盖），否则用连接地址。
+func LoginRateLimit(limiter RateLimiter, limit int, window time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if limiter == nil || limit <= 0 {
+				next.ServeHTTP(w, r)
+				return
+			}
+			ip := clientIP(r)
+			allowed, err := limiter.Allow(r.Context(), "login:"+ip)
+			if err != nil {
+				log.Printf("[platform] login ratelimit check failed: %v", err)
+				next.ServeHTTP(w, r)
+				return
+			}
+			if !allowed {
+				metrics.RateLimitedTotal.Inc()
+				w.Header().Set("Retry-After", strconv.Itoa(int(window.Seconds())))
+				http.Error(w, "too many login attempts", http.StatusTooManyRequests)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// clientIP 登录限流用对端 IP：XFF 首项 → X-Real-IP → RemoteAddr。
+func clientIP(r *http.Request) string {
+	if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
+		if first, _, _ := strings.Cut(xff, ","); strings.TrimSpace(first) != "" {
+			return strings.TrimSpace(first)
+		}
+	}
+	if xr := strings.TrimSpace(r.Header.Get("X-Real-IP")); xr != "" {
+		return xr
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }

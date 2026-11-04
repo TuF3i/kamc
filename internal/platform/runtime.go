@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -79,6 +80,8 @@ type Runtime struct {
 	authzEn     *authz.Enforcer         // 鉴权组件（Release 释放 watcher）
 	redisCli    goredis.UniversalClient // 共享 Redis 客户端 (自建时 Release 负责关闭)
 	auditWriter *audit.Writer           // 审计异步写出器
+	auditStop   chan struct{}           // 审计保留期清理协程停止信号
+	auditWG     sync.WaitGroup
 }
 
 // Option CreateRuntime 选项
@@ -267,6 +270,22 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		}
 	}
 
+	// 登录入口限流（AM_LOGIN_RATE_LIMIT，默认 10 次/分钟/IP；0=关闭）。
+	loginRateLimitN := 30
+	if raw := os.Getenv("AM_LOGIN_RATE_LIMIT"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v >= 0 {
+			loginRateLimitN = v
+		}
+	}
+	var loginLimiter mw.RateLimiter
+	if loginRateLimitN > 0 {
+		if sharedRedisCli != nil {
+			loginLimiter = mw.NewRedisRateLimiter(sharedRedisCli, time.Minute, loginRateLimitN)
+		} else {
+			loginLimiter = mw.NewMemoryRateLimiter(time.Minute, loginRateLimitN)
+		}
+	}
+
 	// 审计异步写出（§12.2）：缓冲投递 → 批量写 PG；PG 故障落本地文件回放。
 	// 出口分流：平台事件 → stdio；集群事件 → 可选的 syslog 远程日志服务器。
 	auditWriter := audit.NewWriter(d, envDefault("AM_AUDIT_SPILL_FILE", "/tmp/kamc-audit-spill.jsonl"))
@@ -300,31 +319,36 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	}
 
 	h := handler.NewHandler(svc, handler.Deps{
-		Auth:            authSvc,
-		OIDC:            oidcClient,
-		Tunnels:         tunnelsService(o.tunnels),
-		Proxies:         proxies,
-		CAData:          caData,
-		OIDCIssuer:      os.Getenv("OIDC_ISSUER"),
-		OIDCClientID:    os.Getenv("OIDC_CLIENT_ID"),
-		OIDCRedirectURL: os.Getenv("OIDC_REDIRECT_URL"),
-		RateLimiter:     limiter,
-		RateLimitN:      rateLimitN,
-		Audit:           auditWriter,
-		RobotTokenTTL:   envDuration("AM_ROBOT_TOKEN_TTL", 365*24*time.Hour),
-		Catalog:         catalogSvc,
-		AgentImageRepo:  agentImageRepo,
-		Settings:        platSettings,
-		LDAP:            ldapCfg,
-		LuaAuth:         luaEngine,
-		Geo:             geoResolver,
-		AvatarDir:       avatarDir,
-		AvatarSecret:    avatarSecret,
+		Auth:             authSvc,
+		OIDC:             oidcClient,
+		Tunnels:          tunnelsService(o.tunnels),
+		Proxies:          proxies,
+		CAData:           caData,
+		OIDCIssuer:       os.Getenv("OIDC_ISSUER"),
+		OIDCClientID:     os.Getenv("OIDC_CLIENT_ID"),
+		OIDCRedirectURL:  os.Getenv("OIDC_REDIRECT_URL"),
+		RateLimiter:      limiter,
+		RateLimitN:       rateLimitN,
+		LoginRateLimiter: loginLimiter,
+		LoginRateLimitN:  loginRateLimitN,
+		Audit:            auditWriter,
+		RobotTokenTTL:    envDuration("AM_ROBOT_TOKEN_TTL", 365*24*time.Hour),
+		Catalog:          catalogSvc,
+		AgentImageRepo:   agentImageRepo,
+		Settings:         platSettings,
+		LDAP:             ldapCfg,
+		LuaAuth:          luaEngine,
+		Geo:              geoResolver,
+		AvatarDir:        avatarDir,
+		AvatarSecret:     avatarSecret,
 	})
 	h.SetPolicy(envDefault("AM_ADMIN_GROUP", "am:admin"), os.Getenv("AM_DEV_ISSUE_TOKEN") == "1")
 	passwordUser := envDefault("AM_PASSWORD_LOGIN_USER", "sysadmin")
 	passwordPass := envDefault("AM_PASSWORD_LOGIN_PASSWORD", "sysadmin123")
 	passwordEnabled := os.Getenv("AM_PASSWORD_LOGIN") != "0"
+	if strings.EqualFold(os.Getenv("AM_ENV"), "production") && passwordEnabled && passwordUser == "sysadmin" && passwordPass == "sysadmin123" {
+		return nil, fmt.Errorf("platform -> refuse default password login in production (set AM_PASSWORD_LOGIN=0 or explicit credentials)")
+	}
 	h.SetPasswordLogin(passwordUser, passwordPass, passwordEnabled)
 	if passwordEnabled && passwordUser == "sysadmin" && passwordPass == "sysadmin123" {
 		log.Printf("[platform] WARNING: default password login enabled (sysadmin/sysadmin123); set AM_PASSWORD_LOGIN_USER/AM_PASSWORD_LOGIN_PASSWORD")
@@ -363,6 +387,42 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		authzEn:     authzEn,
 		redisCli:    sharedRedisCli,
 		auditWriter: auditWriter,
+	}
+
+	// 审计保留期清理（默认 30 天；AM_AUDIT_RETENTION=0 关闭）。
+	auditRetention := envDuration("AM_AUDIT_RETENTION", 30*24*time.Hour)
+	if auditRetention > 0 {
+		rt.auditStop = make(chan struct{})
+		rt.auditWG.Add(1)
+		go func() {
+			defer rt.auditWG.Done()
+			cleanup := func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				n, err := svc.DeleteAuditBefore(ctx, time.Now().Add(-auditRetention))
+				if err != nil {
+					log.Printf("[platform] audit retention cleanup: %v", err)
+					return
+				}
+				if n > 0 {
+					log.Printf("[platform] audit retention: removed %d events older than %s", n, auditRetention)
+				}
+			}
+			cleanup()
+			ticker := time.NewTicker(time.Hour)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-rt.auditStop:
+					return
+				case <-ticker.C:
+					cleanup()
+				}
+			}
+		}()
+		log.Printf("[platform] audit retention: %s", auditRetention)
+	} else {
+		log.Printf("[platform] audit retention: disabled")
 	}
 
 	// ErrServerClosed 不算错误：ReleaseRuntime 主动 Shutdown 的正常路径
@@ -414,6 +474,11 @@ func (r *Runtime) ReleaseRuntime() error {
 		if err := r.srv.Shutdown(ctx); err != nil {
 			log.Printf("[platform] http shutdown: %v", err)
 		}
+	}
+
+	if r.auditStop != nil {
+		close(r.auditStop)
+		r.auditWG.Wait()
 	}
 
 	r.Service.Release()

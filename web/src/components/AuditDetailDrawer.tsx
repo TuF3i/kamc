@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { Descriptions, Drawer, Space, Tag, Typography } from 'antd';
+import { Descriptions, Drawer, Space, Spin, Tag, Typography } from 'antd';
 import type { AuditEvent } from '@/api/types';
 import { CopyButton } from '@/components/CopyButton';
 import { AuditResultTag, ReasonTag } from '@/components/StatusTag';
@@ -125,9 +125,11 @@ function AuditBody({ title, body }: { title: string; body?: string }) {
 /** 事件详情抽屉：从右侧滑出，展示完整对端上下文与原始 HTTP 报文。 */
 export function AuditDetailDrawer({
   event,
+  loading = false,
   onClose,
 }: {
   event: AuditEvent | null;
+  loading?: boolean;
   onClose: () => void;
 }) {
   const isCluster = event?.kind === 'cluster';
@@ -150,6 +152,7 @@ export function AuditDetailDrawer({
       styles={{ body: { padding: 20 } }}
       destroyOnHidden
     >
+      <Spin spinning={loading}>
       {event ? (
         <>
           <Descriptions size="small" column={1} bordered>
@@ -187,6 +190,7 @@ export function AuditDetailDrawer({
           ) : null}
         </>
       ) : null}
+      </Spin>
     </Drawer>
   );
 }

@@ -273,7 +273,7 @@ export function GroupsTab() {
           <Form.Item name="desc" label="描述">
             <Input.TextArea placeholder="可选" rows={3} maxLength={500} />
           </Form.Item>
-          <Form.Item name="is_admin" label="平台管理员" valuePropName="checked">
+          <Form.Item name="is_admin" label="平台管理员" valuePropName="checked" extra="成员下次登录后生效">
             <Switch />
           </Form.Item>
         </Form>
@@ -300,14 +300,18 @@ export function GroupsTab() {
                   { required: true, message: '请输入组名' },
                   { max: 128, message: '组名最长 128 字符' },
                 ]}
-                extra="重命名会同步所有用户的组字段；引用旧组名的策略（org:<旧名>）需手动调整。"
+                extra={
+                  editing.source === 'local'
+                    ? '重命名会同步用户组字段和 org:<旧名> 策略。'
+                    : '外部组由 IdP 管理，组名不可修改。'
+                }
               >
-                <Input className="mono" autoComplete="off" />
+                <Input className="mono" autoComplete="off" disabled={editing.source !== 'local'} />
               </Form.Item>
               <Form.Item name="desc" label="描述">
                 <Input.TextArea rows={2} maxLength={500} />
               </Form.Item>
-              <Form.Item name="is_admin" label="平台管理员" valuePropName="checked">
+              <Form.Item name="is_admin" label="平台管理员" valuePropName="checked" extra="成员下次登录后生效">
                 <Switch />
               </Form.Item>
             </Form>
@@ -341,45 +345,53 @@ export function GroupsTab() {
                       <span className="strong">{user?.nickname || m}</span>
                       <code className="mono" style={{ fontSize: 12, color: 'var(--kamc-muted)' }}>{m}</code>
                       <span style={{ flex: 1 }} />
-                      <Button
-                        type="link"
-                        size="small"
-                        danger
-                        loading={memberBusy}
-                        onClick={() => void removeMember(m)}
-                      >
-                        移出
-                      </Button>
+                      {editing.source === 'local' ? (
+                        <Button
+                          type="link"
+                          size="small"
+                          danger
+                          loading={memberBusy}
+                          onClick={() => void removeMember(m)}
+                        >
+                          移出
+                        </Button>
+                      ) : null}
                     </div>
                   );
                 })
               )}
             </div>
 
-            <Space.Compact style={{ width: '100%' }}>
-              <Select
-                style={{ flex: 1 }}
-                showSearch
-                allowClear
-                placeholder="选择要添加的用户"
-                value={memberToAdd}
-                onChange={setMemberToAdd}
-                optionFilterProp="label"
-                options={candidateUsers.map((u) => ({
-                  value: u.username,
-                  label: `${u.nickname || u.username}（${u.username}）`,
-                }))}
-              />
-              <Button
-                type="primary"
-                icon={<UserAddOutlined />}
-                loading={memberBusy}
-                disabled={!memberToAdd}
-                onClick={() => void addMember()}
-              >
-                添加用户
-              </Button>
-            </Space.Compact>
+            {editing.source === 'local' ? (
+              <Space.Compact style={{ width: '100%' }}>
+                <Select
+                  style={{ flex: 1 }}
+                  showSearch
+                  allowClear
+                  placeholder="选择要添加的用户"
+                  value={memberToAdd}
+                  onChange={setMemberToAdd}
+                  optionFilterProp="label"
+                  options={candidateUsers.map((u) => ({
+                    value: u.username,
+                    label: `${u.nickname || u.username}（${u.username}）`,
+                  }))}
+                />
+                <Button
+                  type="primary"
+                  icon={<UserAddOutlined />}
+                  loading={memberBusy}
+                  disabled={!memberToAdd}
+                  onClick={() => void addMember()}
+                >
+                  添加用户
+                </Button>
+              </Space.Compact>
+            ) : (
+              <Typography.Text type="secondary">
+                该组来自 {editing.source === 'ldap' ? 'LDAP' : 'SSO'}，成员由登录同步，平台侧只读。
+              </Typography.Text>
+            )}
           </>
         ) : null}
       </Modal>

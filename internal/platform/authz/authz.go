@@ -192,6 +192,36 @@ func (en *Enforcer) RemovePolicy(sub, dom, obj, act string) (bool, error) {
 	return removed, nil
 }
 
+// RenameSubject 把旧主体的全部策略迁移到新主体（组重命名用）。
+// 返回迁移的策略行数；逐行迁移，失败时已迁移行保留（调用方记录错误）。
+func (en *Enforcer) RenameSubject(oldSub, newSub string) (int, error) {
+	if oldSub == "" || newSub == "" || oldSub == newSub {
+		return 0, nil
+	}
+	rules, err := en.e.GetFilteredPolicy(0, oldSub)
+	if err != nil {
+		return 0, fmt.Errorf("authz -> filtered policy %s: %w", oldSub, err)
+	}
+	moved := 0
+	for _, rule := range rules {
+		if len(rule) < 4 {
+			continue
+		}
+		dom, obj, act := rule[1], rule[2], rule[3]
+		if _, err := en.e.RemovePolicy(oldSub, dom, obj, act); err != nil {
+			return moved, fmt.Errorf("authz -> rename remove %s: %w", oldSub, err)
+		}
+		if _, err := en.e.AddPolicy(newSub, dom, obj, act); err != nil {
+			return moved, fmt.Errorf("authz -> rename add %s: %w", newSub, err)
+		}
+		moved++
+	}
+	if moved > 0 {
+		en.notifyWatchers()
+	}
+	return moved, nil
+}
+
 // ListPolicies 全量策略行
 func (en *Enforcer) ListPolicies() ([][]string, error) {
 	return en.e.GetPolicy()

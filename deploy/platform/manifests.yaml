@@ -90,6 +90,9 @@ spec:
         - {name: OIDC_REDIRECT_URL, value: "https://__DOMAIN__/auth/callback"}
         - {name: JWT_KEYRING_DIR, value: "/etc/k8s-am/jwt"}
         - {name: AM_JWT_ISSUER, value: "https://__DOMAIN__"}
+        - {name: AM_ENV, value: "production"}                     # 禁止默认 sysadmin/sysadmin123 启动
+        - {name: AM_PASSWORD_LOGIN, value: "0"}                    # 生产默认关闭内置密码登录；需要时显式打开
+        - {name: AM_LOGIN_RATE_LIMIT, value: "30"}                 # 登录尝试/分钟/IP
         - {name: AM_ADMIN_GROUP, value: "am:admin"}
         - {name: AM_EXTERNAL_URL, value: "https://__DOMAIN__"}
         - {name: AM_PEER_ADDR, value: ":9090"}

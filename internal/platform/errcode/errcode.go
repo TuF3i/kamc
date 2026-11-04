@@ -33,6 +33,7 @@ const (
 	CodeUserExists         = 40010
 	CodeGroupExists        = 40007
 	CodeGroupNotFound      = 40008
+	CodeGroupExternal      = 40011
 	CodeLDAPDisabled       = 10002
 	CodeScriptsDisabled    = 10004
 	CodeScriptFailed       = 10003
@@ -68,6 +69,7 @@ var (
 	ErrUserExists         = &Response{Status: CodeUserExists, Message: "user already exists"}
 	ErrGroupExists        = &Response{Status: CodeGroupExists, Message: "group already exists"}
 	ErrGroupNotFound      = &Response{Status: CodeGroupNotFound, Message: "group not found"}
+	ErrGroupExternal      = &Response{Status: CodeGroupExternal, Message: "external group membership is managed by IdP"}
 	ErrLDAPDisabled       = &Response{Status: CodeLDAPDisabled, Message: "ldap not configured"}
 	ErrScriptsDisabled    = &Response{Status: CodeScriptsDisabled, Message: "mapping scripts disabled"}
 	ErrAuthScriptNotFound = &Response{Status: CodeAuthScriptNotFound, Message: "script not found"}

@@ -12,6 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
+	"github.com/TuF3i/kamc/internal/platform/dao"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
 	"github.com/TuF3i/kamc/internal/platform/middleware"
 	"github.com/TuF3i/kamc/internal/platform/modules"
@@ -36,24 +39,59 @@ var sensitiveHeaders = map[string]bool{
 	"impersonate-uid":     true,
 }
 
-// ListAudit GET /api/v1/audit?kind=&user=&cluster=&event=&limit= —— 审计查询（管理面）。
-// kind=platform|cluster 过滤；缺省返回全部（兼容旧调用）。
+// ListAudit GET /api/v1/audit?kind=&user=&cluster=&event=&from=&to=&allowed=&summary=&limit=
+// —— 审计查询（管理面）。kind=platform|cluster 过滤；summary=1 不返回报文正文。
 func (h *Handler) ListAudit(w http.ResponseWriter, r *http.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	events, err := h.svc.ListAudit(r.Context(),
-		r.URL.Query().Get("kind"),
-		r.URL.Query().Get("user"),
-		r.URL.Query().Get("cluster"),
-		r.URL.Query().Get("event"),
-		limit)
-	if err != nil {
-		errcode.GenFinalResponse(w, nil, errcode.ServerInternal(err))
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	filter := dao.AuditFilter{
+		Kind:    q.Get("kind"),
+		User:    q.Get("user"),
+		Cluster: q.Get("cluster"),
+		Event:   q.Get("event"),
+		Limit:   limit,
+		Summary: q.Get("summary") == "1" || strings.EqualFold(q.Get("summary"), "true"),
+	}
+	if raw := strings.TrimSpace(q.Get("allowed")); raw != "" {
+		v := raw == "1" || strings.EqualFold(raw, "true")
+		filter.Allowed = &v
+	}
+	if raw := strings.TrimSpace(q.Get("from")); raw != "" {
+		t, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
+			return
+		}
+		filter.From = &t
+	}
+	if raw := strings.TrimSpace(q.Get("to")); raw != "" {
+		t, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
+			return
+		}
+		filter.To = &t
+	}
+	events, rsp := h.svc.ListAudit(r.Context(), filter)
+	if rsp != nil {
+		errcode.GenFinalResponse(w, nil, rsp)
 		return
 	}
 	if events == nil {
 		events = []modules.AuditEvent{}
 	}
 	errcode.GenFinalResponse(w, events, nil)
+}
+
+// GetAudit GET /api/v1/audit/{id} —— 单条审计详情（含完整请求/响应报文）。
+func (h *Handler) GetAudit(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
+		return
+	}
+	event, rsp := h.svc.GetAudit(r.Context(), id)
+	errcode.GenFinalResponse(w, event, rsp)
 }
 
 // requestMeta 对端上下文：IP（X-Forwarded-For → X-Real-IP → 连接地址）、
@@ -105,7 +143,7 @@ func (h *Handler) auditPlatform(r *http.Request, event, user, cluster, path stri
 		User:         user,
 		Cluster:      cluster,
 		Method:       r.Method,
-		Path:         path,
+		Path:         redactAuditURI(path),
 		Allowed:      allowed,
 		Reason:       reason,
 		SourceIP:     m.IP,
@@ -125,7 +163,7 @@ func (h *Handler) clusterEvent(r *http.Request, allowed bool, reason string) *mo
 		Event:        "k8s-api",
 		Timestamp:    time.Now(),
 		Method:       r.Method,
-		Path:         r.URL.RequestURI(),
+		Path:         redactAuditURI(r.URL.RequestURI()),
 		Allowed:      allowed,
 		Reason:       reason,
 		SourceIP:     m.IP,
@@ -147,8 +185,8 @@ func (h *Handler) clusterEvent(r *http.Request, allowed bool, reason string) *mo
 func (h *Handler) auditDataPlane(r *http.Request, clusterID, obj, verb string, allowed bool, reason string, start time.Time, reqDump, respDump string, status int) {
 	ev := h.clusterEvent(r, allowed, reason)
 	ev.Cluster = clusterID
-	ev.Path = r.URL.RequestURI() // 原始请求（含 query，审计溯源）
-	ev.Object = obj              // 鉴权语义资源串
+	ev.Path = redactAuditURI(r.URL.RequestURI()) // 原始请求（query 中密钥已脱敏）
+	ev.Object = obj                              // 鉴权语义资源串
 	ev.Verb = verb
 	ev.Method = r.Method
 	ev.LatencyMS = time.Since(start).Milliseconds()
@@ -301,7 +339,7 @@ func captureRequestDump(r *http.Request) string {
 		}
 	}
 	body, gzTrunc, gzDec := decodeBody(header, raw)
-	startLine := fmt.Sprintf("%s %s %s", r.Method, r.URL.RequestURI(), r.Proto)
+	startLine := fmt.Sprintf("%s %s %s", r.Method, redactAuditURI(r.URL.RequestURI()), r.Proto)
 	return buildHTTPMessage(startLine, header, body, truncated || gzTrunc, gzDec)
 }
 

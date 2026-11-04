@@ -83,6 +83,9 @@ export interface AuditEvent {
   status_code?: number;
   request_body?: string;
   response_body?: string;
+  /** 摘要模式下的报文字符数（不返回正文） */
+  request_size?: number;
+  response_size?: number;
   latency_ms?: number;
 }
 

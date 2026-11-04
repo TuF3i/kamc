@@ -28,7 +28,7 @@ type Sink interface {
 }
 
 const (
-	bufferSize    = 4096
+	bufferSize    = 16384
 	batchSize     = 100
 	flushInterval = 500 * time.Millisecond
 )

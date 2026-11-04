@@ -612,9 +612,22 @@ export async function mockApi<T>(method: string, rawPath: string, body?: unknown
   }
 
   // 审计
+  const auditDetailMatch = /^\/api\/v1\/audit\/(\d+)$/.exec(path);
+  if (auditDetailMatch) {
+    const id = Number(auditDetailMatch[1]);
+    const item = [...auditPlatform, ...auditCluster].find((event) => event.id === id);
+    if (!item) notFound('audit event not found');
+    return data(item);
+  }
   if (path === '/api/v1/audit') {
     const kind = q.get('kind');
     const event = q.get('event');
+    const user = q.get('user');
+    const cluster = q.get('cluster');
+    const allowed = q.get('allowed');
+    const from = q.get('from');
+    const to = q.get('to');
+    const summary = q.get('summary') === '1' || q.get('summary') === 'true';
     const limit = Number(q.get('limit') ?? 200);
     const source =
       kind === 'cluster'
@@ -624,8 +637,27 @@ export async function mockApi<T>(method: string, rawPath: string, body?: unknown
           : [...auditPlatform, ...auditCluster].sort((a, b) =>
               b.timestamp.localeCompare(a.timestamp),
             );
-    const filtered = event ? source.filter((item) => item.event === event) : source;
-    return data(filtered.slice(0, limit));
+    let filtered = [...source];
+    if (event) filtered = filtered.filter((item) => item.event === event);
+    if (user) filtered = filtered.filter((item) => item.user === user);
+    if (cluster) filtered = filtered.filter((item) => item.cluster === cluster);
+    if (allowed !== null) {
+      const want = allowed === '1' || allowed === 'true';
+      filtered = filtered.filter((item) => item.allowed === want);
+    }
+    if (from) filtered = filtered.filter((item) => item.timestamp >= from);
+    if (to) filtered = filtered.filter((item) => item.timestamp <= to);
+    const list = filtered.slice(0, limit);
+    if (summary) {
+      return data(
+        list.map(({ request_body, response_body, ...rest }) => ({
+          ...rest,
+          request_size: request_body?.length ?? 0,
+          response_size: response_body?.length ?? 0,
+        })),
+      );
+    }
+    return data(list);
   }
 
   throw new ApiError(`mock: 未实现的接口 ${m} ${path}`, 404, 40400);

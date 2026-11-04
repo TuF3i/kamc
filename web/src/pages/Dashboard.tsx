@@ -259,6 +259,14 @@ function uaBreakdown(events: AuditEvent[], limit: number): RankItem[] {
     .slice(0, limit);
 }
 
+function requestSize(event: AuditEvent): number {
+  return event.request_size ?? event.request_body?.length ?? 0;
+}
+
+function responseSize(event: AuditEvent): number {
+  return event.response_size ?? event.response_body?.length ?? 0;
+}
+
 function fmtChars(n?: number): string {
   if (!n) return '—';
   if (n < 1000) return `${n}`;
@@ -340,8 +348,8 @@ export function Dashboard() {
           fetchSystemInfo().catch(() => null),
           listRobots().catch(() => []),
           listPolicies().then((list) => list.length).catch(() => 0),
-          listAudit({ kind: 'cluster', event: 'k8s-api', limit: 1000 }).catch(() => []),
-          listAudit({ kind: 'platform', limit: 1000 }).catch(() => []),
+          listAudit({ kind: 'cluster', event: 'k8s-api', limit: 1000, summary: true }).catch(() => []),
+          listAudit({ kind: 'platform', limit: 1000, summary: true }).catch(() => []),
         ]);
       setClusters(clusterList);
       setSystem(systemInfo);
@@ -440,16 +448,16 @@ export function Dashboard() {
     let latencySum = 0;
     let latencyCount = 0;
     for (const event of clusterEvents) {
-      requestChars += event.request_body?.length ?? 0;
-      responseChars += event.response_body?.length ?? 0;
+      requestChars += requestSize(event);
+      responseChars += responseSize(event);
       if (event.latency_ms && event.latency_ms > 0) {
         latencySum += event.latency_ms;
         latencyCount += 1;
       }
     }
     const top = [...clusterEvents]
-      .filter((event) => event.response_body)
-      .sort((a, b) => (b.response_body?.length ?? 0) - (a.response_body?.length ?? 0))
+      .filter((event) => responseSize(event) > 0)
+      .sort((a, b) => responseSize(b) - responseSize(a))
       .slice(0, 3);
     return {
       requestChars,
@@ -558,7 +566,7 @@ export function Dashboard() {
       width: 120,
       render: (_, record) => (
         <span className="mono dashboard-size">
-          {fmtChars(record.request_body?.length)} / {fmtChars(record.response_body?.length)}
+          {fmtChars(requestSize(record))} / {fmtChars(responseSize(record))}
         </span>
       ),
     },
@@ -942,7 +950,7 @@ export function Dashboard() {
                   </div>
                   <div className="payload-metric">
                     <span>最大响应</span>
-                    <strong>{fmtChars(payload.top[0]?.response_body?.length)}</strong>
+                    <strong>{fmtChars(payload.top[0] ? responseSize(payload.top[0]) : undefined)}</strong>
                   </div>
                 </div>
                 <div className="mini-heading">响应体最大 Top 3</div>
@@ -955,7 +963,7 @@ export function Dashboard() {
                             {resourceName(event)} · {event.verb || event.method}
                           </span>
                         </Tooltip>
-                        <span className="mini-count">{fmtChars(event.response_body?.length)}</span>
+                        <span className="mini-count">{fmtChars(responseSize(event))}</span>
                       </div>
                     ))}
                   </div>

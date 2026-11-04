@@ -19,7 +19,7 @@ type AuditEvent struct {
 	Event     string    `gorm:"size:64;index" json:"event"` // 事件名（login-success/kubeconfig-download/k8s-api…）
 	Timestamp time.Time `gorm:"index" json:"timestamp"`
 	User      string    `gorm:"size:128;index" json:"user"`
-	Groups    string    `gorm:"size:1024" json:"groups"` // JSON 数组字符串
+	Groups    string    `gorm:"size:1024" json:"groups"` // 逗号分隔组名
 	Cluster   string    `gorm:"size:64;index" json:"cluster"`
 	Method    string    `gorm:"size:8" json:"method"`
 	Path      string    `gorm:"size:1024" json:"path"`   // 原始请求 URI（含 query）
@@ -41,4 +41,8 @@ type AuditEvent struct {
 	RequestBody  string `gorm:"type:text" json:"request_body"`
 	ResponseBody string `gorm:"type:text" json:"response_body"`
 	LatencyMS    int64  `json:"latency_ms"`
+
+	// 列表摘要模式下的报文字符数（不返回正文；gorm 只读字段，不落表）
+	RequestSize  int64 `gorm:"->;-:migration" json:"request_size,omitempty"`
+	ResponseSize int64 `gorm:"->;-:migration" json:"response_size,omitempty"`
 }
