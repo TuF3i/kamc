@@ -16,7 +16,6 @@ import { ClusterStatusTag } from '@/components/StatusTag';
 export function Kubeconfig() {
   const { message } = App.useApp();
   const isAdmin = useAuthStore((s) => s.isAdmin);
-  const claims = useAuthStore((s) => s.claims);
   const [clusters, setClusters] = useState<Cluster[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -143,13 +142,13 @@ export function Kubeconfig() {
                 <KubernetesOutlined />
               </span>
               <div className="kubeconfig-drawer-title">
-                <div className="kubeconfig-cluster-name">{selected.name || selected.id}</div>
-                <code className="mono">{selected.id}</code>
+                <div className="kubeconfig-drawer-name-row">
+                  <span className="kubeconfig-cluster-name">{selected.name || selected.id}</span>
+                  <code className="mono kubeconfig-drawer-id">{selected.id}</code>
+                </div>
+                <div className="kubeconfig-drawer-desc">{selected.desc || '暂无描述'}</div>
               </div>
               <ClusterStatusTag status={selected.status} />
-            </div>
-            <div className="kubeconfig-cluster-desc kubeconfig-drawer-desc">
-              {selected.desc || '暂无描述'}
             </div>
 
             <div className="mini-heading">凭证模式</div>
@@ -188,11 +187,6 @@ export function Kubeconfig() {
             >
               下载 kubeconfig
             </Button>
-
-            <div className="kubeconfig-panel-foot">
-              <span>凭证只承载你的身份，数据面授权由平台在请求时判定。</span>
-              <code className="mono">{claims?.sub}</code>
-            </div>
           </>
         ) : null}
       </Drawer>
