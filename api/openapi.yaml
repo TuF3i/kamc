@@ -484,12 +484,35 @@ paths:
         '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
         '403': {$ref: '#/components/responses/PlainTextForbidden'}
 
+  /api/v1/my/clusters:
+    get:
+      tags: [kubeconfig]
+      summary: 当前用户可下载 kubeconfig 的集群（自服务）
+      description: |
+        管理员返回全部集群；普通用户返回 Casbin 用户/组策略覆盖到的集群。
+        用于 kubeconfig 选择页的集群卡片。
+      security:
+        - platformJWT: []
+      responses:
+        '200':
+          description: 可访问集群列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {type: array, items: {$ref: '#/components/schemas/Cluster'}}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+
   /api/v1/clusters/{id}/kubeconfig:
     get:
       tags: [kubeconfig]
       summary: 生成 kubeconfig（自服务）
       description: |
         产物只承载调用者自己的身份，数据面授权仍由请求时 Casbin 决定。
+        调用者必须对该集群有任意数据面策略（管理员例外），否则 403。
         mode=static 嵌入调用者当前平台 JWT（过期需重新下载）；
         mode=exec 写 k8s-am-login 命令行（推荐）。
         server 指向 {external}/proxy/{clusterID}；平台 CA 经

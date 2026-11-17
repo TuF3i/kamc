@@ -108,6 +108,61 @@ func (s *Service) ListClusters(ctx context.Context) ([]*modules.ClusterDTO, *err
 	return dtos, nil
 }
 
+// ListMyClusters 当前用户可下载 kubeconfig 的集群：
+// 管理员返回全部；普通用户按 Casbin 用户策略/组策略过滤。
+func (s *Service) ListMyClusters(ctx context.Context, sub string, groups []string, isAdmin bool) ([]*modules.ClusterDTO, *errcode.Response) {
+	all, rsp := s.ListClusters(ctx)
+	if rsp != nil {
+		return nil, rsp
+	}
+	if isAdmin {
+		return all, nil
+	}
+	out := make([]*modules.ClusterDTO, 0, len(all))
+	for _, cluster := range all {
+		ok, err := s.HasClusterAccess(sub, groups, cluster.ID, false)
+		if err != nil {
+			return nil, errcode.ServerInternal(err)
+		}
+		if ok {
+			out = append(out, cluster)
+		}
+	}
+	return out, nil
+}
+
+// HasClusterAccess 判断主体在集群下是否有任意数据面策略（管理员由调用方放行）。
+func (s *Service) HasClusterAccess(sub string, groups []string, dom string, isAdmin bool) (bool, error) {
+	if isAdmin {
+		return true, nil
+	}
+	sub = strings.TrimSpace(sub)
+	if sub == "" || strings.TrimSpace(dom) == "" {
+		return false, nil
+	}
+	ok, err := s.authz.HasAnyPolicy("user:"+sub, dom)
+	if err != nil {
+		return false, err
+	}
+	if ok {
+		return true, nil
+	}
+	for _, g := range groups {
+		g = strings.TrimSpace(g)
+		if g == "" {
+			continue
+		}
+		ok, err := s.authz.HasAnyPolicy("org:"+g, dom)
+		if err != nil {
+			return false, err
+		}
+		if ok {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // SetClusterStatus 更新集群接入状态（隧道接入→online；全部离线→offline）。
 // 注：仅本进程视角——多副本下集群可能在其他副本有隧道，跨副本状态收敛
 // 由注册表驱动（路线图）；当前以本地隧道为准，保守判定避免误标。

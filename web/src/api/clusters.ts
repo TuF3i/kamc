@@ -13,6 +13,11 @@ export function listClusters(): Promise<Cluster[]> {
   return apiGet<Cluster[]>('/api/v1/clusters');
 }
 
+/** 当前用户有数据面权限的集群（kubeconfig 选择页使用）。 */
+export function listMyClusters(): Promise<Cluster[]> {
+  return apiGet<Cluster[]>('/api/v1/my/clusters');
+}
+
 export function getCluster(id: string): Promise<Cluster> {
   return apiGet<Cluster>(`/api/v1/clusters/${encodeURIComponent(id)}`);
 }

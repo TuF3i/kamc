@@ -404,6 +404,20 @@ export async function mockApi<T>(method: string, rawPath: string, body?: unknown
   if (path === '/api/v1/system') return data(systemInfo);
   if (path === '/api/v1/platform/info') return data(platformInfo);
 
+  // 当前用户可下载 kubeconfig 的集群（按策略过滤；admin 返回全部）
+  if (path === '/api/v1/my/clusters' && m === 'GET') {
+    const me = users.find((item) => item.username === currentUsername) ?? users[0];
+    if (me.groups.includes('am:admin')) return data(clusters);
+    const allowed = new Set<string>();
+    for (const policy of policies) {
+      if (policy.sub === `user:${me.username}`) allowed.add(policy.dom);
+      if (policy.sub.startsWith('org:') && me.groups.includes(policy.sub.slice(4))) {
+        allowed.add(policy.dom);
+      }
+    }
+    return data(clusters.filter((cluster) => allowed.has(cluster.id)));
+  }
+
   // 集群（普通用户无权列出集群，用于前端 isAdmin 探测）
   if (path === '/api/v1/clusters' && m === 'GET') {
     const me = users.find((item) => item.username === currentUsername);

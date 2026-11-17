@@ -227,6 +227,12 @@ func (en *Enforcer) ListPolicies() ([][]string, error) {
 	return en.e.GetPolicy()
 }
 
+// HasAnyPolicy 主体在指定集群（dom）下是否存在任意策略行。
+// 用于"用户能看到哪些集群"的过滤：有任意策略即视为可访问该集群。
+func (en *Enforcer) HasAnyPolicy(sub, dom string) (bool, error) {
+	return en.hasSubjectPolicy(sub, dom)
+}
+
 // HasPolicy 精确匹配策略行是否存在（Lua 桥接的"组是否存在则新建"语义）
 func (en *Enforcer) HasPolicy(sub, dom, obj, act string) (bool, error) {
 	rules, err := en.e.GetPolicy()
