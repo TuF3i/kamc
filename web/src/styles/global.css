@@ -284,13 +284,16 @@ body {
   text-align: center;
   color: #4d6076;
   font-size: 12px;
-  margin-top: 36px;
+  margin-top: auto;
+  padding-top: 28px;
 }
 
 /* ---------- 悬浮导航壳 ---------- */
 
 .app-shell {
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
   padding: 16px 20px 40px;
 }
 
@@ -420,10 +423,14 @@ body {
 }
 
 .app-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
   padding: 0 0 24px;
 }
 
 .app-content-inner {
+  width: 100%;
   max-width: 1480px;
   margin: 0 auto;
 }

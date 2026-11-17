@@ -116,7 +116,7 @@ export function Platform() {
     <div>
       <PageHeader
         title="平台信息"
-        subtitle="平台配置快照与运行时状态。"
+        subtitle="平台配置快照与运行时状态"
         extra={
           <Button icon={<ReloadOutlined />} onClick={() => void load()} loading={loading}>
             刷新

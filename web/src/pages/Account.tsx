@@ -42,7 +42,7 @@ export function Account() {
     <div>
       <PageHeader
         title="个人中心"
-        subtitle="当前登录身份的详细信息。"
+        subtitle="当前登录身份的详细信息"
         tags={isAdmin ? <Tag color="blue">管理员</Tag> : <Tag>普通用户</Tag>}
       />
 
