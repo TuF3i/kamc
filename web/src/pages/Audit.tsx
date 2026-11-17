@@ -318,7 +318,7 @@ export function Audit() {
     <div>
       <PageHeader
         title="审计日志"
-        subtitle="平台与集群操作的完整审计记录，支持多维筛选与 syslog 外发。"
+        subtitle="平台与集群操作的完整审计记录"
         extra={
           <Button
             icon={<ReloadOutlined />}

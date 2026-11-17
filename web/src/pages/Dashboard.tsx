@@ -603,7 +603,7 @@ export function Dashboard() {
     <div>
       <PageHeader
         title={`欢迎回来，${claims?.sub ?? '管理员'}`}
-        subtitle="平台运行态势与近 7 天访问画像。"
+        subtitle="平台运行态势"
         tags={<Tag color="blue">管理员</Tag>}
         extra={
           <Space>

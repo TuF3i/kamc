@@ -225,7 +225,7 @@ export function Clusters() {
     <div>
       <PageHeader
         title="集群"
-        subtitle="注册与管理目标 Kubernetes 集群，接入状态由 Agent 反向隧道实时上报。"
+        subtitle="注册与管理目标 Kubernetes 集群"
         extra={
           <Space>
             <Input
