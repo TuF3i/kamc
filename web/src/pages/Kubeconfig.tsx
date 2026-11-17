@@ -65,7 +65,7 @@ export function Kubeconfig() {
     <div>
       <PageHeader
         title="Kubeconfig"
-        subtitle="选择有权限的集群，下载对应的访问凭证。"
+        subtitle="仅展示你有权限的集群，点击卡片即可下载访问凭证。"
         tags={isAdmin ? <Tag color="blue">管理员</Tag> : <Tag>普通用户</Tag>}
       />
 

@@ -118,7 +118,7 @@ export function AppLayout() {
         <div className="app-content-inner" key={location.pathname}>
           <Outlet />
         </div>
-        <div className="app-footer-text">kamc · Kubernetes Access Manager Center</div>
+        <div className="app-footer-text">Kubernetes Access Manager Center</div>
       </main>
     </div>
   );

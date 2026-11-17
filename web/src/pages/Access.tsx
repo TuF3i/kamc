@@ -44,7 +44,7 @@ export function Access() {
     <div>
       <PageHeader
         title="权限管理"
-        subtitle="平台用户目录、SSO/LDAP 组、集群策略与登录期映射脚本。"
+        subtitle="管理平台用户、组、集群访问策略与登录期映射脚本。"
       />
 
       <Tabs

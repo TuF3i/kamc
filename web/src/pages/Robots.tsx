@@ -266,7 +266,7 @@ export function Robots() {
     <div>
       <PageHeader
         title="机器人"
-        subtitle="为 CICD 机器人签发长期 kubeconfig；机器人策略独立于用户，在「权限」页签单独管理。"
+        subtitle="面向 CICD 场景的机器人身份，支持签发长期 kubeconfig 与独立策略配置。"
         extra={
           robotTab === 'list' ? (
             <Button
