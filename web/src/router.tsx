@@ -3,6 +3,7 @@ import { createHashRouter } from 'react-router-dom';
 import { FullScreenLoading, RequireAdmin, RequireAuth } from '@/components/RequireAuth';
 import { AppLayout } from '@/layouts/AppLayout';
 import { Login } from '@/pages/Login';
+import { RouteError } from '@/components/RouteError';
 
 const Dashboard = lazy(() => import('@/pages/Dashboard').then((m) => ({ default: m.Dashboard })));
 const Clusters = lazy(() => import('@/pages/Clusters').then((m) => ({ default: m.Clusters })));
@@ -24,9 +25,10 @@ function page(node: ReactNode): ReactNode {
 }
 
 export const router = createHashRouter([
-  { path: '/login', element: <Login /> },
+  { path: '/login', element: <Login />, errorElement: <RouteError /> },
   {
     path: '/',
+    errorElement: <RouteError />,
     element: (
       <RequireAuth>
         <AppLayout />

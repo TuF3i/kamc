@@ -104,6 +104,18 @@ npm run dev:mock   # mock 模式：完全脱离后端，使用前端内置模拟
 
 删除机器人会吊销 JWT、清理 `robot:<id>` 的全部直接策略并删除记录。
 
+## 开发环境排障
+
+Vite 依赖优化缓存损坏时，浏览器会出现 `504 Outdated Optimize Dep` 或
+`Failed to fetch dynamically imported module`（例如懒加载 `Access.tsx` 失败）。
+清理缓存并强制重新优化：
+
+```bash
+rm -rf node_modules/.vite
+npm run dev -- --force
+npm run dev:mock -- --force --port 5174
+```
+
 ## 认证与 API 约定
 
 - **统一信封**：业务响应为 `{status, message, data}`；`status !== 0` 即业务错误，
