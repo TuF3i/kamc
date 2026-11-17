@@ -570,6 +570,14 @@ body {
   margin-top: 6px !important;
 }
 
+.login-mock-switch {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
 .login-divider {
   color: var(--kamc-faint);
   font-size: 12px;

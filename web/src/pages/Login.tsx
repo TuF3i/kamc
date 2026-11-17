@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Alert, App, Button, Divider, Form, Input, Spin, Typography } from 'antd';
+import { Alert, App, Button, Divider, Form, Input, Segmented, Spin, Typography } from 'antd';
 import { LockOutlined, LoginOutlined, UserOutlined } from '@ant-design/icons';
 import { ApiError } from '@/api/http';
 import { useAuthStore } from '@/stores/auth';
@@ -23,6 +23,14 @@ export function Login() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sessionNotice, setSessionNotice] = useState({ expired: false, loggedOut: false });
+  const [form] = Form.useForm<PasswordForm>();
+  const [mockIdentity, setMockIdentity] = useState(() => {
+    try {
+      return localStorage.getItem('kamc_mock_user') || 'sysadmin';
+    } catch {
+      return 'sysadmin';
+    }
+  });
 
   const token = useAuthStore((s) => s.token);
   const claims = useAuthStore((s) => s.claims);
@@ -170,10 +178,39 @@ export function Login() {
             </>
           ) : (
             <Form<PasswordForm>
+              form={form}
               layout="vertical"
               onFinish={onPasswordLogin}
-              initialValues={MOCK ? { username: 'sysadmin', password: 'sysadmin123' } : undefined}
+              initialValues={
+                MOCK
+                  ? {
+                      username: mockIdentity,
+                      password: mockIdentity === 'sysadmin' ? 'sysadmin123' : 'mock',
+                    }
+                  : undefined
+              }
             >
+              {MOCK ? (
+                <div className="login-mock-switch">
+                  <Typography.Text type="secondary">Mock 身份</Typography.Text>
+                  <Segmented
+                    value={mockIdentity}
+                    options={[
+                      { label: '管理员', value: 'sysadmin' },
+                      { label: '普通用户 alice', value: 'alice' },
+                    ]}
+                    onChange={(value) => {
+                      const username = String(value);
+                      setMockIdentity(username);
+                      setError(null);
+                      form.setFieldsValue({
+                        username,
+                        password: username === 'sysadmin' ? 'sysadmin123' : 'mock',
+                      });
+                    }}
+                  />
+                </div>
+              ) : null}
               <Form.Item
                 name="username"
                 label="用户名"

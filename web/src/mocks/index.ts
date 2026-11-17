@@ -257,16 +257,41 @@ const auditCluster: AuditEvent[] = [
   clusterEvent({ timestamp: daysAgo(6.3), user: 'eve', cluster: 'prod-bj', verb: 'list', object: 'default/secrets', path: '/proxy/prod-bj/api/v1/namespaces/default/secrets', allowed: false, reason: 'denied-casbin', geo_country: 'RU', geo_region: 'Moscow', geo_city: 'Moscow', source_ip: '203.0.113.66', user_agent: 'curl/8.14.1', items: 0, latency_ms: 2 }),
 ];
 
-const mockClaims = {
-  iss: 'https://kamc.local',
-  sub: 'sysadmin',
-  aud: ['kamc'],
-  exp: Math.floor(Date.now() / 1000) + 3600,
-  iat: Math.floor(Date.now() / 1000),
-  jti: 'mock-jti',
-  email: 'sysadmin@example.com',
-  groups: ['am:admin'],
+// 当前 Mock 登录身份（sysadmin=管理员；alice/bob=普通用户）。
+// 存 localStorage，保证刷新后仍是同一身份（否则 /auth/me 会退回管理员）。
+const MOCK_USER_KEY = 'kamc_mock_user';
+const readMockUser = () => {
+  try {
+    return localStorage.getItem(MOCK_USER_KEY) || 'sysadmin';
+  } catch {
+    return 'sysadmin';
+  }
 };
+let currentUsername = readMockUser();
+
+function setMockUser(username: string) {
+  currentUsername = username;
+  try {
+    if (username === 'sysadmin') localStorage.removeItem(MOCK_USER_KEY);
+    else localStorage.setItem(MOCK_USER_KEY, username);
+  } catch {
+    // 隐私模式忽略
+  }
+}
+
+function mockClaimsFor(username: string) {
+  const user = users.find((item) => item.username === username) ?? users[0];
+  return {
+    iss: 'https://kamc.local',
+    sub: user.username,
+    aud: ['kamc'],
+    exp: Math.floor(Date.now() / 1000) + 3600,
+    iat: Math.floor(Date.now() / 1000),
+    jti: 'mock-jti',
+    email: user.email,
+    groups: user.groups,
+  };
+}
 
 const systemInfo: SystemInfo = {
   go_version: 'go1.27.2', goroutines: 42, num_cpu: 8,
@@ -361,21 +386,30 @@ export async function mockApi<T>(method: string, rawPath: string, body?: unknown
   // 认证
   if (path === '/auth/password-login' && m === 'POST') {
     if (!payload.username || !payload.password) throw new ApiError('用户名或密码不能为空', 400, 10001);
+    const found = users.find((item) => item.username === String(payload.username));
+    setMockUser(found ? found.username : 'sysadmin');
     return data({ token: 'mock-token', expires_at: new Date(Date.now() + 3600e3).toISOString(), token_type: 'Bearer' });
   }
-  if (path === '/auth/me') return data(mockClaims);
-  if (path === '/auth/logout') return data({ logout: true });
+  if (path === '/auth/me') return data(mockClaimsFor(currentUsername));
+  if (path === '/auth/logout') {
+    setMockUser('sysadmin');
+    return data({ logout: true });
+  }
   if (path === '/version') return data({ version: 'dev', commit: 'mock', component: 'platform' });
 
   // 自服务资料（头像等展示字段）
-  if (path === '/api/v1/profile') return data(findUser(mockClaims.sub));
+  if (path === '/api/v1/profile') return data(findUser(currentUsername));
 
   // 概览 / 平台
   if (path === '/api/v1/system') return data(systemInfo);
   if (path === '/api/v1/platform/info') return data(platformInfo);
 
-  // 集群
-  if (path === '/api/v1/clusters' && m === 'GET') return data(clusters);
+  // 集群（普通用户无权列出集群，用于前端 isAdmin 探测）
+  if (path === '/api/v1/clusters' && m === 'GET') {
+    const me = users.find((item) => item.username === currentUsername);
+    if (!me?.groups.includes('am:admin')) throw new ApiError('forbidden', 403, 40300);
+    return data(clusters);
+  }
   if (path === '/api/v1/clusters' && m === 'POST') {
     const id = String(payload.id ?? '').trim();
     if (!id) throw new ApiError('集群 ID 不能为空', 400, 10001);
@@ -661,6 +695,11 @@ export async function mockApi<T>(method: string, rawPath: string, body?: unknown
   }
 
   throw new ApiError(`mock: 未实现的接口 ${m} ${path}`, 404, 40400);
+}
+
+/** 当前 Mock 登录用户名（头像上传等自服务接口用） */
+export function mockCurrentUsername(): string {
+  return currentUsername;
 }
 
 /** mock 模式下下载文本（kubeconfig 等） */

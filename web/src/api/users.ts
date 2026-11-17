@@ -83,8 +83,8 @@ export async function uploadAvatar(username: string, file: File): Promise<string
 export async function uploadAvatarSelf(file: File): Promise<string> {
   if (import.meta.env.VITE_APP_MODE === 'mock') {
     const dataUrl = await readAsDataURL(file);
-    const { mockSetAvatar } = await import('@/mocks');
-    mockSetAvatar('sysadmin', dataUrl); // mock 固定登录用户
+    const { mockSetAvatar, mockCurrentUsername } = await import('@/mocks');
+    mockSetAvatar(mockCurrentUsername(), dataUrl);
     return dataUrl;
   }
   return postAvatar('/api/v1/profile/avatar', file);
