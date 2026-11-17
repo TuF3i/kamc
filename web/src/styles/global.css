@@ -779,6 +779,14 @@ body {
 }
 
 /* 概览：数据画像布局 */
+.dashboard-tabs {
+  margin-top: 20px;
+}
+
+.dashboard-tabs .ant-tabs-nav {
+  margin-bottom: 0;
+}
+
 .dashboard-row {
   margin-top: 16px;
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Alert,
   Button,
@@ -11,6 +11,7 @@ import {
   Space,
   Statistic,
   Table,
+  Tabs,
   Tag,
   Tooltip,
   type TableColumnsType,
@@ -56,6 +57,8 @@ import type { AuditEvent, Cluster, Robot, SystemInfo } from '@/api/types';
 import { PageHeader } from '@/components/PageHeader';
 import { AuditDetailDrawer } from '@/components/AuditDetailDrawer';
 import { fmtUptime } from '@/utils/format';
+
+type DashTab = 'ops' | 'access' | 'identity';
 
 interface TrendPoint {
   date: string;
@@ -336,6 +339,7 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<AuditEvent | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const load = async () => {
     if (!isAdmin) return;
@@ -583,6 +587,14 @@ export function Dashboard() {
     },
   ];
 
+  const tabParam = searchParams.get('tab');
+  const tab: DashTab = tabParam === 'access' || tabParam === 'identity' ? tabParam : 'ops';
+  const onTabChange = (key: string) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', key);
+    setSearchParams(next, { replace: true });
+  };
+
   if (!isAdmin) {
     return <Navigate to="/kubeconfig" replace />;
   }
@@ -705,348 +717,371 @@ export function Dashboard() {
             </Col>
           </Row>
 
-          <Row gutter={[16, 16]} className="dashboard-row">
-            <Col xs={24} xl={16}>
-              <Card
-                title="近 7 天访问趋势"
-                className="soft-card dashboard-chart-card"
-                extra={
-                  <span className="chart-summary">
-                    操作 {totalOps} · 拦截 {totalBlocked} · 登录{' '}
-                    {trend.reduce((sum, point) => sum + point.logins, 0)}
-                  </span>
-                }
-              >
-                {hasTrendData ? (
-                  <div className="dashboard-chart">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart data={trend} margin={{ top: 8, right: 12, bottom: 0, left: -12 }}>
-                        <defs>
-                          <linearGradient id="opsFill" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor={CHART_COLORS.ops} stopOpacity={0.35} />
-                            <stop offset="95%" stopColor={CHART_COLORS.ops} stopOpacity={0} />
-                          </linearGradient>
-                          <linearGradient id="blockedFill" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor={CHART_COLORS.blocked} stopOpacity={0.3} />
-                            <stop offset="95%" stopColor={CHART_COLORS.blocked} stopOpacity={0} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} vertical={false} />
-                        <XAxis
-                          dataKey="date"
-                          tick={chartAxisTick}
-                          axisLine={{ stroke: CHART_COLORS.grid }}
-                          tickLine={false}
-                        />
-                        <YAxis
-                          yAxisId="left"
-                          allowDecimals={false}
-                          tick={chartAxisTick}
-                          axisLine={false}
-                          tickLine={false}
-                        />
-                        <YAxis
-                          yAxisId="right"
-                          orientation="right"
-                          allowDecimals={false}
-                          tick={chartAxisTick}
-                          axisLine={false}
-                          tickLine={false}
-                        />
-                        <ChartTooltip contentStyle={chartTooltipStyle} labelStyle={{ color: '#8aa0b8' }} />
-                        <Legend wrapperStyle={{ color: '#8aa0b8', fontSize: 12 }} />
-                        <Area
-                          yAxisId="left"
-                          type="monotone"
-                          dataKey="ops"
-                          name="K8s 操作"
-                          stroke={CHART_COLORS.ops}
-                          fill="url(#opsFill)"
-                          strokeWidth={2}
-                        />
-                        <Area
-                          yAxisId="left"
-                          type="monotone"
-                          dataKey="blocked"
-                          name="操作拦截"
-                          stroke={CHART_COLORS.blocked}
-                          fill="url(#blockedFill)"
-                          strokeWidth={2}
-                        />
-                        <Line
-                          yAxisId="right"
-                          type="monotone"
-                          dataKey="logins"
-                          name="登录次数"
-                          stroke={CHART_COLORS.logins}
-                          strokeWidth={2}
-                          dot={false}
-                          activeDot={{ r: 4 }}
-                        />
-                      </ComposedChart>
-                    </ResponsiveContainer>
-                  </div>
-                ) : (
-                  <Empty description="最近 7 天暂无审计数据" style={{ padding: '48px 0' }} />
-                )}
-              </Card>
-            </Col>
+          <Tabs
+            className="dashboard-tabs"
+            activeKey={tab}
+            onChange={onTabChange}
+            items={[
+              { key: 'ops', label: '运行态势' },
+              { key: 'access', label: '访问分析' },
+              { key: 'identity', label: '身份与客户端' },
+            ]}
+          />
 
-            <Col xs={24} xl={8}>
-              <Card
-                title="K8s 动作分布"
-                className="soft-card dashboard-chart-card"
-                extra={<span className="chart-summary">共 {clusterEvents.length} 次</span>}
-              >
-                {verbSlices.length > 0 ? (
-                  <>
-                    <div className="dashboard-donut">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie
-                            data={verbSlices}
-                            dataKey="value"
-                            nameKey="name"
-                            innerRadius={58}
-                            outerRadius={88}
-                            paddingAngle={2}
-                            stroke="none"
-                          >
-                            {verbSlices.map((slice, index) => (
-                              <Cell
-                                key={slice.name}
-                                fill={CHART_COLORS.palette[index % CHART_COLORS.palette.length]}
-                              />
-                            ))}
-                          </Pie>
-                          <ChartTooltip contentStyle={chartTooltipStyle} />
-                        </PieChart>
-                      </ResponsiveContainer>
-                    </div>
-                    <div className="donut-legend">
-                      {verbSlices.map((slice, index) => (
-                        <span key={slice.name}>
-                          <i style={{ background: CHART_COLORS.palette[index % CHART_COLORS.palette.length] }} />
-                          {slice.name}
-                          <b>{slice.value}</b>
-                        </span>
-                      ))}
-                    </div>
-                  </>
-                ) : (
-                  <Empty description="暂无 K8s 动作数据" style={{ padding: '48px 0' }} />
-                )}
-              </Card>
-            </Col>
-          </Row>
+          {tab === 'ops' ? (
+            <>
+              <Row gutter={[16, 16]} className="dashboard-row">
+                <Col xs={24} xl={16}>
+                                <Card
+                                  title="近 7 天访问趋势"
+                                  className="soft-card dashboard-chart-card"
+                                  extra={
+                                    <span className="chart-summary">
+                                      操作 {totalOps} · 拦截 {totalBlocked} · 登录{' '}
+                                      {trend.reduce((sum, point) => sum + point.logins, 0)}
+                                    </span>
+                                  }
+                                >
+                                  {hasTrendData ? (
+                                    <div className="dashboard-chart">
+                                      <ResponsiveContainer width="100%" height="100%">
+                                        <ComposedChart data={trend} margin={{ top: 8, right: 12, bottom: 0, left: -12 }}>
+                                          <defs>
+                                            <linearGradient id="opsFill" x1="0" y1="0" x2="0" y2="1">
+                                              <stop offset="5%" stopColor={CHART_COLORS.ops} stopOpacity={0.35} />
+                                              <stop offset="95%" stopColor={CHART_COLORS.ops} stopOpacity={0} />
+                                            </linearGradient>
+                                            <linearGradient id="blockedFill" x1="0" y1="0" x2="0" y2="1">
+                                              <stop offset="5%" stopColor={CHART_COLORS.blocked} stopOpacity={0.3} />
+                                              <stop offset="95%" stopColor={CHART_COLORS.blocked} stopOpacity={0} />
+                                            </linearGradient>
+                                          </defs>
+                                          <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} vertical={false} />
+                                          <XAxis
+                                            dataKey="date"
+                                            tick={chartAxisTick}
+                                            axisLine={{ stroke: CHART_COLORS.grid }}
+                                            tickLine={false}
+                                          />
+                                          <YAxis
+                                            yAxisId="left"
+                                            allowDecimals={false}
+                                            tick={chartAxisTick}
+                                            axisLine={false}
+                                            tickLine={false}
+                                          />
+                                          <YAxis
+                                            yAxisId="right"
+                                            orientation="right"
+                                            allowDecimals={false}
+                                            tick={chartAxisTick}
+                                            axisLine={false}
+                                            tickLine={false}
+                                          />
+                                          <ChartTooltip contentStyle={chartTooltipStyle} labelStyle={{ color: '#8aa0b8' }} />
+                                          <Legend wrapperStyle={{ color: '#8aa0b8', fontSize: 12 }} />
+                                          <Area
+                                            yAxisId="left"
+                                            type="monotone"
+                                            dataKey="ops"
+                                            name="K8s 操作"
+                                            stroke={CHART_COLORS.ops}
+                                            fill="url(#opsFill)"
+                                            strokeWidth={2}
+                                          />
+                                          <Area
+                                            yAxisId="left"
+                                            type="monotone"
+                                            dataKey="blocked"
+                                            name="操作拦截"
+                                            stroke={CHART_COLORS.blocked}
+                                            fill="url(#blockedFill)"
+                                            strokeWidth={2}
+                                          />
+                                          <Line
+                                            yAxisId="right"
+                                            type="monotone"
+                                            dataKey="logins"
+                                            name="登录次数"
+                                            stroke={CHART_COLORS.logins}
+                                            strokeWidth={2}
+                                            dot={false}
+                                            activeDot={{ r: 4 }}
+                                          />
+                                        </ComposedChart>
+                                      </ResponsiveContainer>
+                                    </div>
+                                  ) : (
+                                    <Empty description="最近 7 天暂无审计数据" style={{ padding: '48px 0' }} />
+                                  )}
+                                </Card>
+            
+                </Col>
+                <Col xs={24} xl={8}>
+                                <Card title="系统信息" className="soft-card dashboard-panel-card">
+                                  <div className="runtime-grid">
+                                    <div className="runtime-metric">
+                                      <div className="runtime-icon">
+                                        <CodeOutlined />
+                                      </div>
+                                      <div className="runtime-label">Go 版本</div>
+                                      <div className="runtime-value mono">{system?.go_version ?? '—'}</div>
+                                    </div>
+                                    <div className="runtime-metric">
+                                      <div className="runtime-icon">
+                                        <ClockCircleOutlined />
+                                      </div>
+                                      <div className="runtime-label">运行时长</div>
+                                      <div className="runtime-value">{fmtUptime(system?.uptime_seconds)}</div>
+                                    </div>
+                                    <div className="runtime-metric">
+                                      <div className="runtime-icon">
+                                        <BranchesOutlined />
+                                      </div>
+                                      <div className="runtime-label">Goroutines</div>
+                                      <div className="runtime-value">{system?.goroutines ?? '—'}</div>
+                                    </div>
+                                  </div>
+                                  <div className="info-row">
+                                    <span className="info-label">堆内存</span>
+                                    <span className="info-value">{fmtBytes(system?.heap_alloc_bytes)}</span>
+                                  </div>
+                                  <div className="info-row">
+                                    <span className="info-label">DB 连接</span>
+                                    <span className="info-value">
+                                      {system ? `${system.db_in_use} / ${system.db_open_connections}` : '—'}
+                                    </span>
+                                  </div>
+                                  <div className="info-row">
+                                    <span className="info-label">审计样本</span>
+                                    <span className="info-value">{analyticsEvents.length} 条</span>
+                                  </div>
+                                  <div className="info-row">
+                                    <span className="info-label">拦截率</span>
+                                    <span className="info-value">{denyRate.toFixed(1)}%</span>
+                                  </div>
+                                </Card>
+            
+                </Col>
+              </Row>
+              <Row gutter={[16, 16]} className="dashboard-row">
+                <Col span={24}>
+                                <Card
+                                  title="最近 K8s 请求"
+                                  className="soft-card"
+                                  extra={
+                                    <Button type="link" size="small" onClick={() => navigate('/audit')}>
+                                      查看全部
+                                    </Button>
+                                  }
+                                  styles={{ body: { padding: 0 } }}
+                                >
+                                  {recent.length > 0 ? (
+                                    <Table<AuditEvent>
+                                      rowKey="id"
+                                      columns={recentColumns}
+                                      dataSource={recent}
+                                      pagination={false}
+                                      scroll={{ x: 1200 }}
+                                      size="middle"
+                                    />
+                                  ) : (
+                                    <Empty description="最近 7 天暂无集群操作" style={{ padding: '32px 0' }} />
+                                  )}
+                                </Card>
+            
+                </Col>
+              </Row>
+            </>
+          ) : null}
 
-          <Row gutter={[16, 16]} className="dashboard-row">
-            <Col xs={24} lg={8}>
-              <Card
-                title="访问地理分布"
-                className="soft-card dashboard-panel-card"
-                extra={<span className="chart-summary">{countryCount} 个国家/地区</span>}
-              >
-                <RankList items={countrySlices} empty="暂无 GeoIP 数据" />
-                {citySlices.length > 0 ? (
-                  <>
-                    <div className="mini-divider" />
-                    <div className="mini-heading">热门城市</div>
-                    <Space size={[6, 6]} wrap>
-                      {citySlices.map((city) => (
-                        <Tag key={city.name}>
-                          {city.name} · {city.value}
-                        </Tag>
-                      ))}
-                    </Space>
-                  </>
-                ) : null}
-              </Card>
-            </Col>
+          {tab === 'access' ? (
+            <Row gutter={[16, 16]} className="dashboard-row">
+              <Col xs={24} lg={8}>
+                              <Card
+                                title="K8s 动作分布"
+                                className="soft-card dashboard-chart-card"
+                                extra={<span className="chart-summary">共 {clusterEvents.length} 次</span>}
+                              >
+                                {verbSlices.length > 0 ? (
+                                  <>
+                                    <div className="dashboard-donut">
+                                      <ResponsiveContainer width="100%" height="100%">
+                                        <PieChart>
+                                          <Pie
+                                            data={verbSlices}
+                                            dataKey="value"
+                                            nameKey="name"
+                                            innerRadius={58}
+                                            outerRadius={88}
+                                            paddingAngle={2}
+                                            stroke="none"
+                                          >
+                                            {verbSlices.map((slice, index) => (
+                                              <Cell
+                                                key={slice.name}
+                                                fill={CHART_COLORS.palette[index % CHART_COLORS.palette.length]}
+                                              />
+                                            ))}
+                                          </Pie>
+                                          <ChartTooltip contentStyle={chartTooltipStyle} />
+                                        </PieChart>
+                                      </ResponsiveContainer>
+                                    </div>
+                                    <div className="donut-legend">
+                                      {verbSlices.map((slice, index) => (
+                                        <span key={slice.name}>
+                                          <i style={{ background: CHART_COLORS.palette[index % CHART_COLORS.palette.length] }} />
+                                          {slice.name}
+                                          <b>{slice.value}</b>
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </>
+                                ) : (
+                                  <Empty description="暂无 K8s 动作数据" style={{ padding: '48px 0' }} />
+                                )}
+                              </Card>
+            
+              </Col>
+              <Col xs={24} lg={8}>
+                              <Card
+                                title="访问地理分布"
+                                className="soft-card dashboard-panel-card"
+                                extra={<span className="chart-summary">{countryCount} 个国家/地区</span>}
+                              >
+                                <RankList items={countrySlices} empty="暂无 GeoIP 数据" />
+                                {citySlices.length > 0 ? (
+                                  <>
+                                    <div className="mini-divider" />
+                                    <div className="mini-heading">热门城市</div>
+                                    <Space size={[6, 6]} wrap>
+                                      {citySlices.map((city) => (
+                                        <Tag key={city.name}>
+                                          {city.name} · {city.value}
+                                        </Tag>
+                                      ))}
+                                    </Space>
+                                  </>
+                                ) : null}
+                              </Card>
+            
+              </Col>
+              <Col xs={24} lg={8}>
+                              <Card
+                                title="资源访问热点"
+                                className="soft-card dashboard-panel-card"
+                                extra={<span className="chart-summary">Top {resourceSlices.length}</span>}
+                              >
+                                {resourceSlices.length > 0 ? (
+                                  <div className="dashboard-bar">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                      <BarChart
+                                        data={resourceSlices}
+                                        layout="vertical"
+                                        margin={{ top: 0, right: 12, bottom: 0, left: 8 }}
+                                        barCategoryGap={10}
+                                      >
+                                        <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} horizontal={false} />
+                                        <XAxis type="number" allowDecimals={false} tick={chartAxisTick} axisLine={false} tickLine={false} />
+                                        <YAxis
+                                          type="category"
+                                          dataKey="name"
+                                          width={104}
+                                          tick={{ fill: CHART_COLORS.axis, fontSize: 11 }}
+                                          axisLine={false}
+                                          tickLine={false}
+                                        />
+                                        <ChartTooltip contentStyle={chartTooltipStyle} cursor={{ fill: 'rgba(76,154,255,0.06)' }} />
+                                        <Legend wrapperStyle={{ color: '#8aa0b8', fontSize: 12 }} />
+                                        <Bar dataKey="allowed" name="放行" stackId="resource" fill={CHART_COLORS.ops} radius={[0, 4, 4, 0]} />
+                                        <Bar dataKey="denied" name="拦截" stackId="resource" fill={CHART_COLORS.blocked} radius={[0, 4, 4, 0]} />
+                                      </BarChart>
+                                    </ResponsiveContainer>
+                                  </div>
+                                ) : (
+                                  <Empty description="暂无资源访问数据" style={{ padding: '48px 0' }} />
+                                )}
+                              </Card>
+            
+              </Col>
+            </Row>
+          ) : null}
 
-            <Col xs={24} lg={8}>
-              <Card
-                title="资源访问热点"
-                className="soft-card dashboard-panel-card"
-                extra={<span className="chart-summary">Top {resourceSlices.length}</span>}
-              >
-                {resourceSlices.length > 0 ? (
-                  <div className="dashboard-bar">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart
-                        data={resourceSlices}
-                        layout="vertical"
-                        margin={{ top: 0, right: 12, bottom: 0, left: 8 }}
-                        barCategoryGap={10}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} horizontal={false} />
-                        <XAxis type="number" allowDecimals={false} tick={chartAxisTick} axisLine={false} tickLine={false} />
-                        <YAxis
-                          type="category"
-                          dataKey="name"
-                          width={104}
-                          tick={{ fill: CHART_COLORS.axis, fontSize: 11 }}
-                          axisLine={false}
-                          tickLine={false}
-                        />
-                        <ChartTooltip contentStyle={chartTooltipStyle} cursor={{ fill: 'rgba(76,154,255,0.06)' }} />
-                        <Legend wrapperStyle={{ color: '#8aa0b8', fontSize: 12 }} />
-                        <Bar dataKey="allowed" name="放行" stackId="resource" fill={CHART_COLORS.ops} radius={[0, 4, 4, 0]} />
-                        <Bar dataKey="denied" name="拦截" stackId="resource" fill={CHART_COLORS.blocked} radius={[0, 4, 4, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                ) : (
-                  <Empty description="暂无资源访问数据" style={{ padding: '48px 0' }} />
-                )}
-              </Card>
-            </Col>
+          {tab === 'identity' ? (
+            <Row gutter={[16, 16]} className="dashboard-row">
+              <Col xs={24} lg={8}>
+                              <Card
+                                title="用户与组活跃度"
+                                className="soft-card dashboard-panel-card"
+                                extra={<span className="chart-summary">K8s 操作</span>}
+                              >
+                                <div className="dashboard-split">
+                                  <div>
+                                    <div className="mini-heading">操作用户 Top 5</div>
+                                    <RankList items={userSlices} empty="暂无操作用户" compact />
+                                  </div>
+                                  <div>
+                                    <div className="mini-heading">活跃组 Top 5</div>
+                                    <RankList items={groupSlices} empty="暂无组信息" compact />
+                                  </div>
+                                </div>
+                              </Card>
+            
+              </Col>
+              <Col xs={24} lg={8}>
+                              <Card
+                                title="客户端 / UA"
+                                className="soft-card dashboard-panel-card"
+                                extra={<span className="chart-summary">{analyticsEvents.length} 次请求</span>}
+                              >
+                                <RankList items={uaSlices} empty="暂无 UA 数据" />
+                              </Card>
+            
+              </Col>
+              <Col xs={24} lg={8}>
+                              <Card title="请求 / 响应体量" className="soft-card dashboard-panel-card">
+                                <div className="payload-grid">
+                                  <div className="payload-metric">
+                                    <span>请求体量</span>
+                                    <strong>{payload.requestChars ? `${fmtChars(payload.requestChars)} 字符` : '—'}</strong>
+                                  </div>
+                                  <div className="payload-metric">
+                                    <span>响应体量</span>
+                                    <strong>{payload.responseChars ? `${fmtChars(payload.responseChars)} 字符` : '—'}</strong>
+                                  </div>
+                                  <div className="payload-metric">
+                                    <span>平均耗时</span>
+                                    <strong>{payload.avgLatency ? `${payload.avgLatency} ms` : '—'}</strong>
+                                  </div>
+                                  <div className="payload-metric">
+                                    <span>最大响应</span>
+                                    <strong>{fmtChars(payload.top[0] ? responseSize(payload.top[0]) : undefined)}</strong>
+                                  </div>
+                                </div>
+                                <div className="mini-heading">响应体最大 Top 3</div>
+                                {payload.top.length > 0 ? (
+                                  <div className="payload-top">
+                                    {payload.top.map((event) => (
+                                      <div className="payload-row" key={event.id}>
+                                        <Tooltip title={event.path || resourceName(event)}>
+                                          <span className="mini-name">
+                                            {resourceName(event)} · {event.verb || event.method}
+                                          </span>
+                                        </Tooltip>
+                                        <span className="mini-count">{fmtChars(responseSize(event))}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无报文数据" style={{ padding: '10px 0' }} />
+                                )}
+                              </Card>
+            
+              </Col>
+            </Row>
+          ) : null}
 
-            <Col xs={24} lg={8}>
-              <Card
-                title="用户与组活跃度"
-                className="soft-card dashboard-panel-card"
-                extra={<span className="chart-summary">K8s 操作</span>}
-              >
-                <div className="dashboard-split">
-                  <div>
-                    <div className="mini-heading">操作用户 Top 5</div>
-                    <RankList items={userSlices} empty="暂无操作用户" compact />
-                  </div>
-                  <div>
-                    <div className="mini-heading">活跃组 Top 5</div>
-                    <RankList items={groupSlices} empty="暂无组信息" compact />
-                  </div>
-                </div>
-              </Card>
-            </Col>
-          </Row>
-
-          <Row gutter={[16, 16]} className="dashboard-row">
-            <Col xs={24} lg={8}>
-              <Card
-                title="客户端 / UA"
-                className="soft-card dashboard-panel-card"
-                extra={<span className="chart-summary">{analyticsEvents.length} 次请求</span>}
-              >
-                <RankList items={uaSlices} empty="暂无 UA 数据" />
-              </Card>
-            </Col>
-
-            <Col xs={24} lg={8}>
-              <Card title="请求 / 响应体量" className="soft-card dashboard-panel-card">
-                <div className="payload-grid">
-                  <div className="payload-metric">
-                    <span>请求体量</span>
-                    <strong>{payload.requestChars ? `${fmtChars(payload.requestChars)} 字符` : '—'}</strong>
-                  </div>
-                  <div className="payload-metric">
-                    <span>响应体量</span>
-                    <strong>{payload.responseChars ? `${fmtChars(payload.responseChars)} 字符` : '—'}</strong>
-                  </div>
-                  <div className="payload-metric">
-                    <span>平均耗时</span>
-                    <strong>{payload.avgLatency ? `${payload.avgLatency} ms` : '—'}</strong>
-                  </div>
-                  <div className="payload-metric">
-                    <span>最大响应</span>
-                    <strong>{fmtChars(payload.top[0] ? responseSize(payload.top[0]) : undefined)}</strong>
-                  </div>
-                </div>
-                <div className="mini-heading">响应体最大 Top 3</div>
-                {payload.top.length > 0 ? (
-                  <div className="payload-top">
-                    {payload.top.map((event) => (
-                      <div className="payload-row" key={event.id}>
-                        <Tooltip title={event.path || resourceName(event)}>
-                          <span className="mini-name">
-                            {resourceName(event)} · {event.verb || event.method}
-                          </span>
-                        </Tooltip>
-                        <span className="mini-count">{fmtChars(responseSize(event))}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无报文数据" style={{ padding: '10px 0' }} />
-                )}
-              </Card>
-            </Col>
-
-            <Col xs={24} lg={8}>
-              <Card title="系统信息" className="soft-card dashboard-panel-card">
-                <div className="runtime-grid">
-                  <div className="runtime-metric">
-                    <div className="runtime-icon">
-                      <CodeOutlined />
-                    </div>
-                    <div className="runtime-label">Go 版本</div>
-                    <div className="runtime-value mono">{system?.go_version ?? '—'}</div>
-                  </div>
-                  <div className="runtime-metric">
-                    <div className="runtime-icon">
-                      <ClockCircleOutlined />
-                    </div>
-                    <div className="runtime-label">运行时长</div>
-                    <div className="runtime-value">{fmtUptime(system?.uptime_seconds)}</div>
-                  </div>
-                  <div className="runtime-metric">
-                    <div className="runtime-icon">
-                      <BranchesOutlined />
-                    </div>
-                    <div className="runtime-label">Goroutines</div>
-                    <div className="runtime-value">{system?.goroutines ?? '—'}</div>
-                  </div>
-                </div>
-                <div className="info-row">
-                  <span className="info-label">堆内存</span>
-                  <span className="info-value">{fmtBytes(system?.heap_alloc_bytes)}</span>
-                </div>
-                <div className="info-row">
-                  <span className="info-label">DB 连接</span>
-                  <span className="info-value">
-                    {system ? `${system.db_in_use} / ${system.db_open_connections}` : '—'}
-                  </span>
-                </div>
-                <div className="info-row">
-                  <span className="info-label">审计样本</span>
-                  <span className="info-value">{analyticsEvents.length} 条</span>
-                </div>
-                <div className="info-row">
-                  <span className="info-label">拦截率</span>
-                  <span className="info-value">{denyRate.toFixed(1)}%</span>
-                </div>
-              </Card>
-            </Col>
-          </Row>
-
-          <Row gutter={[16, 16]} className="dashboard-row">
-            <Col span={24}>
-              <Card
-                title="最近 K8s 请求"
-                className="soft-card"
-                extra={
-                  <Button type="link" size="small" onClick={() => navigate('/audit')}>
-                    查看全部
-                  </Button>
-                }
-                styles={{ body: { padding: 0 } }}
-              >
-                {recent.length > 0 ? (
-                  <Table<AuditEvent>
-                    rowKey="id"
-                    columns={recentColumns}
-                    dataSource={recent}
-                    pagination={false}
-                    scroll={{ x: 1200 }}
-                    size="middle"
-                  />
-                ) : (
-                  <Empty description="最近 7 天暂无集群操作" style={{ padding: '32px 0' }} />
-                )}
-              </Card>
-            </Col>
-          </Row>
         </>
       )}
 
