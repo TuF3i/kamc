@@ -30,9 +30,10 @@ function subjectLabel(record: PolicyDTO): string {
   return '遗留';
 }
 
-/** 策略是否命名空间资源：obj 以 cluster/ 开头或资源为 * 视为集群级 */
+/** 策略是否命名空间资源：obj 以 cluster/ 开头、资源为 * 或非资源路径视为集群级 */
 function isNamespaced(record: PolicyDTO): boolean {
   if (record.resource === '*') return false;
+  if (record.resource.startsWith('nonresource')) return false;
   return !record.obj.startsWith('cluster/');
 }
 

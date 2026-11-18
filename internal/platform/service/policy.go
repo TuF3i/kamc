@@ -86,6 +86,11 @@ func expandRule(subject, cluster string, rule modules.PolicyRuleInput) ([][4]str
 	if resource == "*" {
 		return [][4]string{{subject, cluster, "*", act}}, nil
 	}
+	// 非资源路径（/version、/api、/apis 等发现接口）：对象即以 nonresource 开头，
+	// 不参与 namespace/cluster 前缀拼装，否则 kubectl 无法完成 discovery。
+	if strings.HasPrefix(resource, "nonresource") {
+		return [][4]string{{subject, cluster, resource, act}}, nil
+	}
 
 	subresource := strings.TrimSpace(rule.Subresource)
 	if rule.Namespaced {

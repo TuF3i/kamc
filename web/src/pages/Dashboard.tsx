@@ -511,7 +511,14 @@ export function Dashboard() {
       dataIndex: 'user',
       key: 'user',
       width: 130,
-      render: (value: string) => <code className="mono">{value || '—'}</code>,
+      render: (value: string) =>
+        value ? (
+          <code className="mono audit-actor" title={value}>
+            {value}
+          </code>
+        ) : (
+          '—'
+        ),
     },
     {
       title: '集群',

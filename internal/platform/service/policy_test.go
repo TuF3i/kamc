@@ -64,6 +64,11 @@ func TestExpandRule(t *testing.T) {
 			rule: modules.PolicyRuleInput{Resource: "*", Namespaced: false, Verbs: []string{"*"}},
 			want: [][4]string{{"user:u", "c", "*", ".*"}},
 		},
+		{
+			name: "nonresource paths",
+			rule: modules.PolicyRuleInput{Resource: "nonresource/*", Namespaced: false, Verbs: []string{"get"}},
+			want: [][4]string{{"user:u", "c", "nonresource/*", "get"}},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

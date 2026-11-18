@@ -1556,7 +1556,7 @@ components:
       required: [resource, verbs]
       properties:
         namespace: {type: string, description: "* 或具体 namespace；cluster-scoped 留空"}
-        resource: {type: string, example: pods}
+        resource: {type: string, example: pods, description: "资源名、*，或非资源路径（nonresource/*，覆盖 /version 与 discovery）"}
         subresource: {type: string, example: exec}
         namespaced: {type: boolean}
         verbs:

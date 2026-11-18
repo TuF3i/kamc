@@ -55,6 +55,9 @@ function resourceKey(resource: ClusterResource): string {
   return `${resource.group}|${resource.version}|${resource.resource}|${resource.subresource ?? ''}`;
 }
 
+/** 非资源路径（/version、/api 等发现接口）的伪资源 key：直接作为 Casbin obj 存储。 */
+const NONRESOURCE_KEY = 'nonresource/*';
+
 function newRule(key: number): RuleDraft {
   return { key, resourceKey: undefined, namespace: '*', verbs: [] };
 }
@@ -178,6 +181,10 @@ export function PolicyEditor({
     }
     return [
       { label: '通配', options: [{ value: '*', label: '*（全部资源）' }] },
+      {
+        label: '非资源路径',
+        options: [{ value: NONRESOURCE_KEY, label: 'nonresource/*（版本与发现接口）' }],
+      },
       ...Array.from(groups.entries()).map(([label, options]) => ({ label, options })),
     ];
   }, [resources]);
@@ -213,6 +220,10 @@ export function PolicyEditor({
       updateRule(key, { resourceKey: value, namespace: '', verbs: ['*'] });
       return;
     }
+    if (value === NONRESOURCE_KEY) {
+      updateRule(key, { resourceKey: value, namespace: '', verbs: [] });
+      return;
+    }
     const resource = resourceMap.get(value);
     updateRule(key, {
       resourceKey: value,
@@ -222,9 +233,17 @@ export function PolicyEditor({
   };
 
   const selectedResource = (rule: RuleDraft): ClusterResource | undefined =>
-    rule.resourceKey && rule.resourceKey !== '*' ? resourceMap.get(rule.resourceKey) : undefined;
+    rule.resourceKey && rule.resourceKey !== '*' && rule.resourceKey !== NONRESOURCE_KEY
+      ? resourceMap.get(rule.resourceKey)
+      : undefined;
 
   const verbsOptions = (rule: RuleDraft) => {
+    if (rule.resourceKey === NONRESOURCE_KEY) {
+      return [
+        { value: '*', label: '*（全部动作）' },
+        { value: 'get', label: 'get' },
+      ];
+    }
     const resource = selectedResource(rule);
     if (!resource) {
       return [{ value: '*', label: '*（全部动作）' }];
@@ -257,9 +276,13 @@ export function PolicyEditor({
         rows.push({ sub, dom: cluster, obj: '*', act: '.*' });
         continue;
       }
+      const act = rule.verbs.includes('*') ? '.*' : rule.verbs.join('|');
+      if (rule.resourceKey === NONRESOURCE_KEY) {
+        rows.push({ sub, dom: cluster, obj: NONRESOURCE_KEY, act });
+        continue;
+      }
       const resource = resourceMap.get(rule.resourceKey);
       if (!resource) continue;
-      const act = rule.verbs.includes('*') ? '.*' : rule.verbs.join('|');
       if (resource.namespaced) {
         const namespace = rule.namespace || '*';
         const obj = `${namespace}/${resource.resource}${resource.subresource ? `/${resource.subresource}` : ''}`;
@@ -298,6 +321,15 @@ export function PolicyEditor({
           resource: '*',
           namespaced: false,
           verbs: ['*'],
+        });
+        continue;
+      }
+      if (rule.resourceKey === NONRESOURCE_KEY) {
+        payloadRules.push({
+          namespace: '',
+          resource: NONRESOURCE_KEY,
+          namespaced: false,
+          verbs: rule.verbs,
         });
         continue;
       }

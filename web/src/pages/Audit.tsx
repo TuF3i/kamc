@@ -181,7 +181,14 @@ function ClusterTable({
       dataIndex: 'user',
       key: 'user',
       width: 150,
-      render: (v: string) => <code className="mono strong">{v || '—'}</code>,
+      render: (v: string) =>
+        v ? (
+          <code className="mono strong audit-actor" title={v}>
+            {v}
+          </code>
+        ) : (
+          '—'
+        ),
     },
     {
       title: '集群',
