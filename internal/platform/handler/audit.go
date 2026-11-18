@@ -128,7 +128,7 @@ func (h *Handler) meta(r *http.Request) requestMeta {
 
 // auditPlatform 平台事件（登录/Token/下载/管理动作）：kind=platform，
 // 输出到 stdio 并落库。失败不阻塞业务（Writer 内部丢弃并计数）。
-func (h *Handler) auditPlatform(r *http.Request, event, user, cluster, path string, allowed bool, reason string) {
+func (h *Handler) auditPlatform(r *http.Request, event, user, cluster, path string, allowed bool, reason string, groups ...[]string) {
 	if h.audit == nil {
 		return
 	}
@@ -138,11 +138,19 @@ func (h *Handler) auditPlatform(r *http.Request, event, user, cluster, path stri
 			user = claims.Subject
 		}
 	}
+	// 组归属：显式传入优先（登录/SSO 回调尚无 JWT），否则取当前请求 claims。
+	var groupList []string
+	if len(groups) > 0 {
+		groupList = groups[0]
+	} else if claims, ok := middleware.ClaimsFromCtx(r.Context()); ok {
+		groupList = claims.Groups
+	}
 	h.audit.Log(&modules.AuditEvent{
 		Kind:         modules.AuditKindPlatform,
 		Event:        event,
 		Timestamp:    time.Now(),
 		User:         user,
+		Groups:       strings.Join(groupList, ","),
 		Cluster:      cluster,
 		Method:       r.Method,
 		Path:         redactAuditURI(path),

@@ -258,7 +258,7 @@ func wantsHTML(r *http.Request) bool {
 // issueJWT 登录签发挂载点（不做用户同步——仅测试/特殊场景使用）；
 // browser=true 时以桥接 HTML 输出（仅 /auth/callback 浏览器导航使用）。
 func (h *Handler) issueJWT(w http.ResponseWriter, r *http.Request, sub, email string, groups []string, source string, browser bool) {
-	h.auditPlatform(r, "login-success", sub, "", source, true, "ok")
+	h.auditPlatform(r, "login-success", sub, "", source, true, "ok", groups)
 	token, exp, err := h.auth.Sign(sub, email, groups)
 	if err != nil {
 		http.Error(w, "sign error", http.StatusInternalServerError)
