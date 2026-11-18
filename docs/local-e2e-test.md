@@ -95,9 +95,66 @@ curl -sk -H "Authorization: Bearer $ADMIN" -H "X-Forwarded-For: 203.0.113.77" \
 # 审计详情应出现 geo_country=US / California / Los Angeles
 ```
 
-## 4. 尚未覆盖
+## 4. 真实 Authentik SSO 接入
 
-- **集群内 Agent Deployment**：需要目标集群能从镜像仓库拉取 `kamc-agent`（仓库凭证或可达
-  registry）。本地可先用进程方式验证隧道与数据面；镜像化部署走 `deploy/agent/manifests.yaml`。
+平台侧只需要三个参数：`OIDC_ISSUER`（Application 的 issuer URL）、`OIDC_CLIENT_ID`、
+`OIDC_CLIENT_SECRET`，以及与之**逐字符一致**的 `OIDC_REDIRECT_URL`。
+
+在 Authentik（2026.5 实测）创建 Provider 时注意两处默认值陷阱：
+
+1. `redirect_uris` 不是字符串，而是 `RedirectURI(matching_mode=STRICT, url=..., redirect_uri_type=AUTHORIZATION)` 列表；
+2. 新建 Provider 的 `grant_types` 默认是**空数组**，必须显式开启
+   `authorization_code` / `refresh_token`（exec 模式还需 `urn:ietf:params:oauth:grant-type:device_code`），
+   否则 authorize 直接返回 `invalid_request`。
+
+```python
+# kubectl -n authentik exec deploy/authentik-worker -- /lifecycle/ak shell -c "..."
+from authentik.providers.oauth2.models import (
+    OAuth2Provider, GrantType, RedirectURI, RedirectURIMatchingMode, RedirectURIType,
+)
+from authentik.core.models import Application
+from authentik.crypto.models import CertificateKeyPair
+from authentik.flows.models import Flow
+
+provider = OAuth2Provider.objects.create(
+    name="kamc",
+    authorization_flow=Flow.objects.get(slug="default-provider-authorization-implicit-consent"),
+    invalidation_flow=Flow.objects.get(slug="default-invalidation-flow"),
+    client_type="confidential",
+    client_id="kamc",
+    client_secret="<secret>",
+    redirect_uris=[RedirectURI(
+        matching_mode=RedirectURIMatchingMode.STRICT,
+        url="https://<platform>/auth/callback",
+        redirect_uri_type=RedirectURIType.AUTHORIZATION,
+    )],
+    signing_key=CertificateKeyPair.objects.get(name="authentik Self-signed Certificate"),
+)
+provider.grant_types = [GrantType.AUTHORIZATION_CODE, GrantType.REFRESH_TOKEN, GrantType.DEVICE_CODE]
+provider.save()
+Application.objects.create(name="kamc", slug="kamc", provider=provider)
+```
+
+- issuer 形如 `https://sso.example.com/application/o/kamc/`（由 Application slug 决定）。
+- `groups` 声明来自 Authentik 默认 `profile` scope（`request.user.groups`），平台请求
+  `openid profile email groups`；组名与平台 `am:admin` 对齐后 SSO 用户即获得管理员权限。
+- 平台用户名取 ID Token 的 `sub`（Authentik 中是哈希串），审计与策略主体均按该值记录。
+- 本地浏览器联调建议用 `http://127.0.0.1:8080/auth/callback` 作为 redirect（并在 Provider 中登记），
+  避免浏览器对自签 8443 证书的拦截；生产使用 https 域名证书即可。
+
+## 5. 集群内 Agent 的网络前提
+
+Agent 是**反向**拨出：目标集群的节点必须能访问平台入口（`wss://<platform>/tunnel`）。
+本机开发时平台通常位于 Wi-Fi/NAT 之后，集群节点往往无法回连（表现为
+`No route to host`/超时），此时：
+
+- 继续用**本机进程方式**运行 Agent（本指南第 0 节），验证隧道与数据面；
+- 或把平台部署进集群（`deploy/platform/manifests.yaml`），让 Agent 走集群内部 Service；
+- 镜像可先推到目标集群可访问的 Harbor（如 `reg.cqupt.gay/kamc/k8s-am-agent:dev`），
+  并在平台设置 `AM_AGENT_IMAGE_REPO`，一键安装清单会使用该仓库。
+
+
+## 6. 尚未覆盖
+
 - **LDAP 登录**：需要 LDAP 服务与 `LDAP_*` 配置。
 - **exec 命令审计/录制**：明确不做（见 `docs/exec-command-audit-plan.md`）。
