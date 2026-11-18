@@ -1,11 +1,13 @@
 package handler
 
 import (
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
@@ -383,6 +385,17 @@ func (w *captureWriter) Flush() {
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// Hijack 透传 http.Hijacker：SPDY 升级（port-forward / 旧版 kubectl exec）需要，
+// 否则 ReverseProxy 报文切换失败（"non-Hijacker ResponseWriter type"）。
+// hijack 之后响应不再经本包装器，审计只保留状态行。
+func (w *captureWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("captureWriter: underlying ResponseWriter is not http.Hijacker")
+	}
+	return h.Hijack()
 }
 
 // Dump 组装完整响应报文（状态行 + 头 + 格式化 body）
