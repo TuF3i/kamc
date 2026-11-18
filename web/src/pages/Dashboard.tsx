@@ -330,6 +330,7 @@ function RankList({
 export function Dashboard() {
   const navigate = useNavigate();
   const claims = useAuthStore((s) => s.claims);
+  const profile = useAuthStore((s) => s.profile);
   const isAdmin = useAuthStore((s) => s.isAdmin);
   const [clusters, setClusters] = useState<Cluster[]>([]);
   const [robots, setRobots] = useState<Robot[]>([]);
@@ -609,7 +610,7 @@ export function Dashboard() {
   return (
     <div>
       <PageHeader
-        title={`欢迎回来，${claims?.sub ?? '管理员'}`}
+        title={`欢迎回来，${profile?.nickname || claims?.sub || '管理员'}`}
         subtitle="平台运行态势"
         tags={<Tag color="blue">管理员</Tag>}
         extra={

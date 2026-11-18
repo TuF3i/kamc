@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -51,9 +52,10 @@ func nowUTC() time.Time { return time.Now().UTC() }
 // Identity 登录身份（OIDC / LDAP / 密码登录统一形态），
 // 登录挂载点据此同步平台用户与组。
 type Identity struct {
-	Username string // OIDC sub / LDAP uid / 内置账号名
+	Username string // 平台身份（OIDC preferred_username / LDAP uid / 内置账号名）
+	Sub      string // OIDC sub：SSO 用户稳定标识（本地/LDAP 为空；只记录不展示）
 	Email    string
-	Nickname string // 显示名（OIDC preferred_username / LDAP cn，空取 Username）
+	Nickname string // 显示名（OIDC name / LDAP cn，空取 Username）
 	Avatar   string // 头像 URL（OIDC picture）
 	Groups   []string
 	Source   modules.UserSource
@@ -74,6 +76,16 @@ func (s *Service) SyncUserOnLogin(ctx context.Context, id *Identity) *errcode.Re
 	existing, err := s.d.GetUser(ctx, id.Username)
 	if err != nil && !isNotFound(err) {
 		return errcode.ServerInternal(err)
+	}
+	// SSO：优先按 IdP 的 sub 命中已有账号（IdP 侧改名后仍落到同一平台用户），
+	// 命中则沿用已登记的 username，保证策略主体稳定。
+	if id.Source == modules.UserSourceSSO && id.Sub != "" {
+		if u, serr := s.d.GetUserByOIDCSub(ctx, id.Sub); serr == nil {
+			id.Username = u.Username
+			existing, err = u, nil
+		} else if !isNotFound(serr) {
+			return errcode.ServerInternal(serr)
+		}
 	}
 	// 保留平台本地组的成员关系：IdP 登录只覆盖外部组，平台手工维护的
 	// local 组不被下一次 SSO/LDAP 登录冲掉。
@@ -98,11 +110,12 @@ func (s *Service) SyncUserOnLogin(ctx context.Context, id *Identity) *errcode.Re
 		Groups:    modulesJoinGroups(id.Groups),
 		Source:    id.Source,
 		Email:     id.Email,
-		Metadata:  "{}",
+		Metadata:  mergeOIDCSub("{}", id.Sub),
 	}
 	switch {
 	case err == nil:
 		u.UID = existing.UID // username 不变，保留 uid
+		u.Metadata = mergeOIDCSub(existing.Metadata, id.Sub)
 		if u.Nickname == "" {
 			u.Nickname = existing.Nickname
 		}
@@ -611,6 +624,26 @@ func containsGroup(groups []string, name string) bool {
 		}
 	}
 	return false
+}
+
+// mergeOIDCSub 在用户 metadata 中记录 OIDC sub（SSO 稳定标识），
+// 其它键原样保留；sub 为空（本地/LDAP 登录）时不动原 metadata。
+func mergeOIDCSub(raw, sub string) string {
+	meta := map[string]any{}
+	if raw != "" {
+		_ = json.Unmarshal([]byte(raw), &meta)
+	}
+	if sub != "" {
+		meta["oidc_sub"] = sub
+	}
+	if len(meta) == 0 {
+		return "{}"
+	}
+	b, err := json.Marshal(meta)
+	if err != nil {
+		return raw
+	}
+	return string(b)
 }
 
 // hasAdminGroup 给定组中是否存在标记为平台管理员的组（查询失败按非管理员处理）。

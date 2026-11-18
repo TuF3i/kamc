@@ -37,6 +37,9 @@ export function Account() {
   };
 
   const secondsLeft = remainingSeconds(claims?.exp);
+  // SSO 稳定标识：仅个人中心展示，其余界面用用户名/昵称
+  const ssoSub =
+    typeof profile?.metadata?.oidc_sub === 'string' ? profile.metadata.oidc_sub : '';
 
   return (
     <div>
@@ -76,8 +79,12 @@ export function Account() {
         </div>
 
         <Descriptions column={{ xs: 1, md: 2 }} size="middle" bordered>
-          <Descriptions.Item label="用户 sub">
+          <Descriptions.Item label="用户名">
             <code className="mono strong">{claims?.sub ?? '—'}</code>
+          </Descriptions.Item>
+          <Descriptions.Item label="昵称">{profile?.nickname || '—'}</Descriptions.Item>
+          <Descriptions.Item label="SSO 标识 (sub)" span={2}>
+            <code className="mono">{ssoSub || '—'}</code>
           </Descriptions.Item>
           <Descriptions.Item label="邮箱">{claims?.email || '—'}</Descriptions.Item>
           <Descriptions.Item label="组" span={2}>

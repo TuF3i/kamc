@@ -42,6 +42,18 @@ func (d *Dao) GetUser(ctx context.Context, username string) (*modules.PlatformUs
 	return &u, nil
 }
 
+// GetUserByOIDCSub 按 SSO 稳定标识（metadata.oidc_sub）取用户；
+// 用于 IdP 侧用户名变更后仍能命中同一平台账号。
+func (d *Dao) GetUserByOIDCSub(ctx context.Context, sub string) (*modules.PlatformUser, error) {
+	var u modules.PlatformUser
+	if err := d.db.WithContext(ctx).
+		Where("metadata->>'oidc_sub' = ?", sub).
+		First(&u).Error; err != nil {
+		return nil, fmt.Errorf("dao -> get user by oidc sub: %w", err)
+	}
+	return &u, nil
+}
+
 // ListUsers 全量用户（按创建时间升序）
 func (d *Dao) ListUsers(ctx context.Context) ([]modules.PlatformUser, error) {
 	var list []modules.PlatformUser

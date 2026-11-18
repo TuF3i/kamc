@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,10 +39,11 @@ type Config struct {
 
 // User 兑换得到的用户身份
 type User struct {
-	Sub      string
+	Sub      string // OIDC subject（IdP 内唯一；仅用于对账，平台身份不用它）
+	Username string // 平台身份：preferred_username → email → sub
 	Email    string
 	Groups   []string
-	Nickname string // preferred_username（可空）
+	Nickname string // 展示名：name → preferred_username → email → sub
 	Picture  string // 头像 URL（可空）
 }
 
@@ -199,6 +201,7 @@ func (c *Client) verifyIDToken(ctx context.Context, rawID string) (*User, error)
 	}
 	var raw struct {
 		Email             string   `json:"email"`
+		Name              string   `json:"name"`
 		Groups            []string `json:"groups"`
 		PreferredUsername string   `json:"preferred_username"`
 		Picture           string   `json:"picture"`
@@ -206,10 +209,31 @@ func (c *Client) verifyIDToken(ctx context.Context, rawID string) (*User, error)
 	if err := idToken.Claims(&raw); err != nil {
 		return nil, fmt.Errorf("oidc -> id_token claims: %w", err)
 	}
+	return identityFromClaims(idToken.Subject, raw.Email, raw.Name, raw.PreferredUsername, raw.Picture, raw.Groups), nil
+}
+
+// identityFromClaims 映射平台身份：用户名取 preferred_username → email → sub，
+// 展示名取 name → preferred_username → email → sub（Authentik 的 sub 是哈希串，
+// 不适合直接当用户名/展示名）。
+func identityFromClaims(sub, email, name, preferred, picture string, groups []string) *User {
 	return &User{
-		Sub: idToken.Subject, Email: raw.Email, Groups: raw.Groups,
-		Nickname: raw.PreferredUsername, Picture: raw.Picture,
-	}, nil
+		Sub:      sub,
+		Username: firstNonEmpty(preferred, email, sub),
+		Nickname: firstNonEmpty(name, preferred, email, sub),
+		Email:    email,
+		Groups:   groups,
+		Picture:  picture,
+	}
+}
+
+// firstNonEmpty 返回首个去空白后非空的值（身份/展示名回退链）。
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if s := strings.TrimSpace(v); s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 // ensure 懒发现 provider（并发安全；失败不缓存，下次重试）

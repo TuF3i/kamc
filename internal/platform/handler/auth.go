@@ -50,7 +50,8 @@ func (h *Handler) AuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.issueJWTWithSync(w, r, &service.Identity{
-		Username: user.Sub, Email: user.Email, Nickname: user.Sub, Avatar: user.Picture,
+		Username: user.Username, Sub: user.Sub, Email: user.Email,
+		Nickname: user.Nickname, Avatar: user.Picture,
 		Groups: user.Groups, Source: modules.UserSourceSSO,
 	}, "/auth/callback", wantsHTML(r))
 }
@@ -190,7 +191,8 @@ func (h *Handler) AuthTokenExchange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.issueJWTWithSync(w, r, &service.Identity{
-		Username: user.Sub, Email: user.Email, Nickname: user.Sub, Avatar: user.Picture,
+		Username: user.Username, Sub: user.Sub, Email: user.Email,
+		Nickname: user.Nickname, Avatar: user.Picture,
 		Groups: user.Groups, Source: modules.UserSourceSSO,
 	}, "/auth/token-exchange", false)
 }

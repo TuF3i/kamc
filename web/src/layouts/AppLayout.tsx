@@ -70,7 +70,7 @@ export function AppLayout() {
     },
   };
 
-  const displayName = claims?.sub ?? '未登录';
+  const displayName = profile?.nickname || claims?.sub || '未登录';
   const avatarChar = displayName.slice(0, 1).toUpperCase();
   const home = isAdmin ? '/' : '/kubeconfig';
 

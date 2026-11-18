@@ -138,7 +138,9 @@ Application.objects.create(name="kamc", slug="kamc", provider=provider)
 - issuer 形如 `https://sso.example.com/application/o/kamc/`（由 Application slug 决定）。
 - `groups` 声明来自 Authentik 默认 `profile` scope（`request.user.groups`），平台请求
   `openid profile email groups`；组名与平台 `am:admin` 对齐后 SSO 用户即获得管理员权限。
-- 平台用户名取 ID Token 的 `sub`（Authentik 中是哈希串），审计与策略主体均按该值记录。
+- 平台身份用 `preferred_username`（无则退回 email、sub），界面展示昵称（`name`）；
+  IdP 的 `sub` 作为稳定标识存入用户 `metadata.oidc_sub`（IdP 侧改名后仍命中同一账号），
+  仅在「个人中心 → SSO 标识 (sub)」展示，其余界面显示用户名与昵称。
 - 本地浏览器联调建议用 `http://127.0.0.1:8080/auth/callback` 作为 redirect（并在 Provider 中登记），
   避免浏览器对自签 8443 证书的拦截；生产使用 https 域名证书即可。
 
