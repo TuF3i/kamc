@@ -12,7 +12,7 @@ import (
 )
 
 // kubeconfig 模式（§4.4）：static 嵌入调用者自己的平台 JWT（过期需重新下载）；
-// exec 用 k8s-am-login 插件按需换取（推荐）。
+// exec 用 kamc 插件按需换取（推荐）。
 const (
 	KubeconfigModeStatic = "static"
 	KubeconfigModeExec   = "exec"
@@ -74,7 +74,7 @@ func (s *Service) GenerateKubeconfig(_ context.Context, p KubeconfigParams) ([]b
 		}
 		authInfo.Exec = &clientcmdapi.ExecConfig{
 			APIVersion:      "client.authentication.k8s.io/v1",
-			Command:         "k8s-am-login",
+			Command:         "kamc",
 			Args:            args,
 			InteractiveMode: clientcmdapi.IfAvailableExecInteractiveMode,
 		}

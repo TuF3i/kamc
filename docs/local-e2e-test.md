@@ -53,7 +53,7 @@ cd hack/e2e/mock-oidc && go run .
 # 固定账号：sub=alice，groups=[dev-team]
 
 # 2) 编译插件并放进 PATH
-go build -o /tmp/kamc-bin/k8s-am-login ./cmd/k8s-am-login
+go build -o /tmp/kamc-bin/kamc ./cmd/kamc
 
 # 3) 下载 exec kubeconfig（需管理员 JWT）
 curl -sk "https://127.0.0.1:8443/api/v1/clusters/<集群ID>/kubeconfig?mode=exec" \

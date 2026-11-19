@@ -57,7 +57,7 @@ func TestKubeconfigEndToEnd(t *testing.T) {
 	}
 	execYAML := readAll(t, resp)
 	for _, want := range []string{
-		"command: k8s-am-login",
+		"command: kamc",
 		"--server=" + srv.URL,
 		"--cluster-id=" + clusterID,
 		"client.authentication.k8s.io/v1",

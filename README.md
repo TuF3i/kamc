@@ -10,7 +10,7 @@ kubernetes Access Manager Center
 ## 快速开始
 
 ```bash
-make build   # 仅后端：bin/kamc-platform、bin/kamc-agent、bin/k8s-am-login
+make build   # 仅后端：bin/kamc-platform、bin/kamc-agent、bin/kamc
 make release # 生产构建：先构建前端（data/web），再编译后端
 make test
 ```

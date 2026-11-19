@@ -103,7 +103,7 @@ web/                 管理前端（React 18 + Ant Design 5 + Vite + TypeScript�
 ## 构建与测试
 
 ```bash
-make build   # bin/kamc-platform + bin/kamc-agent
+make build   # bin/kamc-platform + bin/kamc-agent + bin/kamc（exec 插件）
 make test    # 全量测试
 make vet
 
@@ -134,9 +134,9 @@ KAMC_API=http://127.0.0.1:8080 npm run dev
       注册表择优/失败剔除）+ Manager.Open fallback + 内部监听（AM_PEER_ADDR，
       默认 :9090）。多副本部署需配置：PEER_ADDRESSES、PEER_TOKEN（Secret）、
       headless service（§11.2 manifest 属部署里程碑）
-- [x] kubeconfig 生成与 k8s-am-login exec plugin（§4.4）：/auth/token-exchange
+- [x] kubeconfig 生成与 kamc exec plugin（§4.4）：/auth/token-exchange
       （ID Token 验签兑换）、GET /api/v1/clusters/{id}/kubeconfig（static/exec 两模式，
-      自服务 JWT 组）、cmd/k8s-am-login（RFC 8628 设备流程 + 本地缓存）。
+      自服务 JWT 组）、cmd/kamc（RFC 8628 设备流程 + 本地缓存）。
       注意：client-go 对明文连接不加载凭证——生产平台必须 https
 - [x] JWT 吊销（§4.2）：用户 epoch 踢出（am_ep 声明，同秒重签不误杀）+ jti
       黑名单（登出）；校验只查本地缓存（§7.1 不变量），Redis HINCRBY/ZSET

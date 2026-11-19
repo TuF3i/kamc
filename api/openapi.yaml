@@ -160,7 +160,7 @@ paths:
       tags: [认证]
       summary: OIDC ID Token 兑换平台 JWT
       description: |
-        k8s-am-login exec credential plugin 的身份入口：ID Token 经 Provider
+        kamc exec credential plugin 的身份入口：ID Token 经 Provider
         JWKS 验签（iss/aud/exp/签名）后按 sub/groups 签发平台 JWT。
         失败一律 401（不区分原因，防枚举）。
       security: []
@@ -514,7 +514,7 @@ paths:
         产物只承载调用者自己的身份，数据面授权仍由请求时 Casbin 决定。
         调用者必须对该集群有任意数据面策略（管理员例外），否则 403。
         mode=static 嵌入调用者当前平台 JWT（过期需重新下载）；
-        mode=exec 写 k8s-am-login 命令行（推荐）。
+        mode=exec 写 kamc 命令行（推荐）。
         server 指向 {external}/proxy/{clusterID}；平台 CA 经
         AM_KUBECONFIG_CA_FILE 可选嵌入（certificate-authority-data）。
       security:

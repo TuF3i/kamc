@@ -162,7 +162,7 @@ export function Kubeconfig() {
                   <ThunderboltOutlined /> exec
                   <span className="mode-badge">推荐</span>
                 </div>
-                <div className="mode-card-desc">调用 k8s-am-login 自动续期，适合日常使用。</div>
+                <div className="mode-card-desc">调用 kamc 自动续期，适合日常使用。</div>
               </button>
               <button
                 type="button"

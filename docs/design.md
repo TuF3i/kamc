@@ -219,7 +219,7 @@ users:
 
 **方式二：exec credential plugin（推荐）**
 
-避免用户频繁重下 kubeconfig。`k8s-am-login` 是平台提供的小工具，走 OIDC Device Flow 或本地缓存的 refresh token，输出标准 `ExecCredential`：
+避免用户频繁重下 kubeconfig。`kamc` 是平台提供的小工具，走 OIDC Device Flow 或本地缓存的 refresh token，输出标准 `ExecCredential`：
 
 ```yaml
 users:
@@ -227,7 +227,7 @@ users:
   user:
     exec:
       apiVersion: client.authentication.k8s.io/v1
-      command: k8s-am-login
+      command: kamc
       args:
       - "--server=https://access-manager.example.com"
       - "--cluster=cluster-a"

@@ -10,14 +10,14 @@ LDFLAGS := -X github.com/TuF3i/kamc/internal/version.Version=$(VERSION) \
 WEB_DIR  := web
 WEB_OUT  := data/web
 
-.PHONY: build release web platform agent k8s-am-login image-platform image-agent test vet fmt tidy clean
+.PHONY: build release web platform agent kamc image-platform image-agent test vet fmt tidy clean
 
 # 仅后端三件套（开发迭代用）
-build: platform agent k8s-am-login
+build: platform agent kamc
 
 # 一键生产构建：先构建前端（data/web），再编译后端；
 # 运行时后端从 AM_WEB_DIR（默认 data/web）读取前端产物，同一进程托管页面与 API。
-release: web platform agent k8s-am-login
+release: web platform agent kamc
 
 web: $(WEB_OUT)/index.html
 
@@ -32,8 +32,8 @@ platform:
 agent:
 	go build -ldflags "$(LDFLAGS)" -o bin/kamc-agent ./cmd/kamc-agent
 
-k8s-am-login:
-	go build -ldflags "$(LDFLAGS)" -o bin/k8s-am-login ./cmd/k8s-am-login
+kamc:
+	go build -ldflags "$(LDFLAGS)" -o bin/kamc ./cmd/kamc
 
 # 容器镜像（需要本机 docker；tag 默认 VERSION）
 image-platform:

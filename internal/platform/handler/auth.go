@@ -170,7 +170,7 @@ func (h *Handler) AuthPasswordLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 // AuthTokenExchange POST /auth/token-exchange —— OIDC ID Token 兑换平台 JWT
-// （k8s-am-login exec plugin 用，§4.4）：ID Token 经 Provider JWKS 验签后，
+// （kamc exec plugin 用，§4.4）：ID Token 经 Provider JWKS 验签后，
 // 按 sub/groups 签发平台 JWT。失败一律 401 不区分原因（防枚举）。
 func (h *Handler) AuthTokenExchange(w http.ResponseWriter, r *http.Request) {
 	if h.oidc == nil || h.auth == nil {

@@ -1,4 +1,4 @@
-// 本地 Mock OIDC Provider：仅用于验证 k8s-am-login 的 Device Flow 与
+// 本地 Mock OIDC Provider：仅用于验证 kamc 的 Device Flow 与
 // 平台 /auth/token-exchange。实现 discovery、device、token、jwks 四个端点。
 package main
 

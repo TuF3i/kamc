@@ -1,4 +1,4 @@
-// Package login k8s-am-login 的核心逻辑：OIDC Device Flow（RFC 8628）获取
+// Package login kamc 的核心逻辑：OIDC Device Flow（RFC 8628）获取
 // ID Token → 平台 /auth/token-exchange 兑换平台 JWT → 输出 client-go
 // exec credential plugin 要求的 ExecCredential JSON（§4.4）。
 //

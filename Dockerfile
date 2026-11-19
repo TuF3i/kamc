@@ -22,13 +22,13 @@ RUN CGO_ENABLED=0 go build -trimpath \
       -o /out/kamc-platform ./cmd/kamc-platform \
  && CGO_ENABLED=0 go build -trimpath \
       -ldflags "-s -w -X github.com/TuF3i/kamc/internal/version.Version=${VERSION} -X github.com/TuF3i/kamc/internal/version.Commit=${COMMIT}" \
-      -o /out/k8s-am-login ./cmd/k8s-am-login
+      -o /out/kamc ./cmd/kamc
 
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata \
  && adduser -D -H -u 10001 kamc
 WORKDIR /app
-COPY --from=build /out/kamc-platform /out/k8s-am-login /app/
+COPY --from=build /out/kamc-platform /out/kamc /app/
 COPY --from=web /src/data/web /app/web
 RUN mkdir -p /data/avatar && chown -R kamc:kamc /app /data
 USER kamc

@@ -483,7 +483,7 @@ function KubeconfigTab({ clusterId }: { clusterId: string }) {
           </Radio.Group>
           <Typography.Text type="secondary">
             {mode === 'exec'
-              ? '写入 k8s-am-login 命令行，凭证自动续期；需要本机 PATH 中存在 k8s-am-login。'
+              ? '写入 kamc 命令行，凭证自动续期；需要本机 PATH 中存在 kamc。'
               : '直接嵌入当前 JWT，1 小时后过期，需要重新下载。'}
           </Typography.Text>
           <Button

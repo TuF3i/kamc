@@ -172,7 +172,7 @@ function uaLabel(ua?: string): string {
   if (!ua) return '未知客户端';
   const kubectl = /kubectl\/([\w.\-]+)/i.exec(ua);
   if (kubectl) return `kubectl ${kubectl[1]}`;
-  if (/k8s-am-login/i.test(ua)) return 'k8s-am-login';
+  if (/kamc\/[\w.\-]+/i.test(ua)) return 'kamc';
   if (/ZCode\/[\d.]+/i.test(ua)) return 'ZCode 客户端';
   if (/Edg\//i.test(ua)) return 'Edge 浏览器';
   if (/Firefox\//i.test(ua)) return 'Firefox 浏览器';
