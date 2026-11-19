@@ -247,3 +247,45 @@ func TestResidualConnBufio(t *testing.T) {
 		t.Fatalf("residual: %q err=%v", buf[:n], err)
 	}
 }
+
+// TestReadRelayLineLimits RELAY 头必须限长，且读完后 bufio 残余仍可继续读
+// （residualConn 依赖；头后紧跟的是字节流）。
+func TestReadRelayLineLimits(t *testing.T) {
+	t.Run("normal with residual", func(t *testing.T) {
+		server, client := net.Pipe()
+		defer server.Close()
+		defer client.Close()
+		go func() {
+			_, _ = client.Write([]byte("{\"cluster\":\"c1\"}\npayload"))
+			_ = client.Close() // 让 io.ReadAll 看到 EOF
+		}()
+		br := bufio.NewReader(server)
+		line, err := readRelayLine(br, maxRelayHeaderBytes)
+		if err != nil || strings.TrimSpace(line) != `{"cluster":"c1"}` {
+			t.Fatalf("line=%q err=%v", line, err)
+		}
+		rest, _ := io.ReadAll(br)
+		if string(rest) != "payload" {
+			t.Fatalf("residual bytes lost: %q", rest)
+		}
+	})
+
+	t.Run("too long without newline", func(t *testing.T) {
+		server, client := net.Pipe()
+		defer server.Close()
+		defer client.Close()
+		go func() {
+			// 不发换行，持续写入超过上限
+			chunk := make([]byte, 1024)
+			for i := 0; i < 8; i++ {
+				if _, err := client.Write(chunk); err != nil {
+					return
+				}
+			}
+		}()
+		br := bufio.NewReader(server)
+		if _, err := readRelayLine(br, maxRelayHeaderBytes); err == nil {
+			t.Fatal("oversized relay header should be rejected")
+		}
+	})
+}

@@ -41,3 +41,6 @@ web/node_modules/
 web/dist/
 
 test_file
+
+# 本地工具会话状态
+.zcode/

@@ -64,6 +64,43 @@ type relayAck struct {
 	OK bool `json:"ok"`
 }
 
+// RELAY 握手限制：头是单行 JSON，正常 <100B；限制长度与读取时间，
+// 防止对端（或冒充 peer 者）发送无换行海量数据耗尽内存/挂住 goroutine。
+const (
+	maxRelayHeaderBytes = 4 << 10
+	relayHeaderTimeout  = 5 * time.Second
+)
+
+// readRelayLine 读取一行并有总长度上限；ReadSlice 出错时保留 bufio 残余，
+// 兼容 relayStream 的 residualConn（头之后的数据属于字节流）。
+func readRelayLine(br *bufio.Reader, max int) (string, error) {
+	var buf []byte
+	for {
+		frag, err := br.ReadSlice('\n')
+		if len(buf)+len(frag) > max {
+			return "", fmt.Errorf("relay -> header exceeds %d bytes", max)
+		}
+		buf = append(buf, frag...)
+		switch {
+		case err == nil:
+			return string(buf), nil
+		case errors.Is(err, bufio.ErrBufferFull):
+			continue
+		default:
+			return "", err
+		}
+	}
+}
+
+// relayReadDeadline 握手读超时：取 ctx 截止时间与默认值的较早者。
+func relayReadDeadline(ctx context.Context) time.Time {
+	deadline := time.Now().Add(relayHeaderTimeout)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		return d
+	}
+	return deadline
+}
+
 // NewPeerRouter 构造路由并挂到 Manager（Open 的跨副本 fallback 由其接管）
 func NewPeerRouter(m *Manager, reg registry.Registry, self string, cfg PeerOptions) *PeerRouter {
 	p := &PeerRouter{
@@ -162,8 +199,11 @@ func (p *PeerRouter) relayStream(stream net.Conn) {
 	defer p.wg.Done()
 	defer stream.Close()
 
+	// 握手阶段限时+限长：避免对端不发换行导致缓冲区无限增长。
+	_ = stream.SetReadDeadline(time.Now().Add(relayHeaderTimeout))
 	br := bufio.NewReader(stream)
-	line, err := br.ReadString('\n')
+	line, err := readRelayLine(br, maxRelayHeaderBytes)
+	_ = stream.SetReadDeadline(time.Time{})
 	if err != nil {
 		return
 	}
@@ -241,8 +281,10 @@ func (p *PeerRouter) openRelay(ctx context.Context, pod, clusterID string) (net.
 		return nil, fmt.Errorf("peer -> relay header: %w", err)
 	}
 
+	_ = stream.SetReadDeadline(relayReadDeadline(ctx))
 	br := bufio.NewReader(stream)
-	ackLine, err := br.ReadString('\n')
+	ackLine, err := readRelayLine(br, maxRelayHeaderBytes)
+	_ = stream.SetReadDeadline(time.Time{})
 	if err != nil {
 		_ = stream.Close()
 		return nil, fmt.Errorf("peer -> relay ack: %w", err)

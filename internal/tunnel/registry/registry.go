@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -17,6 +18,17 @@ import (
 
 // KeyPrefix 隧道注册键前缀，键形如 am:tunnel:{clusterID}:{agentID}
 const KeyPrefix = "am:tunnel:"
+
+// validID 隧道标识白名单：clusterID/agentID 会拼进 Redis 键与 SCAN glob，
+// 只允许字母数字与 . _ -，避免通配符注入与键空间穿越。
+var validID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+func validateID(kind, value string) error {
+	if !validID.MatchString(value) {
+		return fmt.Errorf("registry -> invalid %s %q", kind, value)
+	}
+	return nil
+}
 
 // Owner 一条隧道的归属记录
 type Owner struct {
@@ -53,6 +65,12 @@ func tunnelKey(clusterID, agentID string) string {
 
 // Report 上报归属：SET + TTL（每次覆盖 Since，体现最近一次心跳）
 func (r *RedisRegistry) Report(ctx context.Context, clusterID, agentID, pod string) error {
+	if err := validateID("cluster id", clusterID); err != nil {
+		return err
+	}
+	if err := validateID("agent id", agentID); err != nil {
+		return err
+	}
 	b, err := json.Marshal(Owner{ClusterID: clusterID, AgentID: agentID, Pod: pod, Since: time.Now()})
 	if err != nil {
 		return fmt.Errorf("registry -> marshal owner: %w", err)
@@ -65,6 +83,12 @@ func (r *RedisRegistry) Report(ctx context.Context, clusterID, agentID, pod stri
 
 // Deregister 注销归属
 func (r *RedisRegistry) Deregister(ctx context.Context, clusterID, agentID string) error {
+	if err := validateID("cluster id", clusterID); err != nil {
+		return err
+	}
+	if err := validateID("agent id", agentID); err != nil {
+		return err
+	}
 	if err := r.cli.Del(ctx, tunnelKey(clusterID, agentID)).Err(); err != nil {
 		return fmt.Errorf("registry -> deregister %s/%s: %w", clusterID, agentID, err)
 	}
@@ -73,6 +97,9 @@ func (r *RedisRegistry) Deregister(ctx context.Context, clusterID, agentID strin
 
 // Lookup 扫描某集群的全部归属记录（集群规模 ≤ 数百，SCAN 足够）
 func (r *RedisRegistry) Lookup(ctx context.Context, clusterID string) ([]Owner, error) {
+	if err := validateID("cluster id", clusterID); err != nil {
+		return nil, err
+	}
 	pattern := fmt.Sprintf("%s%s:*", KeyPrefix, clusterID)
 
 	var owners []Owner

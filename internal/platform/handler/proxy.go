@@ -54,6 +54,10 @@ func (h *Handler) Proxy(w http.ResponseWriter, r *http.Request) {
 
 	// 2. 剥离用户传入的所有 Impersonate-* 头（必须在鉴权之前，防伪造身份越权）
 	stripImpersonateHeaders(r)
+	// 2.1 平台凭证不跨信任边界：流式分支会克隆入站头部/查询串到 Agent，
+	// 这里统一删除（审计 dump 在净化前采集，脱敏由 audit 层负责）。
+	stripCredentialHeaders(r)
+	stripCredentialQuery(r.URL)
 
 	// 3. Casbin 鉴权：基于 strip 后路径解析语义资源（FIX-6 的 strip 在此统一发生）
 	cleanPath := strings.TrimPrefix(r.URL.Path, "/proxy/"+clusterID)
@@ -186,5 +190,50 @@ func stripImpersonateHeaders(r *http.Request) {
 		if strings.HasPrefix(strings.ToLower(key), "impersonate-") {
 			delete(r.Header, key)
 		}
+	}
+}
+
+// credentialQueryKeys 平台侧凭证参数：仅在平台消费，转发上游前必须移除。
+// 覆盖 WS 鉴权的 access_token 以及常见 OAuth/密钥参数。
+var credentialQueryKeys = map[string]struct{}{
+	"access_token":  {},
+	"id_token":      {},
+	"token":         {},
+	"refresh_token": {},
+	"client_secret": {},
+	"password":      {},
+	"passwd":        {},
+	"secret":        {},
+	"authorization": {},
+	"api_key":       {},
+	"apikey":        {},
+	"bearer_token":  {},
+	"session_token": {},
+}
+
+// stripCredentialHeaders 删除平台凭证头：流式升级会深拷贝入站头到 Agent，
+// 不能让用户 JWT/Cookie 进入被管理集群（Agent 只用自身 SA 身份）。
+func stripCredentialHeaders(r *http.Request) {
+	r.Header.Del("Authorization")
+	r.Header.Del("Proxy-Authorization")
+	r.Header.Del("Cookie")
+}
+
+// stripCredentialQuery 从 URL 查询串移除凭证参数，保留业务参数
+// （stdin/stdout/stderr/tty 等 exec/port-forward 参数）。
+func stripCredentialQuery(u *url.URL) {
+	if u == nil || u.RawQuery == "" {
+		return
+	}
+	values := u.Query()
+	changed := false
+	for key := range values {
+		if _, ok := credentialQueryKeys[strings.ToLower(key)]; ok {
+			values.Del(key)
+			changed = true
+		}
+	}
+	if changed {
+		u.RawQuery = values.Encode()
 	}
 }

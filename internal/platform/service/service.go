@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"regexp"
 	"strings"
 
 	"gorm.io/gorm"
@@ -20,6 +21,15 @@ import (
 
 // maxClusterIDLen 集群 ID 上限（与 gorm 列宽一致）
 const maxClusterIDLen = 64
+
+// clusterIDPattern 集群 ID 字符集：会进入 URL 路径、kubeconfig 与隧道 Redis 键，
+// 只允许字母数字与 . _ -（与 tunnel/registry 的校验保持一致）。
+var clusterIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+// validClusterID 校验集群 ID 格式（创建入口使用；读取路径由 registry 兜底）。
+func validClusterID(id string) bool {
+	return clusterIDPattern.MatchString(id)
+}
 
 // Service 集群管理业务
 type Service struct {
@@ -68,7 +78,7 @@ func (s *Service) CreateCluster(ctx context.Context, req *modules.CreateClusterR
 		return nil, errcode.ErrInvalidParam
 	}
 	id, name := strings.TrimSpace(req.ID), strings.TrimSpace(req.Name)
-	if id == "" || name == "" || len(id) > maxClusterIDLen {
+	if id == "" || name == "" || len(id) > maxClusterIDLen || !validClusterID(id) {
 		return nil, errcode.ErrInvalidParam
 	}
 

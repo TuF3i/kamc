@@ -413,3 +413,36 @@ func TestWatchdogSparesActiveTunnel(t *testing.T) {
 		return err != nil
 	}, "tunnel should be reaped after activity stops")
 }
+
+// TestRegisterConcurrent 并发注册/注销触发 map 读写：配合 `go test -race`
+// 验证 register 不在临界区外遍历 clusters（历史缺陷：fatal concurrent map）。
+func TestRegisterConcurrent(t *testing.T) {
+	reg := newFakeRegistry()
+	m := newTestManager(reg)
+	m.Start()
+	defer m.Release()
+
+	const workers = 4
+	const rounds = 40
+	sessions := make([]*yamux.Session, workers)
+	for i := 0; i < workers; i++ {
+		sessions[i], _ = newYamuxPair(t)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			for j := 0; j < rounds; j++ {
+				cluster := "cluster-" + string(rune('a'+j%3))
+				agent := "agent-" + string(rune('a'+i))
+				m.Register(cluster, agent, sessions[i])
+				if j%5 == 0 {
+					m.Remove(cluster, agent)
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+}

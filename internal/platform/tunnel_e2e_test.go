@@ -50,12 +50,13 @@ func TestTunnelEndToEnd(t *testing.T) {
 	})
 
 	// 假 kube-apiserver：回显路径与收到的头
-	var gotImpersonateUser, gotImpersonateGroups, gotAuth, gotPath string
+	var gotImpersonateUser, gotImpersonateGroups, gotAuth, gotPath, gotQuery string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotImpersonateUser = r.Header.Get("Impersonate-User")
 		gotImpersonateGroups = strings.Join(r.Header.Values("Impersonate-Group"), ",")
 		gotAuth = r.Header.Get("Authorization")
 		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"kind":"PodList","via":"fake-apiserver"}`))
 	}))
@@ -139,8 +140,9 @@ func TestTunnelEndToEnd(t *testing.T) {
 		t.Fatalf("viewer proxy: want 403, got %d", resp.StatusCode)
 	}
 
-	// 经 /proxy 穿隧道请求（带伪造 Impersonate，断言被剥离且不再注入）
-	req := httptest.NewRequest(http.MethodGet, "/proxy/"+clusterID+"/api/v1/namespaces/dev/pods", nil)
+	// 经 /proxy 穿隧道请求（带伪造 Impersonate 与凭证 query，断言均被剥离）
+	req := httptest.NewRequest(http.MethodGet,
+		"/proxy/"+clusterID+"/api/v1/namespaces/dev/pods?access_token=leaked&keep=1", nil)
 	req.Header.Set("Impersonate-User", "mallory")
 	req.Header.Set("Authorization", "Bearer "+tok)
 	rec := httptest.NewRecorder()
@@ -164,6 +166,13 @@ func TestTunnelEndToEnd(t *testing.T) {
 	}
 	if gotAuth != "" {
 		t.Fatalf("user Authorization leaked: %q", gotAuth)
+	}
+	// 凭证 query 不得随请求进入 Agent；业务参数保留
+	if strings.Contains(gotQuery, "access_token") {
+		t.Fatalf("credential query leaked to agent: %q", gotQuery)
+	}
+	if !strings.Contains(gotQuery, "keep=1") {
+		t.Fatalf("business query dropped: %q", gotQuery)
 	}
 
 	// Agent 断开 → 集群转 offline

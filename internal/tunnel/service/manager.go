@@ -262,16 +262,21 @@ func (m *Manager) register(clusterID, agentID string, sess *yamux.Session, t *Tu
 			old.replaced.Store(true)
 			m.closeTunnel(old)
 			list[i] = t
+			// 计数必须在临界区内取：clustersAll/len(m.clusters) 的契约是持锁。
+			agents, clusters := len(m.clustersAll()), len(m.clusters)
 			m.mu.Unlock()
+			metrics.TunnelAttachedAgents.Set(float64(agents))
+			metrics.TunnelConnectedClusters.Set(float64(clusters))
 			m.reportOne(clusterID, agentID)
 			return
 		}
 	}
 	m.clusters[clusterID] = append(list, t)
+	agents, clusters := len(m.clustersAll()), len(m.clusters)
 	m.mu.Unlock()
 
-	metrics.TunnelAttachedAgents.Set(float64(len(m.clustersAll())))
-	metrics.TunnelConnectedClusters.Set(float64(len(m.clusters)))
+	metrics.TunnelAttachedAgents.Set(float64(agents))
+	metrics.TunnelConnectedClusters.Set(float64(clusters))
 	m.reportOne(clusterID, agentID)
 }
 
