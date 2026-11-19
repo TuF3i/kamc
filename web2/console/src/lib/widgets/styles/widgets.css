@@ -489,16 +489,38 @@
     @apply text-center;
   }
 
+  /* 固定列：用不透明底色近似卡片（玻璃 + 5% 前景染色）的合成色，
+     并跟随表头/悬停/选中状态，保证与周围单元格颜色一致。 */
   .data-table .cell-sticky-right {
     @apply sticky right-0;
-    background: var(--private-color-layer);
+    background: color-mix(
+      in oklch,
+      var(--private-color-layer-content) 5%,
+      var(--private-color-layer)
+    );
+  }
+
+  .data-table thead th.cell-sticky-right {
+    background: color-mix(
+      in oklch,
+      var(--private-color-layer-content) 9%,
+      var(--private-color-layer)
+    );
   }
 
   .data-table tbody tr:hover .cell-sticky-right {
     background: color-mix(
       in oklch,
-      var(--private-color-layer) 88%,
-      var(--private-color-layer-content)
+      var(--private-color-layer-content) 10%,
+      var(--private-color-layer)
+    );
+  }
+
+  .data-table tbody tr.table-row-selected .cell-sticky-right {
+    background: color-mix(
+      in oklch,
+      var(--private-color-primary) 12%,
+      var(--private-color-layer)
     );
   }
 
