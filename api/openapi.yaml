@@ -557,6 +557,51 @@ paths:
                       data: {$ref: '#/components/schemas/PlatformUser'}
         '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
 
+  /api/v1/profile/password:
+    post:
+      tags: [认证]
+      summary: 修改本地密码（自服务）
+      description: |
+        仅需 JWT：核对当前密码后写入新密码的 bcrypt 哈希。
+        成功后该用户全部已签发 JWT 立即吊销（含当前会话），所有端需重新登录。
+        库内已有哈希时以哈希为准（内置管理员的环境变量密码即失效）；
+        SSO/LDAP 账号拒绝（密码由身份源管理）。
+      security:
+        - platformJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [old_password, new_password]
+              properties:
+                old_password: {type: string, description: 当前密码（库内哈希或内置环境变量密码）}
+                new_password: {type: string, description: 新密码（8-72 字节，bcrypt 落库）}
+      responses:
+        '200':
+          description: 修改成功（data.changed=true；当前 Token 已吊销）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          changed: {type: boolean}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '200-business-error':
+          description: |
+            业务错误（HTTP 200 信封）：40012 当前密码不正确；40013 密码由
+            身份源管理（SSO/LDAP）；40014 未设置本地密码；10001 新密码长度
+            不在 8-72 字节范围内。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Envelope'}
+
   /api/v1/profile/avatar:
     post:
       tags: [认证]
@@ -1626,6 +1671,12 @@ components:
         metadata: {type: object, additionalProperties: true}
         last_login: {type: string, format: date-time, nullable: true}
         created_at: {type: string, format: date-time}
+        password_set:
+          type: boolean
+          description: |
+            是否已设置本地密码（个人中心「修改密码」入口的展示条件）。
+            内置管理员未落哈希时由后端按环境变量密码语义标记为 true；
+            SSO/LDAP 账号恒为 false（密码由 IdP 管理）。
 
     AuditEvent:
       type: object

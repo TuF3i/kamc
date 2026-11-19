@@ -47,7 +47,11 @@ export default function Login() {
   const [fieldErrors, setFieldErrors] = createSignal<{ username?: string; password?: string }>({});
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
-  const [sessionNotice, setSessionNotice] = createSignal({ expired: false, loggedOut: false });
+  const [sessionNotice, setSessionNotice] = createSignal({
+    expired: false,
+    loggedOut: false,
+    passwordChanged: false,
+  });
 
   const rawRedirect = createMemo(() => param(searchParams.redirect) || '/');
   const redirect = createMemo(() => {
@@ -60,15 +64,22 @@ export default function Login() {
   const loggedOut = createMemo(
     () => param(searchParams.logged_out) === '1' || sessionNotice().loggedOut,
   );
+  const passwordChanged = createMemo(
+    () =>
+      param(searchParams.password_changed) === '1' ||
+      sessionNotice().passwordChanged,
+  );
 
   onMount(() => {
     try {
       const expiredFlag = sessionStorage.getItem('kamc:expired') === '1';
       const logoutFlag = sessionStorage.getItem('kamc:logged_out') === '1';
+      const pwdFlag = sessionStorage.getItem('kamc:password_changed') === '1';
       if (expiredFlag) sessionStorage.removeItem('kamc:expired');
       if (logoutFlag) sessionStorage.removeItem('kamc:logged_out');
-      if (expiredFlag || logoutFlag) {
-        setSessionNotice({ expired: expiredFlag, loggedOut: logoutFlag });
+      if (pwdFlag) sessionStorage.removeItem('kamc:password_changed');
+      if (expiredFlag || logoutFlag || pwdFlag) {
+        setSessionNotice({ expired: expiredFlag, loggedOut: logoutFlag, passwordChanged: pwdFlag });
       }
     } catch {
       // 隐私模式下 sessionStorage 不可用
@@ -148,6 +159,13 @@ export default function Login() {
               </Show>
               <Show when={loggedOut()}>
                 <Alert type="success" message="已退出登录" class="login-notice" />
+              </Show>
+              <Show when={passwordChanged()}>
+                <Alert
+                  type="success"
+                  message="密码已修改，请使用新密码重新登录"
+                  class="login-notice"
+                />
               </Show>
               <Show when={error()}>
                 <Alert

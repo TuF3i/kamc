@@ -1,5 +1,7 @@
 import { For, Show, createSignal, onCleanup, onMount } from 'solid-js';
 import { uploadAvatarSelf } from '@/api/users';
+import { changePassword } from '@/api/auth';
+import { ApiError } from '@/api/http';
 import { auth } from '@/stores/auth';
 import { toast } from '@/lib/storage/toast';
 import { fmtRemaining, fmtTime, remainingSeconds } from '@/utils/format';
@@ -7,16 +9,100 @@ import {
   Button,
   Card,
   Descriptions,
+  Field,
+  PasswordInput,
   Tag,
   Upload,
   type DescriptionItem,
 } from '@/lib/widgets';
+import { createForm } from '@/lib/widgets/form';
 import { PageHeader } from '@/components/PageHeader';
 import { UploadOutlined } from '@/lib/icons';
+
+/** 后端业务码 → 中文提示（与 errcode 对应）。 */
+function passwordChangeError(err: unknown): string {
+  if (err instanceof ApiError) {
+    switch (err.code) {
+      case 40012:
+        return '当前密码不正确';
+      case 40013:
+        return 'SSO/LDAP 账号的密码由身份源管理，请在对应平台修改';
+      case 40014:
+        return '当前账号未设置密码，无法修改';
+      case 10001:
+        return '新密码长度需为 8-72 个字符';
+    }
+  }
+  return err instanceof Error ? err.message : '修改密码失败';
+}
+
+interface PasswordForm extends Record<string, unknown> {
+  old_password: string;
+  new_password: string;
+  confirm: string;
+}
 
 export default function Account() {
   const [tick, setTick] = createSignal(0);
   const [uploading, setUploading] = createSignal(false);
+
+  const pwdForm = createForm<PasswordForm>({
+    old_password: '',
+    new_password: '',
+    confirm: '',
+  });
+  const [pwdSaving, setPwdSaving] = createSignal(false);
+
+  const submitPassword = async () => {
+    if (
+      !pwdForm.validate({
+        old_password: [{ required: true, message: '请输入当前密码' }],
+        new_password: [
+          { required: true, message: '请输入新密码' },
+          {
+            validator: (value) => {
+              const text = String(value ?? '');
+              if (text && (text.length < 8 || text.length > 72)) {
+                return '新密码长度需为 8-72 个字符';
+              }
+              return undefined;
+            },
+          },
+        ],
+        confirm: [
+          { required: true, message: '请再次输入新密码' },
+          {
+            validator: (value) =>
+              String(value ?? '') !== String(pwdForm.values.new_password)
+                ? '两次输入的新密码不一致'
+                : undefined,
+          },
+        ],
+      })
+    ) {
+      return;
+    }
+    setPwdSaving(true);
+    try {
+      await changePassword(
+        String(pwdForm.values.old_password),
+        String(pwdForm.values.new_password),
+      );
+      toast.success('密码已修改，请重新登录');
+      // 改密成功后后端已吊销全部 JWT：回到登录页并给出专用提示。
+      try {
+        sessionStorage.setItem('kamc:password_changed', '1');
+      } catch {
+        // 隐私模式忽略
+      }
+      auth.clearLocal();
+      window.location.assign('/#/login?password_changed=1');
+    } catch (err) {
+      toast.error(passwordChangeError(err));
+    } finally {
+      setPwdSaving(false);
+    }
+  };
 
   onMount(() => {
     const timer = window.setInterval(() => setTick((value) => value + 1), 1000);
@@ -159,6 +245,54 @@ export default function Account() {
 
         <Descriptions items={items()} column={{ xs: 1, md: 2 }} bordered />
       </Card>
+
+      <Show when={auth.profile()?.password_set}>
+        <Card title="修改密码" class="soft-card mt-4">
+          <div class="max-w-md">
+            <div class="mb-4 text-[13px] leading-6 text-layer-content/50">
+              修改成功后当前登录将立即失效，所有已登录设备需使用新密码重新登录。
+            </div>
+            <div class="flex flex-col gap-4">
+              <Field label="当前密码" required error={pwdForm.errors.old_password}>
+                <PasswordInput
+                  value={String(pwdForm.values.old_password)}
+                  onValueChange={(value) => pwdForm.setValue('old_password', value)}
+                  placeholder="请输入当前密码"
+                  autocomplete="current-password"
+                  status={pwdForm.errors.old_password ? 'error' : undefined}
+                />
+              </Field>
+              <Field label="新密码" required error={pwdForm.errors.new_password}>
+                <PasswordInput
+                  value={String(pwdForm.values.new_password)}
+                  onValueChange={(value) => pwdForm.setValue('new_password', value)}
+                  placeholder="8-72 个字符"
+                  autocomplete="new-password"
+                  status={pwdForm.errors.new_password ? 'error' : undefined}
+                />
+              </Field>
+              <Field label="确认新密码" required error={pwdForm.errors.confirm}>
+                <PasswordInput
+                  value={String(pwdForm.values.confirm)}
+                  onValueChange={(value) => pwdForm.setValue('confirm', value)}
+                  placeholder="再次输入新密码"
+                  autocomplete="new-password"
+                  status={pwdForm.errors.confirm ? 'error' : undefined}
+                />
+              </Field>
+              <div>
+                <Button
+                  type="primary"
+                  loading={pwdSaving()}
+                  onClick={() => void submitPassword()}
+                >
+                  修改密码
+                </Button>
+              </div>
+            </div>
+          </div>
+        </Card>
+      </Show>
     </div>
   );
 }

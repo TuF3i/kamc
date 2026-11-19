@@ -4,9 +4,11 @@ import clsx from 'clsx';
 
 export interface Rule {
   required?: boolean;
-  message: string;
+  /** 校验失败提示；validator 自带文案时可省略 */
+  message?: string;
   max?: number;
   pattern?: RegExp;
+  /** 自定义校验：返回错误文案（undefined = 通过） */
   validator?: (value: unknown) => string | undefined;
 }
 
@@ -19,7 +21,7 @@ function runRule(rule: Rule, value: unknown): string | undefined {
     value === null ||
     value === '' ||
     (Array.isArray(value) && value.length === 0);
-  if (rule.required && empty) return rule.message;
+  if (rule.required && empty) return rule.message ?? '该项为必填';
   if (rule.max !== undefined && typeof value === 'string' && value.length > rule.max) {
     return rule.message;
   }

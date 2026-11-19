@@ -286,6 +286,8 @@ export interface PlatformUserDTO {
   metadata: Record<string, unknown>;
   last_login?: string | null;
   created_at: string;
+  /** 是否已设置本地密码（个人中心“修改密码”入口；内置管理员恒为 true） */
+  password_set?: boolean;
 }
 
 export interface GroupDTO {

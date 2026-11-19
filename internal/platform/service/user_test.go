@@ -22,3 +22,25 @@ func TestMergeOIDCSub(t *testing.T) {
 		})
 	}
 }
+
+// TestVerifyBuiltinPassword 内置管理员环境变量密码核对（恒定时间比较）。
+func TestVerifyBuiltinPassword(t *testing.T) {
+	cases := []struct {
+		name              string
+		username, envUser string
+		envPass, password string
+		want              bool
+	}{
+		{"完全匹配", "sysadmin", "sysadmin", "sysadmin123", "sysadmin123", true},
+		{"用户名不符", "alice", "sysadmin", "sysadmin123", "sysadmin123", false},
+		{"密码不符", "sysadmin", "sysadmin", "sysadmin123", "wrong", false},
+		{"空密码", "sysadmin", "sysadmin", "sysadmin123", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := VerifyBuiltinPassword(tc.username, tc.envUser, tc.envPass, tc.password); got != tc.want {
+				t.Fatalf("got %v want %v", got, tc.want)
+			}
+		})
+	}
+}

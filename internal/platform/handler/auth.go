@@ -116,7 +116,8 @@ func (h *Handler) AuthLdapLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 // AuthPasswordLogin POST /auth/password-login —— 统一账号密码登录：
-// 1) 先匹配内置管理员（AM_PASSWORD_LOGIN_USER/PASSWORD）；
+// 0) 平台用户库内的本地密码（个人中心修改后落库的 bcrypt 哈希）优先；
+// 1) 再匹配内置管理员（AM_PASSWORD_LOGIN_USER/PASSWORD）；
 // 2) 未命中且已配置 LDAP 时走 LDAP 认证（成功即同步数据写入平台用户库）；
 // 3) 都未命中统一 401（不泄露内置账号是否启用/LDAP 是否配置，防枚举）。
 func (h *Handler) AuthPasswordLogin(w http.ResponseWriter, r *http.Request) {
@@ -138,8 +139,19 @@ func (h *Handler) AuthPasswordLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1) 内置管理员（恒定时间比较；AM_PASSWORD_LOGIN=0 关闭）
-	if h.passwordLoginEnabled {
+	// 0) 库内本地密码（用户修改密码后以哈希为准）：命中即签发；
+	//    有哈希但未命中 → 本地账号密码错误，直接 401（不再回退内置/LDAP）
+	matched, hasHash := h.svc.AuthenticateLocal(r.Context(), username, req.Password)
+	if matched {
+		h.issueJWTWithSync(w, r, &service.Identity{
+			Username: username, Source: modules.UserSourceLocal,
+		}, "/auth/password-login", false)
+		return
+	}
+
+	// 1) 内置管理员（恒定时间比较；AM_PASSWORD_LOGIN=0 关闭）。
+	//    仅在用户未落库内哈希时回退——否则改密后旧环境密码仍可登录。
+	if !hasHash && h.passwordLoginEnabled {
 		userOK := subtle.ConstantTimeCompare([]byte(username), []byte(h.passwordUser)) == 1
 		passOK := subtle.ConstantTimeCompare([]byte(req.Password), []byte(h.passwordPass)) == 1
 		if userOK && passOK {
@@ -214,6 +226,61 @@ func (h *Handler) AuthRevokeUser(w http.ResponseWriter, r *http.Request) {
 	h.auditPlatform(r, "user-revoked", req.Sub, "", "/api/v1/auth/revoke", true, "revoked")
 	metrics.RevocationsTotal.WithLabelValues("user").Inc()
 	errcode.GenFinalResponse(w, map[string]string{"sub": req.Sub, "revoked": "before-now"}, nil)
+}
+
+// ChangePassword POST /api/v1/profile/password —— 自服务修改本地密码：
+// 1) 核对当前密码（库内哈希；未设置时内置管理员回退环境变量密码）；
+// 2) 先吊销该用户已签发 JWT（fail-closed，改密后全端重新登录）再写新哈希；
+// 3) 审计 password-change。SSO/LDAP 账号拒绝（密码由 IdP 管理）。
+func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	claims, ok := middleware.ClaimsFromCtx(r.Context())
+	if !ok {
+		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
+		return
+	}
+	var req struct {
+		OldPassword string `json:"old_password"`
+		NewPassword string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
+		req.OldPassword == "" || req.NewPassword == "" {
+		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
+		return
+	}
+
+	verified, builtinFallback, rsp := h.svc.VerifyPassword(r.Context(), claims.Subject, req.OldPassword)
+	if rsp == nil && !verified {
+		// 未设置库内密码的内置管理员：用环境变量密码核对（登录开关关闭时无意义）
+		if builtinFallback && h.passwordLoginEnabled &&
+			service.VerifyBuiltinPassword(claims.Subject, h.passwordUser, h.passwordPass, req.OldPassword) {
+			verified = true
+		} else {
+			rsp = errcode.ErrPasswordWrong
+		}
+	}
+	if rsp != nil {
+		h.auditPlatform(r, "password-change", claims.Subject, "", "/api/v1/profile/password", false, "verify-failed")
+		errcode.GenFinalResponse(w, nil, rsp)
+		return
+	}
+
+	// 先验证新密码合法性（长度/bcrypt）——校验失败时用户仍处于登录态，
+	// 不产生“被踢下线但密码没改”的中间态；随后吊销旧 JWT 并落库。
+	hash, rsp := service.HashNewPassword(req.NewPassword)
+	if rsp != nil {
+		errcode.GenFinalResponse(w, nil, rsp)
+		return
+	}
+	if err := h.revokeUserTokens(r, claims.Subject); err != nil {
+		errcode.GenFinalResponse(w, nil, errcode.ServerInternal(err))
+		return
+	}
+	if rsp = h.svc.SetPasswordHash(r.Context(), claims.Subject, hash); rsp != nil {
+		errcode.GenFinalResponse(w, nil, rsp)
+		return
+	}
+	h.auditPlatform(r, "password-change", claims.Subject, "", "/api/v1/profile/password", true, "changed+revoke")
+	errcode.GenFinalResponse(w, map[string]bool{"changed": true}, nil)
 }
 
 // AuthLogout POST /auth/logout —— 当前 Token 立即失效（自服务登出，jti 黑名单）

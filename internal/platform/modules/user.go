@@ -60,12 +60,16 @@ type PlatformUser struct {
 	Source    UserSource `gorm:"size:16;not null;default:local" json:"source"`
 	Email     string     `gorm:"size:256" json:"email"`
 	Metadata  string     `gorm:"type:jsonb;not null;default:'{}'" json:"metadata"`
-	LastLogin *time.Time `json:"last_login"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	// PasswordHash 本地密码的 bcrypt 哈希（个人中心修改密码后写入；
+	// 空表示未设置——内置管理员回退到环境变量密码）。绝不外发。
+	// 登录同步的 UpsertUser 冲突更新列不包含本列，避免登录冲掉密码。
+	PasswordHash string     `gorm:"size:128" json:"-"`
+	LastLogin    *time.Time `json:"last_login"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
-// UserDTO 用户对外形态（metadata 已解析为对象）
+// UserDTO 用户对外形态（metadata 已解析为对象；不含密码哈希）
 type UserDTO struct {
 	UID       string         `json:"uid"`
 	Username  string         `json:"username"`
@@ -77,6 +81,9 @@ type UserDTO struct {
 	Metadata  map[string]any `json:"metadata"`
 	LastLogin *time.Time     `json:"last_login"`
 	CreatedAt time.Time      `json:"created_at"`
+	// PasswordSet 是否已设置本地密码（个人中心据此展示修改密码入口；
+	// 内置管理员的“环境变量密码”由 handler 层补充标记）
+	PasswordSet bool `json:"password_set"`
 }
 
 // ToDTO 转对外 DTO（groups 拆分、metadata 解析失败按空对象）
@@ -89,16 +96,17 @@ func (u *PlatformUser) ToDTO() *UserDTO {
 		}
 	}
 	return &UserDTO{
-		UID:       u.UID,
-		Username:  u.Username,
-		Nickname:  u.Nickname,
-		AvatarURL: u.AvatarURL,
-		Groups:    groups,
-		Source:    u.Source,
-		Email:     u.Email,
-		Metadata:  meta,
-		LastLogin: u.LastLogin,
-		CreatedAt: u.CreatedAt,
+		UID:         u.UID,
+		Username:    u.Username,
+		Nickname:    u.Nickname,
+		AvatarURL:   u.AvatarURL,
+		Groups:      groups,
+		Source:      u.Source,
+		Email:       u.Email,
+		Metadata:    meta,
+		LastLogin:   u.LastLogin,
+		CreatedAt:   u.CreatedAt,
+		PasswordSet: u.PasswordHash != "",
 	}
 }
 

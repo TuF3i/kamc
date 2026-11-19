@@ -35,6 +35,9 @@ const (
 	CodeGroupExists        = 40007
 	CodeGroupNotFound      = 40008
 	CodeGroupExternal      = 40011
+	CodePasswordWrong      = 40012
+	CodePasswordExternal   = 40013
+	CodePasswordNotSet     = 40014
 	CodeLDAPDisabled       = 10002
 	CodeScriptsDisabled    = 10004
 	CodeScriptFailed       = 10003
@@ -71,6 +74,9 @@ var (
 	ErrGroupExists        = &Response{Status: CodeGroupExists, Message: "group already exists"}
 	ErrGroupNotFound      = &Response{Status: CodeGroupNotFound, Message: "group not found"}
 	ErrGroupExternal      = &Response{Status: CodeGroupExternal, Message: "external group membership is managed by IdP"}
+	ErrPasswordWrong      = &Response{Status: CodePasswordWrong, Message: "current password is incorrect"}
+	ErrPasswordExternal   = &Response{Status: CodePasswordExternal, Message: "password is managed by the identity provider"}
+	ErrPasswordNotSet     = &Response{Status: CodePasswordNotSet, Message: "no local password set for this account"}
 	ErrLDAPDisabled       = &Response{Status: CodeLDAPDisabled, Message: "ldap not configured"}
 	ErrScriptsDisabled    = &Response{Status: CodeScriptsDisabled, Message: "mapping scripts disabled"}
 	ErrAuthScriptNotFound = &Response{Status: CodeAuthScriptNotFound, Message: "script not found"}
