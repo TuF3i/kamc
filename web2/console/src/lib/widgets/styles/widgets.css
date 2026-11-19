@@ -139,7 +139,8 @@
   }
 
   .card {
-    @apply flex flex-col overflow-hidden rounded-xl border border-layer-content/15 bg-layer/60 backdrop-blur transition-colors duration-700;
+    @apply flex flex-col overflow-hidden rounded-xl border border-layer-content/15 bg-layer/60 backdrop-blur;
+    transition: border-color 0.2s ease, background-color 0.2s ease;
   }
 
   .card-solid {
@@ -1070,7 +1071,8 @@
   }
 
   .toast {
-    @apply flex flex-col overflow-hidden rounded-xl border border-layer-content/15 bg-layer transition-colors duration-700;
+    @apply flex flex-col overflow-hidden rounded-xl border border-layer-content/15 bg-layer;
+    transition: border-color 0.2s ease, background-color 0.2s ease;
     animation: toast-in 0.2s ease-out;
   }
 

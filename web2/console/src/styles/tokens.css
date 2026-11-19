@@ -123,4 +123,30 @@ body {
   display: none !important;
 }
 
+/*
+ * 主题切换过渡：切换瞬间临时给所有元素挂统一的颜色过渡（background/color/
+ * border/outline/fill/stroke），避免“卡片 700ms 渐变、文字瞬切”的违和感。
+ * 结束后由 theme.ts 移除，不影响日常的悬停等交互过渡。
+ * 太阳/月亮按钮自带 0.75s 弹性动画，排除在统一时长之外。
+ */
+html.theme-switching *,
+html.theme-switching *::before,
+html.theme-switching *::after {
+  transition:
+    background-color 0.3s ease,
+    color 0.3s ease,
+    border-color 0.3s ease,
+    outline-color 0.3s ease,
+    fill 0.3s ease,
+    stroke 0.3s ease !important;
+}
+
+html.theme-switching .darkmode-wrapper,
+html.theme-switching .darkmode-wrapper .darkmode-button,
+html.theme-switching .darkmode-wrapper::before,
+html.theme-switching .darkmode-wrapper::after,
+html.theme-switching .darkmode-wrapper .darkmode-button::after {
+  transition: all 0.75s var(--darkmode-ease) !important;
+}
+
 @custom-variant hover (&:hover);
