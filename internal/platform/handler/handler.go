@@ -137,7 +137,8 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/auth/login", h.AuthLogin)
 	r.Get("/auth/callback", h.AuthCallback)
 	r.With(mw.LimitBody(1<<20)).Post("/auth/token-exchange", h.AuthTokenExchange)
-	r.With(mw.LimitBody(1<<20)).Post("/auth/dev-token", h.AuthDevToken)
+	r.With(mw.LimitBody(1<<20), mw.LoginRateLimit(h.loginRateLimiter, h.loginRateLimitN, time.Minute)).
+		Post("/auth/dev-token", h.AuthDevToken)
 	r.With(mw.LimitBody(1<<20), mw.LoginRateLimit(h.loginRateLimiter, h.loginRateLimitN, time.Minute)).
 		Post("/auth/password-login", h.AuthPasswordLogin)
 	r.With(mw.LimitBody(1<<20), mw.LoginRateLimit(h.loginRateLimiter, h.loginRateLimitN, time.Minute)).

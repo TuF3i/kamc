@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -119,6 +120,12 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		opt(o)
 	}
 
+	production := strings.EqualFold(strings.TrimSpace(os.Getenv("AM_ENV")), "production")
+	devTokenEnabled := os.Getenv("AM_DEV_ISSUE_TOKEN") == "1"
+	if err := validateProductionGuards(production, o.db != nil, devTokenEnabled); err != nil {
+		return nil, err
+	}
+
 	// 数据库连接: 注入优先, 否则自建 (自建的连接由 ReleaseRuntime 负责)
 	db := o.db
 	ownDB := false
@@ -216,13 +223,13 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	}
 	catalogSvc := catalog.New(svc, proxies)
 
-	// 头像存储：AM_AVATAR_DIR 目录 + URL 签名密钥（未配置时由部署配置派生，
-	// 保证重启后已入库的头像 URL 仍然有效）
+	// 头像存储：AM_AVATAR_DIR 目录 + URL 签名密钥（生产必须显式配置；
+	// 开发环境未配置时由部署配置派生，保证重启后已入库的头像 URL 仍然有效）
 	avatarDir := envDefault("AM_AVATAR_DIR", "data/avatar")
 	if err := os.MkdirAll(avatarDir, 0o755); err != nil {
 		return nil, fmt.Errorf("platform -> create avatar dir: %w", err)
 	}
-	avatarSecret := os.Getenv("AM_AVATAR_SECRET")
+	avatarSecret := strings.TrimSpace(os.Getenv("AM_AVATAR_SECRET"))
 	if avatarSecret == "" {
 		dbURL := os.Getenv("DATABASE_URL")
 		if dbURL == "" {
@@ -230,7 +237,7 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		}
 		sum := sha256.Sum256([]byte("kamc-avatar|" + os.Getenv("AM_JWT_ISSUER") + "|" + dbURL))
 		avatarSecret = hex.EncodeToString(sum[:])
-		log.Printf("[platform] AM_AVATAR_SECRET 未配置，使用派生签名密钥（部署配置变更会使已存头像 URL 失效）")
+		log.Printf("[platform] WARNING: AM_AVATAR_SECRET 未配置，使用派生签名密钥（仅限开发；生产拒绝启动）")
 	}
 
 	// LDAP 登录（LDAP_URL 未配置 = /auth/ldap-login 503）
@@ -342,11 +349,11 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		AvatarDir:        avatarDir,
 		AvatarSecret:     avatarSecret,
 	})
-	h.SetPolicy(envDefault("AM_ADMIN_GROUP", "am:admin"), os.Getenv("AM_DEV_ISSUE_TOKEN") == "1")
+	h.SetPolicy(envDefault("AM_ADMIN_GROUP", "am:admin"), devTokenEnabled)
 	passwordUser := envDefault("AM_PASSWORD_LOGIN_USER", "sysadmin")
 	passwordPass := envDefault("AM_PASSWORD_LOGIN_PASSWORD", "sysadmin123")
 	passwordEnabled := os.Getenv("AM_PASSWORD_LOGIN") != "0"
-	if strings.EqualFold(os.Getenv("AM_ENV"), "production") && passwordEnabled && passwordUser == "sysadmin" && passwordPass == "sysadmin123" {
+	if production && passwordEnabled && passwordUser == "sysadmin" && passwordPass == "sysadmin123" {
 		return nil, fmt.Errorf("platform -> refuse default password login in production (set AM_PASSWORD_LOGIN=0 or explicit credentials)")
 	}
 	h.SetPasswordLogin(passwordUser, passwordPass, passwordEnabled)
@@ -535,24 +542,65 @@ func envDuration(key string, def time.Duration) time.Duration {
 	return d
 }
 
-// redactDSN 数据库连接串脱敏：kw 形式（password=xxx）与 URL 形式
-// （postgres://user:pass@host/db）统一把密码段替换为 ***。
+// validateProductionGuards 生产启动护栏：匿名 dev-token、缺省 DSN、
+// 派生头像签名密钥都只允许开发环境使用。
+func validateProductionGuards(production, injectedDB, devToken bool) error {
+	if !production {
+		return nil
+	}
+	if devToken {
+		return fmt.Errorf("platform -> refuse AM_DEV_ISSUE_TOKEN in production (anonymous token minting is a full auth bypass)")
+	}
+	if !injectedDB && strings.TrimSpace(os.Getenv("DATABASE_URL")) == "" {
+		return fmt.Errorf("platform -> DATABASE_URL is required in production")
+	}
+	if strings.TrimSpace(os.Getenv("AM_AVATAR_SECRET")) == "" {
+		return fmt.Errorf("platform -> AM_AVATAR_SECRET is required in production")
+	}
+	return nil
+}
+
+// redactDSN 数据库连接串脱敏：URL 形式清空 userinfo 密码并脱敏
+// password/sslpassword 查询参数；keyword 形式（password=xxx）正则兜底。
+// 解析失败时整体隐藏，避免以"格式异常"为借口回显明文密码。
 func redactDSN(dsn string) string {
 	if dsn == "" {
 		return ""
 	}
 	if strings.Contains(dsn, "://") {
-		slash := strings.Index(dsn, "//")
-		at := strings.Index(dsn, "@")
-		if slash >= 0 && at > slash+2 {
-			auth := dsn[slash+2 : at]
-			if colon := strings.Index(auth, ":"); colon >= 0 {
-				return dsn[:slash+2+colon+1] + "***" + dsn[at:]
+		u, err := url.Parse(dsn)
+		if err != nil {
+			return "<redacted-dsn>"
+		}
+		const mask = "KAMC_REDACTED"
+		userMasked := false
+		if u.User != nil {
+			if _, hasPassword := u.User.Password(); hasPassword {
+				// 用占位串规避 url 对 * 的转义，输出保持可读的 user:***@host
+				u.User = url.UserPassword(u.User.Username(), mask)
+				userMasked = true
 			}
 		}
-		return dsn
+		query := u.Query()
+		changed := false
+		for key := range query {
+			lk := strings.ToLower(key)
+			if lk == "password" || lk == "sslpassword" || lk == "pass" || lk == "pwd" {
+				query.Set(key, "***")
+				changed = true
+			}
+		}
+		if changed {
+			u.RawQuery = query.Encode()
+		}
+		out := u.String()
+		if userMasked {
+			out = strings.Replace(out, mask, "***", 1)
+		}
+		return out
 	}
-	return regexp.MustCompile(`(password=)[^\s]*`).ReplaceAllString(dsn, "${1}***")
+	re := regexp.MustCompile(`(?i)(password|sslpassword|pwd)\s*=\s*[^\s]*`)
+	return re.ReplaceAllString(dsn, "${1}=***")
 }
 
 // buildAuthService 构造 JWT 服务：JWT_KEYRING_DIR（Secret 挂载，多 kid）优先，

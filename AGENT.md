@@ -68,12 +68,13 @@ web/                 管理前端（React 18 + Ant Design 5 + Vite + TypeScript�
 | `JWT_KEYRING_DIR` | 临时密钥 | JWT 签名密钥环目录（Secret 挂载，*.pem 文件名即 kid；未配置用临时密钥并告警） |
 | `AM_JWT_ISSUER` / `AM_JWT_AUD` | `https://kamc.local` / `kamc` | 平台 JWT iss/aud |
 | `AM_ADMIN_GROUP` | `am:admin` | 管理面用户组（JWT groups 内） |
-| `AM_ENV` | `development` | `production` 时拒绝默认 sysadmin/sysadmin123 启动 |
+| `AM_ENV` | `development` | `production` 时强制 DATABASE_URL/AM_AVATAR_SECRET，并拒绝默认口令与 dev-token |
+| `AM_DEV_ISSUE_TOKEN` | — | 开发直签 Token 开关（`/auth/dev-token`）；`AM_ENV=production` 时启动即失败 |
 | `AM_PASSWORD_LOGIN` | 启用 | 内置账号密码登录开关（`0` 关闭；生产清单默认关闭） |
 | `AM_PASSWORD_LOGIN_USER` | `sysadmin` | 内置管理员账号（生产必须覆盖） |
 | `AM_PASSWORD_LOGIN_PASSWORD` | `sysadmin123` | 内置管理员密码（生产必须覆盖） |
 | `AM_ROBOT_TOKEN_TTL` | `8760h` | Robot 长期 JWT 有效期（Go duration，默认 365 天） |
-| `AM_DEV_ISSUE_TOKEN` | — | 开发直签 Token 开关（`/auth/dev-token`，生产勿开） |
+| `AM_DEV_ISSUE_TOKEN` | — | 开发直签 Token 开关（`/auth/dev-token`）；`AM_ENV=production` 时启动即失败 |
 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_REDIRECT_URL` | — | Authentik OIDC（未配置则 /auth/login 503） |
 | `APISERVER_URL`（Agent） | in-cluster 探测 | 上游 kube-apiserver 显式覆盖（开发/测试） |
 | `PEER_ADDRESSES` | — | 可拨副本列表，逗号分隔（`pod=host:port` 或 `host:port`）；未配置=单副本形态 |
@@ -92,7 +93,7 @@ web/                 管理前端（React 18 + Ant Design 5 + Vite + TypeScript�
 | `AM_SYSLOG_CA_FILE` | 系统根证书 | TLS 模式自定义 CA |
 | `AM_SYSLOG_INSECURE` | off | TLS 模式跳过证书校验（仅开发） |
 | `AM_AVATAR_DIR` | `data/avatar` | 用户头像文件存储目录 |
-| `AM_AVATAR_SECRET` | 派生 | 头像 URL 签名密钥（不配则由部署配置派生，保证重启后 URL 有效） |
+| `AM_AVATAR_SECRET` | 派生 | 头像 URL 签名密钥；**生产必填**（缺失拒绝启动），开发环境由部署配置派生 |
 | `AM_WEB_DIR` | `data/web` | 前端构建产物目录（后端同进程托管页面；不存在则纯 API） |
 | `AM_AGENT_IMAGE_REPO` | `tuf3i/k8s-am-agent` | Agent 镜像仓库完整地址（不含 tag；tag 随平台版本，一键安装清单用） |
 | `TEST_REDIS_ADDR` | — | Redis 集成测试门控（watcher/state store/限流，仅测试用） |

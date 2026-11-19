@@ -54,6 +54,15 @@ metadata:
 stringData:
   token: "__PEER_TOKEN__"
 ---
+# 头像 URL 签名密钥（生产必填，缺失则拒绝启动）：openssl rand -hex 32
+apiVersion: v1
+kind: Secret
+metadata:
+  name: platform-avatar
+  namespace: k8s-am-system
+stringData:
+  secret: "__AVATAR_SECRET__"
+---
 # ── 平台 Deployment ─────────────────────────────────────────────────
 apiVersion: apps/v1
 kind: Deployment
@@ -98,6 +107,7 @@ spec:
         - {name: AM_PEER_ADDR, value: ":9090"}
         - {name: PEER_ADDRESSES, value: "__PEER_ADDRESSES__"}   # am-platform-0=...:9090,am-platform-1=...:9090,am-platform-2=...:9090
         - {name: PEER_TOKEN, valueFrom: {secretKeyRef: {name: peer-token, key: token}}}
+        - {name: AM_AVATAR_SECRET, valueFrom: {secretKeyRef: {name: platform-avatar, key: secret}}}
         - {name: AM_RATE_LIMIT, value: "600"}                   # 每用户每分钟，0=不限
         - {name: AM_AUDIT_SPILL_FILE, value: "/var/lib/kamc/audit-spill.jsonl"}
         - {name: AM_KUBECONFIG_CA_FILE, value: "/etc/k8s-am/ca/tls.crt"}   # 可选：平台 CA

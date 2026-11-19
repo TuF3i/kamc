@@ -33,7 +33,7 @@ make image-agent VERSION=v1.0.0
 | 位置 | 占位符 | 说明 |
 | --- | --- | --- |
 | nginx.conf | `__AM_DOMAIN__` `__AM_CERT__` `__AM_KEY__` `__PLATFORM_ENDPOINTS__` | 域名/证书/平台副本地址 |
-| platform | `__IMAGE__` `__PG_DSN__` `__REDIS_ADDR__` `__OIDC_*__` `__DOMAIN__` `__PEER_ADDRESSES__` `__PEER_TOKEN__` `__JWT1_PEM_BASE64__` | 见文件头注释 |
+| platform | `__IMAGE__` `__PG_DSN__` `__REDIS_ADDR__` `__OIDC_*__` `__DOMAIN__` `__PEER_ADDRESSES__` `__PEER_TOKEN__` `__JWT1_PEM_BASE64__` `__AVATAR_SECRET__` | 见文件头注释 |
 | agent | `__IMAGE__` `__PLATFORM_URL__` `__AGENT_TOKEN__` `__CLUSTER_ID__` | Token 经平台签发 |
 
 密钥生成：
@@ -41,8 +41,12 @@ make image-agent VERSION=v1.0.0
 ```bash
 openssl genrsa -out jwt-1.pem 2048          # JWT 签名密钥（kid=jwt-1）
 openssl rand -hex 32                        # PEER_TOKEN
+openssl rand -hex 32                        # AVATAR_SECRET（生产必填）
 base64 -w0 jwt-1.pem                        # __JWT1_PEM_BASE64__
 ```
+
+> `AM_ENV=production` 时平台强制要求 `DATABASE_URL` 与 `AM_AVATAR_SECRET`，
+> 且拒绝 `AM_DEV_ISSUE_TOKEN=1`（匿名签发任意身份）。
 
 ## 部署顺序（§11.4）
 

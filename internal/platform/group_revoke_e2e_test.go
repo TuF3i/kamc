@@ -39,7 +39,7 @@ func TestGroupChangeRevokesToken(t *testing.T) {
 	if ar.Status != errcode.CodeSuccess {
 		t.Fatalf("remove member: http=%d body=%+v", resp.StatusCode, ar)
 	}
-	if resp, _ := call(t, rt, http.MethodGet, "/auth/me", nil, userToken); resp.StatusCode != http.StatusUnauthorized {
+	if resp := callRaw(t, rt, http.MethodGet, "/auth/me", userToken); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("token after removal: want 401, got %d", resp.StatusCode)
 	}
 
@@ -57,7 +57,7 @@ func TestGroupChangeRevokesToken(t *testing.T) {
 	if ar.Status != errcode.CodeSuccess {
 		t.Fatalf("delete group: http=%d body=%+v", resp.StatusCode, ar)
 	}
-	if resp, _ := call(t, rt, http.MethodGet, "/auth/me", nil, freshToken); resp.StatusCode != http.StatusUnauthorized {
+	if resp := callRaw(t, rt, http.MethodGet, "/auth/me", freshToken); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("token after delete group: want 401, got %d", resp.StatusCode)
 	}
 }
