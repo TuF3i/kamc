@@ -6,6 +6,7 @@ package handler
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,6 +17,29 @@ import (
 	"github.com/TuF3i/kamc/internal/platform/middleware"
 	"github.com/TuF3i/kamc/internal/platform/service"
 )
+
+// revokeUserTokens 权限相关变更后吊销用户已签发 JWT（旧 claims 立即失效）。
+// 测试装配可能没有 auth 服务：此时跳过。
+func (h *Handler) revokeUserTokens(r *http.Request, username string) error {
+	if h.auth == nil || username == "" {
+		return nil
+	}
+	return h.auth.RevokeUser(r.Context(), username)
+}
+
+// groupMembers 查询组成员；组不存在返回 ErrGroupNotFound。
+func (h *Handler) groupMembers(r *http.Request, name string) ([]string, *errcode.Response) {
+	groups, rsp := h.svc.ListGroups(r.Context())
+	if rsp != nil {
+		return nil, rsp
+	}
+	for _, g := range groups {
+		if g.Name == name {
+			return g.Members, nil
+		}
+	}
+	return nil, errcode.ErrGroupNotFound
+}
 
 // GetProfile GET /api/v1/profile —— 当前登录用户的平台资料（自服务，仅需 JWT）。
 // JWT 只承载身份与组，头像/昵称等展示字段由本接口读取，避免改资料要重新登录。
@@ -54,8 +78,21 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
 		return
 	}
-	data, rsp := h.svc.UpdateUser(r.Context(), chi.URLParam(r, "username"), &req)
-	h.auditPlatform(r, "user-update", chi.URLParam(r, "username"), "", "/api/v1/users/"+chi.URLParam(r, "username"), errcode.IsSuccess(rsp), "update")
+	username := chi.URLParam(r, "username")
+	// groups 字段出现即视为权限变更：先吊销旧 Token 再改库（fail-closed）。
+	groupsChanged := req.Groups != nil
+	if groupsChanged {
+		if err := h.revokeUserTokens(r, username); err != nil {
+			errcode.GenFinalResponse(w, nil, errcode.ServerInternal(err))
+			return
+		}
+	}
+	data, rsp := h.svc.UpdateUser(r.Context(), username, &req)
+	reason := "update"
+	if groupsChanged {
+		reason = "update+revoke"
+	}
+	h.auditPlatform(r, "user-update", username, "", "/api/v1/users/"+username, errcode.IsSuccess(rsp), reason)
 	errcode.GenFinalResponse(w, data, rsp)
 }
 
@@ -107,8 +144,30 @@ func (h *Handler) UpdateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "name")
+	// 改名或管理员标记变化都会影响 JWT 内的组声明：成功后吊销全部成员。
+	needsRevoke := (req.Name != nil && *req.Name != "" && *req.Name != name) || req.IsAdmin != nil
+	var members []string
+	if needsRevoke {
+		list, rsp := h.groupMembers(r, name)
+		if rsp != nil {
+			errcode.GenFinalResponse(w, nil, rsp)
+			return
+		}
+		members = list
+	}
 	data, rsp := h.svc.UpdateGroup(r.Context(), name, &req)
-	h.auditPlatform(r, "group-update", "", "", "/api/v1/groups/"+name, errcode.IsSuccess(rsp), "update")
+	if errcode.IsSuccess(rsp) && needsRevoke {
+		for _, username := range members {
+			if err := h.revokeUserTokens(r, username); err != nil {
+				log.Printf("[platform] revoke after group update %s/%s: %v", name, username, err)
+			}
+		}
+	}
+	reason := "update"
+	if needsRevoke {
+		reason = "update+revoke"
+	}
+	h.auditPlatform(r, "group-update", "", "", "/api/v1/groups/"+name, errcode.IsSuccess(rsp), reason)
 	errcode.GenFinalResponse(w, data, rsp)
 }
 
@@ -123,6 +182,12 @@ func (h *Handler) AddGroupMember(w http.ResponseWriter, r *http.Request) {
 	}
 	name := chi.URLParam(r, "name")
 	rsp := h.svc.AddGroupMember(r.Context(), name, req.Username)
+	// 加组后吊销：新组声明（尤其 is_admin）下次登录立即生效。
+	if errcode.IsSuccess(rsp) {
+		if err := h.revokeUserTokens(r, req.Username); err != nil {
+			log.Printf("[platform] revoke after group add %s/%s: %v", name, req.Username, err)
+		}
+	}
 	h.auditPlatform(r, "group-member-add", req.Username, "", "/api/v1/groups/"+name+"/members", errcode.IsSuccess(rsp), req.Username)
 	errcode.GenFinalResponse(w, nil, rsp)
 }
@@ -131,15 +196,34 @@ func (h *Handler) AddGroupMember(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) RemoveGroupMember(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	username := chi.URLParam(r, "username")
+	// 先吊销再改库：失败则不改，避免"已移出组但 Token 仍是旧权限"。
+	if err := h.revokeUserTokens(r, username); err != nil {
+		errcode.GenFinalResponse(w, nil, errcode.ServerInternal(err))
+		return
+	}
 	rsp := h.svc.RemoveGroupMember(r.Context(), name, username)
-	h.auditPlatform(r, "group-member-remove", username, "", "/api/v1/groups/"+name+"/members/"+username, errcode.IsSuccess(rsp), username)
+	h.auditPlatform(r, "group-member-remove", username, "", "/api/v1/groups/"+name+"/members/"+username, errcode.IsSuccess(rsp), username+"+revoke")
 	errcode.GenFinalResponse(w, nil, rsp)
 }
 
 // DeleteGroup DELETE /api/v1/groups/{name}
 func (h *Handler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
-	rsp := h.svc.DeleteGroup(r.Context(), chi.URLParam(r, "name"))
-	h.auditPlatform(r, "group-delete", "", "", "/api/v1/groups/"+chi.URLParam(r, "name"), errcode.IsSuccess(rsp), "delete")
+	name := chi.URLParam(r, "name")
+	members, rsp := h.groupMembers(r, name)
+	if rsp != nil {
+		errcode.GenFinalResponse(w, nil, rsp)
+		return
+	}
+	// 删组会移除成员组归属与 org 策略：先吊销全部成员 Token。
+	for _, username := range members {
+		if err := h.revokeUserTokens(r, username); err != nil {
+			errcode.GenFinalResponse(w, nil, errcode.ServerInternal(err))
+			return
+		}
+	}
+	rsp = h.svc.DeleteGroup(r.Context(), name)
+	reason := "delete+revoke"
+	h.auditPlatform(r, "group-delete", "", "", "/api/v1/groups/"+name, errcode.IsSuccess(rsp), reason)
 	errcode.GenFinalResponse(w, nil, rsp)
 }
 

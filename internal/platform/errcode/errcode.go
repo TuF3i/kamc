@@ -2,7 +2,7 @@
 //
 // 约定：
 //   - 业务错误 = 本包包级 var（不可变共享，判定用 errors.Is 指针相等），不是构造调用；
-//   - 系统错误 = ServerInternal(err) 构造，携带底层详情，仅在出口层使用；
+//   - 系统错误 = ServerInternal(err) 构造，底层详情只进服务端日志，响应为通用文案；
 //   - 层间方法签名 (data, rsp) 元组，错误原样上抛不包装；
 //   - handler 统一出口 GenFinalResponse：HTTP 恒 200（系统错误 500），业务码在 status 字段。
 //
@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 )
 
@@ -75,9 +76,13 @@ var (
 	ErrAuthScriptNotFound = &Response{Status: CodeAuthScriptNotFound, Message: "script not found"}
 )
 
-// ServerInternal 系统内部错误：携带底层 err 详情，仅 handler 出口构造
+// ServerInternal 系统内部错误：完整错误只写服务端日志，响应返回通用文案
+// （DAO 错误含表名/SQL/驱动细节，不能回给客户端）。
 func ServerInternal(err error) *Response {
-	return &Response{Status: CodeServerInternal, Message: "internal error: " + err.Error()}
+	if err != nil {
+		log.Printf("[platform] internal error: %v", err)
+	}
+	return &Response{Status: CodeServerInternal, Message: "internal error"}
 }
 
 // IsSuccess 判定是否成功响应。nil = 成功（层间约定成功时返回 nil rsp，

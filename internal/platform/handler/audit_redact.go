@@ -21,8 +21,28 @@ var auditSensitiveQuery = map[string]bool{
 	"authorization": true,
 }
 
+// auditSensitiveSubstrings 兜底匹配：未列入白名单但含这些子串的参数也脱敏
+// （厂商自定义鉴权参数：x-amz-security-token、signature、key 等）。
+var auditSensitiveSubstrings = []string{
+	"token", "secret", "pass", "key", "sig", "auth", "credential",
+}
+
+func isSensitiveQueryKey(key string) bool {
+	k := strings.ToLower(key)
+	if auditSensitiveQuery[k] {
+		return true
+	}
+	for _, sub := range auditSensitiveSubstrings {
+		if strings.Contains(k, sub) {
+			return true
+		}
+	}
+	return false
+}
+
 // redactAuditURI 对 URI 的 query 做密钥脱敏，保留路径与其余参数。
 // 用于审计 path 与请求报文起始行，避免 access_token 等凭证进入 DB/syslog。
+// 解析失败时 fail-closed：丢弃整个 query（畸形编码不能成为绕过脱敏的通道）。
 func redactAuditURI(raw string) string {
 	if raw == "" {
 		return raw
@@ -33,11 +53,11 @@ func redactAuditURI(raw string) string {
 	}
 	values, err := url.ParseQuery(query)
 	if err != nil {
-		return raw
+		return path + "?<redacted>"
 	}
 	changed := false
 	for key := range values {
-		if auditSensitiveQuery[strings.ToLower(key)] {
+		if isSensitiveQueryKey(key) {
 			values.Set(key, "***")
 			changed = true
 		}

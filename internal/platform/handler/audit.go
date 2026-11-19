@@ -145,7 +145,7 @@ func (h *Handler) auditPlatform(r *http.Request, event, user, cluster, path stri
 	} else if claims, ok := middleware.ClaimsFromCtx(r.Context()); ok {
 		groupList = claims.Groups
 	}
-	h.audit.Log(&modules.AuditEvent{
+	h.audit.Log(capAuditEvent(&modules.AuditEvent{
 		Kind:         modules.AuditKindPlatform,
 		Event:        event,
 		Timestamp:    time.Now(),
@@ -162,7 +162,7 @@ func (h *Handler) auditPlatform(r *http.Request, event, user, cluster, path stri
 		GeoCountry:   m.GeoCountry,
 		GeoRegion:    m.GeoRegion,
 		GeoCity:      m.GeoCity,
-	})
+	}))
 }
 
 // clusterEvent 组装集群操作事件（kind=cluster；调用方填细节后 auditCluster）。
@@ -211,7 +211,31 @@ func (h *Handler) auditCluster(ev *modules.AuditEvent) {
 	if h.audit == nil || ev == nil {
 		return
 	}
-	h.audit.Log(ev)
+	h.audit.Log(capAuditEvent(ev))
+}
+
+// capAuditEvent 按列宽限制审计字段：varchar 超长会让整批 INSERT 失败，
+// 攻击者可用超长 Path 让审计链路持续退化（审计逃逸）。
+func capAuditEvent(ev *modules.AuditEvent) *modules.AuditEvent {
+	if ev == nil {
+		return nil
+	}
+	ev.Event = truncate(ev.Event, 64)
+	ev.User = truncate(ev.User, 128)
+	ev.Groups = truncate(ev.Groups, 1024)
+	ev.Cluster = truncate(ev.Cluster, 64)
+	ev.Method = truncate(ev.Method, 8)
+	ev.Path = truncate(ev.Path, 1024)
+	ev.Object = truncate(ev.Object, 1024)
+	ev.Verb = truncate(ev.Verb, 32)
+	ev.Reason = truncate(ev.Reason, 128)
+	ev.SourceIP = truncate(ev.SourceIP, 64)
+	ev.ForwardedFor = truncate(ev.ForwardedFor, 512)
+	ev.UserAgent = truncate(ev.UserAgent, 512)
+	ev.GeoCountry = truncate(ev.GeoCountry, 8)
+	ev.GeoRegion = truncate(ev.GeoRegion, 128)
+	ev.GeoCity = truncate(ev.GeoCity, 128)
+	return ev
 }
 
 // ── HTTP 报文捕获与格式化 ──
@@ -420,10 +444,14 @@ func (w *captureWriter) Dump() string {
 // Status 返回响应状态码
 func (w *captureWriter) Status() int { return w.status }
 
-// truncate 字符串截断（按字节，用于头部值）
+// truncate 按字符（rune）截断，避免劈开 UTF-8；PG varchar 按字符计长。
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	if n <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= n {
 		return s
 	}
-	return s[:n]
+	return string(runes[:n])
 }
