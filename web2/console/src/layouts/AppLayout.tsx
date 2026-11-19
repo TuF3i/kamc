@@ -122,11 +122,8 @@ export function AppLayout(props: { children?: JSX.Element }) {
             </div>
           </div>
           <div class="menu-sep" />
-          <div class="flex items-center justify-between gap-3 px-2 py-2">
-            <span class="text-xs text-layer-content/50">主题</span>
-            <div class="w-28">
-              <ThemeToggle />
-            </div>
+          <div class="px-2 py-2">
+            <ThemeToggle />
           </div>
           <div class="menu-sep" />
           <button
