@@ -3,7 +3,7 @@ package handler
 import (
 	"log"
 	"net/http"
-	"os"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -59,7 +59,7 @@ func (h *Handler) GetKubeconfig(w http.ResponseWriter, r *http.Request) {
 	data, rsp := h.svc.GenerateKubeconfig(r.Context(), service.KubeconfigParams{
 		ClusterID:    clusterID,
 		Mode:         mode,
-		ExternalURL:  externalURL(r),
+		ExternalURL:  h.externalURL(r),
 		CallerToken:  callerToken,
 		CallerSub:    claims.Subject,
 		CAData:       h.caData,
@@ -89,10 +89,10 @@ func (h *Handler) claimsAdmin(groups []string) bool {
 	return false
 }
 
-// externalURL 平台对外地址：AM_EXTERNAL_URL 显式优先；否则经
-// X-Forwarded-Proto（Nginx 设置，§10.1）+ 请求 Host 推导。
-func externalURL(r *http.Request) string {
-	if v := os.Getenv("AM_EXTERNAL_URL"); v != "" {
+// externalURL 平台对外地址：配置（AM_EXTERNAL_URL / 配置文件）显式优先；
+// 否则经 X-Forwarded-Proto（Nginx 设置，§10.1）+ 请求 Host 推导。
+func (h *Handler) externalURL(r *http.Request) string {
+	if v := strings.TrimSpace(h.settings.ExternalURL); v != "" {
 		return v
 	}
 	scheme := "http"

@@ -1,7 +1,8 @@
-// kamc-agent Agent 入口：装载环境变量配置，启动拨出连接循环，信号触发优雅断开。
+// kamc-agent Agent 入口：装载配置（环境变量/配置文件），启动拨出连接循环，信号触发优雅断开。
 package main
 
 import (
+	"flag"
 	"log"
 	"os"
 	"os/signal"
@@ -11,7 +12,14 @@ import (
 )
 
 func main() {
-	rt, err := agent.CreateRuntime()
+	configPath := flag.String("config", "", "配置文件路径（默认 AM_CONFIG_FILE，或 ./kamc-agent.yaml）")
+	flag.Parse()
+
+	cfg, err := agent.LoadConfig(*configPath)
+	if err != nil {
+		log.Fatalf("[agent] 配置装载失败: %v", err)
+	}
+	rt, err := agent.CreateRuntime(agent.WithConfig(cfg))
 	if err != nil {
 		log.Fatalf("[agent] 初始化失败: %v", err)
 	}

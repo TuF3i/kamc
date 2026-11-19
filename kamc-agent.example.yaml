@@ -1,0 +1,27 @@
+# kamc Agent 配置示例（Viper）
+#
+# 使用方式（优先级：环境变量 > 本文件 > 默认值）：
+#   cp kamc-agent.example.yaml kamc-agent.yaml
+#   ./bin/kamc-agent -config=/etc/kamc/kamc-agent.yaml
+#   AM_CONFIG_FILE=/etc/kamc/kamc-agent.yaml ./bin/kamc-agent
+#
+# 环境变量名与旧版本一致（PLATFORM_URL / CLUSTER_ID / TOKEN_FILE …）。
+
+agent:
+  # 平台隧道入口（必须从本集群可达）
+  platform_url: wss://kamc.example.com/tunnel
+  # 平台注册集群时的集群 ID（dom）
+  cluster_id: prod-bj
+  # 本实例标识；留空使用 hostname（K8s 内即 Pod 名，双副本天然不同）
+  id: ""
+  # 平台签发的 Agent Token 文件（Secret 挂载）
+  token_file: /etc/k8s-am/token/token
+  heartbeat_ping_interval: 20s
+  backoff_base: 1s
+  backoff_max: 30s
+  # 开发/自签证书时跳过平台 TLS 校验；生产保持 false
+  platform_insecure: false
+  # 上游 kube-apiserver（默认探测 in-cluster SA）
+  apiserver_url: ""
+  sa_ca_file: ""
+  sa_token_file: ""

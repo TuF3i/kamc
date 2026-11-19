@@ -42,9 +42,27 @@ type Syslog struct {
 	conn net.Conn
 }
 
-// NewSyslogFromEnv 按 AM_SYSLOG_ADDR 装配（未配置返回 nil）。
+// SyslogConfig syslog 导出配置（装配层经 Viper 装载）。
+type SyslogConfig struct {
+	Addr     string // udp://host:514、tcp://host:514、tls://host:6514（空=不导出）
+	Tag      string // 应用名，默认 kamc-cluster-audit
+	CAFile   string // tls 模式可选 CA
+	Insecure bool   // tls 模式跳过证书校验（仅开发）
+}
+
+// NewSyslogFromEnv 按环境变量装配（兼容旧调用；未配置返回 nil）。
 func NewSyslogFromEnv() *Syslog {
-	raw := strings.TrimSpace(os.Getenv("AM_SYSLOG_ADDR"))
+	return NewSyslog(SyslogConfig{
+		Addr:     os.Getenv("AM_SYSLOG_ADDR"),
+		Tag:      os.Getenv("AM_SYSLOG_TAG"),
+		CAFile:   os.Getenv("AM_SYSLOG_CA_FILE"),
+		Insecure: os.Getenv("AM_SYSLOG_INSECURE") == "1",
+	})
+}
+
+// NewSyslog 按配置装配（Addr 为空返回 nil）。
+func NewSyslog(cfg SyslogConfig) *Syslog {
+	raw := strings.TrimSpace(cfg.Addr)
 	if raw == "" {
 		return nil
 	}
@@ -56,7 +74,7 @@ func NewSyslogFromEnv() *Syslog {
 	if network != "udp" && network != "tcp" && network != "tls" {
 		return nil
 	}
-	tag := os.Getenv("AM_SYSLOG_TAG")
+	tag := strings.TrimSpace(cfg.Tag)
 	if tag == "" {
 		tag = "kamc-cluster-audit"
 	}
@@ -64,10 +82,10 @@ func NewSyslogFromEnv() *Syslog {
 	if host == "" {
 		host = "-"
 	}
-	cfg := &Syslog{network: network, addr: addr, tag: tag, host: host}
+	sink := &Syslog{network: network, addr: addr, tag: tag, host: host}
 	if network == "tls" {
 		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
-		if caFile := strings.TrimSpace(os.Getenv("AM_SYSLOG_CA_FILE")); caFile != "" {
+		if caFile := strings.TrimSpace(cfg.CAFile); caFile != "" {
 			pem, err := os.ReadFile(caFile)
 			if err != nil {
 				return nil
@@ -78,12 +96,12 @@ func NewSyslogFromEnv() *Syslog {
 			}
 			tlsCfg.RootCAs = pool
 		}
-		if os.Getenv("AM_SYSLOG_INSECURE") == "1" {
+		if cfg.Insecure {
 			tlsCfg.InsecureSkipVerify = true
 		}
-		cfg.tlsConf = tlsCfg
+		sink.tlsConf = tlsCfg
 	}
-	return cfg
+	return sink
 }
 
 // Failed 累计发送失败次数

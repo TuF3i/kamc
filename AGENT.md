@@ -51,6 +51,18 @@ web/                 管理前端（React 18 + Ant Design 5 + Vite + TypeScript�
 7. **注释与命名**：注释统一中文；导出符号必有注释；日志带 `[模块名]` 前缀且只记一次性事件；常量**必须带类型**；构造 `NewXxx`、选项 `WithXxx`、幂等初始化 `SetupXxx`、sentinel `ErrXxx`。
 8. **测试**：与被测包同目录；数据库用例用 `TEST_PG_DSN` 环境变量门控（未设置则 `t.Skip`）；所有等待带超时；提交前 `go build ./... && go vet ./... && go test -count=1 ./...`。
 
+## 配置管理（Viper）
+
+平台与 Agent 的配置由 Viper 装载，优先级：**环境变量 > 配置文件 > 默认值**。
+
+- 配置文件：`-config=/path/to/kamc.yaml` 或 `AM_CONFIG_FILE`；未指定时在当前目录
+  与 `/etc/kamc` 搜索 `kamc.yaml`（Agent 为 `kamc-agent.yaml`）。
+- 环境变量名与旧版本完全一致（见下表），现有部署清单/Helm 不需要改动。
+- 示例：仓库根目录 `kamc.example.yaml` 与 `kamc-agent.example.yaml`；时长使用
+  Go duration 字符串（`30s`、`720h`、`0`）。
+- 测试与嵌入式场景可调用 `platform.LoadConfig(path)` / `agent.LoadConfig(path)`
+  后经 `WithConfig` 注入，避免重复读环境。
+
 ## 环境变量
 
 | 变量 | 默认 | 说明 |
@@ -74,7 +86,6 @@ web/                 管理前端（React 18 + Ant Design 5 + Vite + TypeScript�
 | `AM_PASSWORD_LOGIN_USER` | `sysadmin` | 内置管理员账号（生产必须覆盖） |
 | `AM_PASSWORD_LOGIN_PASSWORD` | `sysadmin123` | 内置管理员密码（生产必须覆盖） |
 | `AM_ROBOT_TOKEN_TTL` | `8760h` | Robot 长期 JWT 有效期（Go duration，默认 365 天） |
-| `AM_DEV_ISSUE_TOKEN` | — | 开发直签 Token 开关（`/auth/dev-token`）；`AM_ENV=production` 时启动即失败 |
 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_REDIRECT_URL` | — | Authentik OIDC（未配置则 /auth/login 503） |
 | `APISERVER_URL`（Agent） | in-cluster 探测 | 上游 kube-apiserver 显式覆盖（开发/测试） |
 | `PEER_ADDRESSES` | — | 可拨副本列表，逗号分隔（`pod=host:port` 或 `host:port`）；未配置=单副本形态 |

@@ -1,0 +1,98 @@
+# kamc 平台配置示例（Viper）
+#
+# 使用方式（优先级：环境变量 > 本文件 > 默认值）：
+#   cp kamc.example.yaml kamc.yaml          # 放在工作目录，平台会自动加载
+#   ./bin/kamc-platform -config=/etc/kamc/kamc.yaml
+#   AM_CONFIG_FILE=/etc/kamc/kamc.yaml ./bin/kamc-platform
+#
+# 环境变量名与旧版本完全一致（AM_* / DATABASE_URL / OIDC_* …），
+# 同一键同时存在时环境变量优先。时长使用 Go duration 字符串（30s、720h、0）。
+
+server:
+  listen_addr: ":8080"
+  env: production                  # production 触发安全护栏（见 AGENT.md）
+  external_url: https://kamc.example.com
+
+database:
+  url: "postgres://kamc:CHANGE_ME@postgres:5432/kamc?sslmode=require"
+
+redis:
+  # 数组或逗号分隔字符串均可；为空则单副本语义（隧道模块不启用）
+  addresses:
+    - redis:6379
+  password: ""
+  db: 0
+
+jwt:
+  issuer: https://kamc.example.com
+  audience: kamc
+  keyring_dir: /etc/k8s-am/jwt    # 目录下 *.pem，文件名即 kid
+
+auth:
+  admin_group: am:admin
+  password_login:
+    enabled: false                # 生产推荐 OIDC/LDAP
+    user: sysadmin
+    password: ""
+  dev_token: false                # 生产禁止 true（平台拒绝启动）
+
+oidc:
+  issuer: https://sso.example.com/application/o/kamc/
+  client_id: kamc
+  client_secret: ""
+  redirect_url: https://kamc.example.com/auth/callback
+
+# LDAP 未配置（url/base_dn 为空）时 /auth/ldap-login 返回 503
+ldap:
+  url: ""
+  bind_dn: ""
+  bind_password: ""
+  base_dn: ""
+  user_filter: "(uid=%s)"
+  username_attr: uid
+  email_attr: mail
+  nickname_attr: cn
+  group_filter: "(member=%s)"
+  group_attr: cn
+  insecure_skip_verify: false
+
+tunnel:
+  pod_id: ""                      # 空则使用 hostname（K8s 内即 Pod 名）
+  ttl: 15s
+  interval: 5s
+  peer:
+    addr: ":9090"
+    token: ""
+    addresses: ""                 # 多副本填 a:9090,b:9090；空=不启用跨 Pod 转发
+
+audit:
+  spill_file: /var/lib/kamc/audit-spill.jsonl
+  retention: 720h                 # 0 = 关闭保留期清理
+  syslog:
+    addr: ""                      # udp://host:514 / tcp:// / tls://
+    tag: kamc-cluster-audit
+    ca_file: ""
+    insecure: false
+
+geoip:
+  db: ""                          # MaxMind .mmdb 路径（空=不解析地理信息）
+
+avatar:
+  dir: /data/avatar
+  secret: ""                      # 生产必填（缺失拒绝启动）
+
+rate_limit:
+  proxy: 600                      # 每用户每分钟数据面请求数，0=不限
+  login: 30                       # 登录尝试/分钟/IP
+
+robot:
+  token_ttl: 8760h
+
+kubeconfig:
+  ca_file: ""                     # 平台对外 TLS CA（嵌入 kubeconfig）
+
+agent:
+  image_repo: tuf3i/k8s-am-agent  # 一键安装清单使用的镜像仓库（不含 tag）
+
+web:
+  dir: /app/web                   # 前端产物目录（空/不存在时纯 API）

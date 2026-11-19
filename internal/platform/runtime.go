@@ -21,7 +21,6 @@ import (
 	"net/url"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -41,7 +40,6 @@ import (
 	"github.com/TuF3i/kamc/internal/platform/errcode"
 	"github.com/TuF3i/kamc/internal/platform/geoip"
 	"github.com/TuF3i/kamc/internal/platform/handler"
-	ldapclient "github.com/TuF3i/kamc/internal/platform/ldapclient"
 	"github.com/TuF3i/kamc/internal/platform/luaauth"
 	mw "github.com/TuF3i/kamc/internal/platform/middleware"
 	"github.com/TuF3i/kamc/internal/platform/modules"
@@ -51,18 +49,6 @@ import (
 	"github.com/TuF3i/kamc/internal/platform/webstatic"
 	"github.com/TuF3i/kamc/internal/tunnel"
 )
-
-// Config 平台运行配置（环境变量装载）
-type Config struct {
-	Addr string // HTTP 监听地址
-}
-
-// LoadConfig 从环境变量装载配置（缺失取默认值，必填项的校验在 CreateRuntime 的依赖构建中体现）
-func LoadConfig() Config {
-	return Config{
-		Addr: envDefault("AM_LISTEN_ADDR", ":8080"),
-	}
-}
 
 // Service 服务类型别名: 供其他模块经本包引用
 type Service = service.Service
@@ -92,6 +78,8 @@ type options struct {
 	db      *gorm.DB
 	addr    string
 	tunnels *tunnel.Runtime
+	cfg     Config
+	cfgSet  bool
 }
 
 // WithDB 注入已有数据库连接 (不注入则使用 infrastructure 默认连接并自持)
@@ -99,9 +87,14 @@ func WithDB(db *gorm.DB) Option {
 	return func(o *options) { o.db = db }
 }
 
-// WithAddr 指定 HTTP 监听地址 (默认 :8080)
+// WithAddr 指定 HTTP 监听地址（覆盖配置文件的 server.listen_addr）
 func WithAddr(addr string) Option {
 	return func(o *options) { o.addr = addr }
+}
+
+// WithConfig 注入已装载的配置（测试/自定义装载路径；不注入则 CreateRuntime 自行装载）
+func WithConfig(cfg Config) Option {
+	return func(o *options) { o.cfg, o.cfgSet = cfg, true }
 }
 
 // WithTunnels 注入隧道模块运行时（可选；未注入时仅无隧道依赖的功能可用）
@@ -115,14 +108,25 @@ var defaultRuntime *Runtime
 // CreateRuntime 装配模块:
 // 数据库连接 (可注入) → Dao → 建表 → Service → Handler → 路由 → HTTP 服务启动。
 func CreateRuntime(opts ...Option) (*Runtime, error) {
-	o := &options{addr: ":8080"}
+	o := &options{}
 	for _, opt := range opts {
 		opt(o)
 	}
 
-	production := strings.EqualFold(strings.TrimSpace(os.Getenv("AM_ENV")), "production")
-	devTokenEnabled := os.Getenv("AM_DEV_ISSUE_TOKEN") == "1"
-	if err := validateProductionGuards(production, o.db != nil, devTokenEnabled); err != nil {
+	cfg := o.cfg
+	if !o.cfgSet {
+		var err error
+		cfg, err = LoadConfig()
+		if err != nil {
+			return nil, err
+		}
+	}
+	if o.addr != "" {
+		cfg.ListenAddr = o.addr
+	}
+
+	production := strings.EqualFold(strings.TrimSpace(cfg.Env), "production")
+	if err := validateProductionGuards(production, o.db != nil, cfg.DevToken, cfg.DatabaseURL, cfg.AvatarSecret); err != nil {
 		return nil, err
 	}
 
@@ -131,7 +135,7 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	ownDB := false
 	if db == nil {
 		var err error
-		db, err = postgres.NewPostgresClient()
+		db, err = postgres.NewPostgresClient(postgres.WithDSN(cfg.DatabaseURL))
 		if err != nil {
 			return nil, fmt.Errorf("platform -> connect postgres: %w", err)
 		}
@@ -167,8 +171,11 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	// Redis 客户端（配置存在时）：策略同步 watcher 与 Token 吊销共用；
 	// 归 Runtime 所有（Release 关闭）。未配置 = 单副本语义（无跨副本同步）。
 	var sharedRedisCli goredis.UniversalClient
-	if os.Getenv("REDIS_ADDRESSES") != "" || os.Getenv("REDIS_ADDR") != "" {
-		cli, err := redis.NewRedisClient()
+	if len(cfg.Tunnel.RedisAddrs) > 0 {
+		cli, err := redis.NewRedisClient(
+			redis.WithAddrs(cfg.Tunnel.RedisAddrs...),
+			redis.WithAuth(cfg.Tunnel.RedisPassword, cfg.Tunnel.RedisDB),
+		)
 		if err != nil {
 			return nil, fmt.Errorf("platform -> connect redis: %w", err)
 		}
@@ -183,7 +190,7 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		return nil, fmt.Errorf("platform -> build authz: %w", err)
 	}
 	svc := service.NewService(d, authzEn)
-	svc.SetAdminGroup(envDefault("AM_ADMIN_GROUP", "am:admin"))
+	svc.SetAdminGroup(cfg.AdminGroup)
 
 	// 认证服务：密钥环（Secret 挂载）或开发环境临时密钥（重启失效，打警告）；
 	// Token 吊销：Redis 可用时跨副本同步（惰性周期拉取，鉴权热路径只查本地
@@ -192,7 +199,7 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	if sharedRedisCli != nil {
 		revStore = auth.NewRedisRevocations(sharedRedisCli)
 	}
-	authSvc, err := buildAuthService(revStore)
+	authSvc, err := buildAuthService(revStore, cfg)
 	if err != nil {
 		if sharedRedisCli != nil {
 			_ = sharedRedisCli.Close()
@@ -207,10 +214,10 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		oidcOpts = append(oidcOpts, oidc.WithStateStore(oidc.NewRedisStateStore(sharedRedisCli)))
 	}
 	oidcClient, err := oidc.New(oidc.Config{
-		Issuer:       os.Getenv("OIDC_ISSUER"),
-		ClientID:     os.Getenv("OIDC_CLIENT_ID"),
-		ClientSecret: os.Getenv("OIDC_CLIENT_SECRET"),
-		RedirectURL:  os.Getenv("OIDC_REDIRECT_URL"),
+		Issuer:       cfg.OIDCIssuer,
+		ClientID:     cfg.OIDCClientID,
+		ClientSecret: cfg.OIDCClientSecret,
+		RedirectURL:  cfg.OIDCRedirectURL,
 	}, oidcOpts...)
 	if err != nil && !errors.Is(err, oidc.ErrNotConfigured) {
 		return nil, fmt.Errorf("platform -> build oidc: %w", err)
@@ -225,30 +232,25 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 
 	// 头像存储：AM_AVATAR_DIR 目录 + URL 签名密钥（生产必须显式配置；
 	// 开发环境未配置时由部署配置派生，保证重启后已入库的头像 URL 仍然有效）
-	avatarDir := envDefault("AM_AVATAR_DIR", "data/avatar")
+	avatarDir := cfg.AvatarDir
 	if err := os.MkdirAll(avatarDir, 0o755); err != nil {
 		return nil, fmt.Errorf("platform -> create avatar dir: %w", err)
 	}
-	avatarSecret := strings.TrimSpace(os.Getenv("AM_AVATAR_SECRET"))
+	avatarSecret := strings.TrimSpace(cfg.AvatarSecret)
 	if avatarSecret == "" {
-		dbURL := os.Getenv("DATABASE_URL")
+		dbURL := cfg.DatabaseURL
 		if dbURL == "" {
 			dbURL = postgres.DefaultDSN
 		}
-		sum := sha256.Sum256([]byte("kamc-avatar|" + os.Getenv("AM_JWT_ISSUER") + "|" + dbURL))
+		sum := sha256.Sum256([]byte("kamc-avatar|" + cfg.JWTIssuer + "|" + dbURL))
 		avatarSecret = hex.EncodeToString(sum[:])
 		log.Printf("[platform] WARNING: AM_AVATAR_SECRET 未配置，使用派生签名密钥（仅限开发；生产拒绝启动）")
 	}
 
 	// LDAP 登录（LDAP_URL 未配置 = /auth/ldap-login 503）
-	var ldapCfg *ldapclient.Config
-	if os.Getenv("LDAP_URL") != "" {
-		ldapCfg = ldapclient.FromEnv()
-		if ldapCfg == nil {
-			log.Printf("[platform] LDAP_URL 已设置但缺少 LDAP_BASE_DN，LDAP 登录未启用")
-		} else {
-			log.Printf("[platform] LDAP login enabled (%s)", ldapCfg.URL)
-		}
+	ldapCfg := cfg.LDAP
+	if ldapCfg != nil {
+		log.Printf("[platform] LDAP login enabled (%s)", ldapCfg.URL)
 	}
 
 	// 登录期映射脚本引擎（gopher-lua 沙箱；fail-closed）
@@ -256,7 +258,7 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 
 	// kubeconfig 生成配置：平台 CA（可选嵌入）与 exec 插件参数
 	var caData []byte
-	if caFile := os.Getenv("AM_KUBECONFIG_CA_FILE"); caFile != "" {
+	if caFile := cfg.KubeconfigCAFile; caFile != "" {
 		caData, err = os.ReadFile(caFile)
 		if err != nil {
 			return nil, fmt.Errorf("platform -> read kubeconfig ca: %w", err)
@@ -266,9 +268,8 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	// 数据面限流（AM_RATE_LIMIT：每用户每分钟最大请求数，0=不限）。
 	// Redis 可用时跨副本共享窗口；否则进程内（单副本语义）。
 	var limiter mw.RateLimiter
-	rateLimitN := 0
-	if v, err := strconv.Atoi(os.Getenv("AM_RATE_LIMIT")); err == nil && v > 0 {
-		rateLimitN = v
+	rateLimitN := cfg.ProxyRateLimit
+	if rateLimitN > 0 {
 		if sharedRedisCli != nil {
 			limiter = mw.NewRedisRateLimiter(sharedRedisCli, time.Minute, rateLimitN)
 		} else {
@@ -278,12 +279,7 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	}
 
 	// 登录入口限流（AM_LOGIN_RATE_LIMIT，默认 10 次/分钟/IP；0=关闭）。
-	loginRateLimitN := 30
-	if raw := os.Getenv("AM_LOGIN_RATE_LIMIT"); raw != "" {
-		if v, err := strconv.Atoi(raw); err == nil && v >= 0 {
-			loginRateLimitN = v
-		}
-	}
+	loginRateLimitN := cfg.LoginRateLimit
 	var loginLimiter mw.RateLimiter
 	if loginRateLimitN > 0 {
 		if sharedRedisCli != nil {
@@ -295,30 +291,31 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 
 	// 审计异步写出（§12.2）：缓冲投递 → 批量写 PG；PG 故障落本地文件回放。
 	// 出口分流：平台事件 → stdio；集群事件 → 可选的 syslog 远程日志服务器。
-	auditWriter := audit.NewWriter(d, envDefault("AM_AUDIT_SPILL_FILE", "/tmp/kamc-audit-spill.jsonl"))
-	syslogSink := audit.NewSyslogFromEnv()
+	auditWriter := audit.NewWriter(d, cfg.AuditSpillFile)
+	syslogSink := audit.NewSyslog(cfg.Syslog)
 	auditWriter.WithSyslog(syslogSink)
 	auditWriter.Start()
 	log.Printf("[platform] audit syslog export: %s", syslogSink.Summary())
 
 	// GeoIP（可选）：AM_GEOIP_DB 指向 MaxMind .mmdb；未配置/加载失败则审计不含地理信息
-	geoResolver := geoip.FromEnv()
+	geoResolver, geoErr := geoip.New(cfg.GeoIPDB)
+	if geoErr != nil {
+		log.Printf("[geoip] WARNING: %v（审计将不含地理信息）", geoErr)
+		geoResolver = nil
+	}
 
 	// Agent 镜像仓库：完整地址（不含 tag，tag 随平台版本）；默认走 Docker Hub
-	agentImageRepo := envDefault("AM_AGENT_IMAGE_REPO", "tuf3i/k8s-am-agent")
+	agentImageRepo := cfg.AgentImageRepo
 
 	// 平台信息页配置快照：敏感值（数据库密码）在此脱敏后注入
-	redisAddrs := os.Getenv("REDIS_ADDRESSES")
-	if redisAddrs == "" {
-		redisAddrs = os.Getenv("REDIS_ADDR")
-	}
-	dsn := os.Getenv("DATABASE_URL")
+	redisAddrs := strings.Join(cfg.Tunnel.RedisAddrs, ",")
+	dsn := cfg.DatabaseURL
 	if dsn == "" {
 		dsn = postgres.DefaultDSN
 	}
 	platSettings := handler.Settings{
-		ListenAddr:     o.addr,
-		ExternalURL:    os.Getenv("AM_EXTERNAL_URL"),
+		ListenAddr:     cfg.ListenAddr,
+		ExternalURL:    cfg.ExternalURL,
 		DSN:            redactDSN(dsn),
 		RedisEnabled:   sharedRedisCli != nil,
 		RedisAddrs:     redisAddrs,
@@ -331,15 +328,15 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		Tunnels:          tunnelsService(o.tunnels),
 		Proxies:          proxies,
 		CAData:           caData,
-		OIDCIssuer:       os.Getenv("OIDC_ISSUER"),
-		OIDCClientID:     os.Getenv("OIDC_CLIENT_ID"),
-		OIDCRedirectURL:  os.Getenv("OIDC_REDIRECT_URL"),
+		OIDCIssuer:       cfg.OIDCIssuer,
+		OIDCClientID:     cfg.OIDCClientID,
+		OIDCRedirectURL:  cfg.OIDCRedirectURL,
 		RateLimiter:      limiter,
 		RateLimitN:       rateLimitN,
 		LoginRateLimiter: loginLimiter,
 		LoginRateLimitN:  loginRateLimitN,
 		Audit:            auditWriter,
-		RobotTokenTTL:    envDuration("AM_ROBOT_TOKEN_TTL", 365*24*time.Hour),
+		RobotTokenTTL:    cfg.RobotTokenTTL,
 		Catalog:          catalogSvc,
 		AgentImageRepo:   agentImageRepo,
 		Settings:         platSettings,
@@ -349,10 +346,10 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		AvatarDir:        avatarDir,
 		AvatarSecret:     avatarSecret,
 	})
-	h.SetPolicy(envDefault("AM_ADMIN_GROUP", "am:admin"), devTokenEnabled)
-	passwordUser := envDefault("AM_PASSWORD_LOGIN_USER", "sysadmin")
-	passwordPass := envDefault("AM_PASSWORD_LOGIN_PASSWORD", "sysadmin123")
-	passwordEnabled := os.Getenv("AM_PASSWORD_LOGIN") != "0"
+	h.SetPolicy(cfg.AdminGroup, cfg.DevToken)
+	passwordUser := cfg.PasswordLoginUser
+	passwordPass := cfg.PasswordLoginPassword
+	passwordEnabled := cfg.PasswordLoginEnabled
 	if passwordEnabled && (strings.TrimSpace(passwordUser) == "" || passwordPass == "") {
 		return nil, fmt.Errorf("platform -> password login enabled with empty credentials")
 	}
@@ -379,9 +376,9 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	}
 
 	// 路由与 HTTP 服务
-	engine := newEngine(h)
+	engine := newEngine(h, cfg.WebDir)
 	srv := &http.Server{
-		Addr:              o.addr,
+		Addr:              cfg.ListenAddr,
 		Handler:           engine,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -400,7 +397,7 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	}
 
 	// 审计保留期清理（默认 30 天；AM_AUDIT_RETENTION=0 关闭）。
-	auditRetention := envDuration("AM_AUDIT_RETENTION", 30*24*time.Hour)
+	auditRetention := cfg.AuditRetention
 	if auditRetention > 0 {
 		rt.auditStop = make(chan struct{})
 		rt.auditWG.Add(1)
@@ -444,12 +441,12 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 
 	defaultRuntime = rt
 	log.Printf("[platform] runtime created (addr=%s own_db=%v tunnels=%v)",
-		o.addr, ownDB, o.tunnels != nil)
+		cfg.ListenAddr, ownDB, o.tunnels != nil)
 	return rt, nil
 }
 
 // newEngine 组装路由树与中间件（不含业务）
-func newEngine(h *handler.Handler) *chi.Mux {
+func newEngine(h *handler.Handler, webDir string) *chi.Mux {
 	engine := chi.NewRouter()
 	engine.Use(chimw.RequestID)
 	engine.Use(mw.AccessLog)
@@ -457,7 +454,6 @@ func newEngine(h *handler.Handler) *chi.Mux {
 	h.RegisterRoutes(engine)
 	// 未匹配路由交给静态前端（AM_WEB_DIR，默认 web/dist）；
 	// 目录不存在（纯 API 部署/开发模式）时保持 404。
-	webDir := envDefault("AM_WEB_DIR", "data/web")
 	if spa := webstatic.Handler(webDir); spa != nil {
 		engine.NotFound(spa.ServeHTTP)
 		log.Printf("[platform] web UI served from %s", webDir)
@@ -523,41 +519,19 @@ func ReleaseRuntime() error {
 	return defaultRuntime.ReleaseRuntime()
 }
 
-// envDefault 读环境变量，空值取默认
-func envDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
-// envDuration 读时间间隔环境变量，空值/非法值取默认（非法值显式告警）。
-func envDuration(key string, def time.Duration) time.Duration {
-	v := os.Getenv(key)
-	if v == "" {
-		return def
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil || d <= 0 {
-		log.Printf("[platform] invalid %s=%q, using default %s", key, v, def)
-		return def
-	}
-	return d
-}
-
 // validateProductionGuards 生产启动护栏：匿名 dev-token、缺省 DSN、
 // 派生头像签名密钥都只允许开发环境使用。
-func validateProductionGuards(production, injectedDB, devToken bool) error {
+func validateProductionGuards(production, injectedDB, devToken bool, databaseURL, avatarSecret string) error {
 	if !production {
 		return nil
 	}
 	if devToken {
 		return fmt.Errorf("platform -> refuse AM_DEV_ISSUE_TOKEN in production (anonymous token minting is a full auth bypass)")
 	}
-	if !injectedDB && strings.TrimSpace(os.Getenv("DATABASE_URL")) == "" {
+	if !injectedDB && strings.TrimSpace(databaseURL) == "" {
 		return fmt.Errorf("platform -> DATABASE_URL is required in production")
 	}
-	if strings.TrimSpace(os.Getenv("AM_AVATAR_SECRET")) == "" {
+	if strings.TrimSpace(avatarSecret) == "" {
 		return fmt.Errorf("platform -> AM_AVATAR_SECRET is required in production")
 	}
 	return nil
@@ -608,13 +582,13 @@ func redactDSN(dsn string) string {
 
 // buildAuthService 构造 JWT 服务：JWT_KEYRING_DIR（Secret 挂载，多 kid）优先，
 // 未配置则生成临时密钥（开发语义：重启后存量 Token 失效，显式告警）。
-func buildAuthService(revStore auth.RevocationStore) (*auth.Service, error) {
+func buildAuthService(revStore auth.RevocationStore, cfg Config) (*auth.Service, error) {
 	var opts []auth.Option
 	opts = append(opts,
-		auth.WithIssuer(envDefault("AM_JWT_ISSUER", "https://kamc.local")),
-		auth.WithAudience(envDefault("AM_JWT_AUD", "kamc")),
+		auth.WithIssuer(cfg.JWTIssuer),
+		auth.WithAudience(cfg.JWTAudience),
 	)
-	if dir := os.Getenv("JWT_KEYRING_DIR"); dir != "" {
+	if dir := cfg.JWTKeyringDir; dir != "" {
 		opts = append(opts, auth.WithKeyDir(dir))
 	} else {
 		pem, err := auth.GenerateKeyPEM()

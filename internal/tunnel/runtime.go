@@ -56,13 +56,46 @@ func (r *Runtime) PeerAddr() net.Addr {
 type Option func(*options)
 
 type options struct {
-	cli      goredis.UniversalClient
-	registry registry.Registry // 测试可注入 fake；默认 Redis 实现
-	podID    string
-	ttl      time.Duration
-	interval time.Duration
-	peers    service.PeerOptions // 副本间转发（WithPeers / 环境变量）
-	peersSet bool
+	cli           goredis.UniversalClient
+	registry      registry.Registry // 测试可注入 fake；默认 Redis 实现
+	podID         string
+	ttl           time.Duration
+	interval      time.Duration
+	peers         service.PeerOptions // 副本间转发（WithPeers / WithConfig / 环境变量）
+	peersSet      bool
+	redisAddrs    []string
+	redisPassword string
+	redisDB       int
+}
+
+// Config 隧道模块配置（平台装配层经 Viper 装载后注入）。
+type Config struct {
+	RedisAddrs    []string
+	RedisPassword string
+	RedisDB       int
+	PodID         string
+	TTL           time.Duration // 注册表心跳 TTL（默认 15s）
+	Interval      time.Duration // 心跳间隔（默认 5s）
+	Peer          service.PeerOptions
+	PeerEnabled   bool
+}
+
+// WithConfig 显式注入配置（默认走环境变量；显式选项仍可覆盖单项）。
+func WithConfig(cfg Config) Option {
+	return func(o *options) {
+		o.redisAddrs = cfg.RedisAddrs
+		o.redisPassword = cfg.RedisPassword
+		o.redisDB = cfg.RedisDB
+		o.podID = cfg.PodID
+		if cfg.TTL > 0 {
+			o.ttl = cfg.TTL
+		}
+		if cfg.Interval > 0 {
+			o.interval = cfg.Interval
+		}
+		o.peers = cfg.Peer
+		o.peersSet = cfg.PeerEnabled
+	}
 }
 
 // WithPeers 显式注入副本间转发配置（默认经 PeerConfigFromEnv 读环境变量）
@@ -107,7 +140,14 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	ownCLI := false
 	if cli == nil && o.registry == nil {
 		var err error
-		cli, err = redis.NewRedisClient()
+		if len(o.redisAddrs) > 0 {
+			cli, err = redis.NewRedisClient(
+				redis.WithAddrs(o.redisAddrs...),
+				redis.WithAuth(o.redisPassword, o.redisDB),
+			)
+		} else {
+			cli, err = redis.NewRedisClient()
+		}
 		if err != nil {
 			return nil, fmt.Errorf("tunnel -> connect redis: %w", err)
 		}
@@ -199,14 +239,25 @@ func ReleaseRuntime() error {
 //
 // 未设置 PEER_ADDRESSES 返回 false（单副本形态，不启用跨副本转发）。
 func PeerConfigFromEnv() (service.PeerOptions, bool) {
-	addrs := os.Getenv("PEER_ADDRESSES")
-	if addrs == "" {
+	return PeerOptionsFromConfig(
+		os.Getenv("PEER_ADDRESSES"),
+		os.Getenv("PEER_TOKEN"),
+		envDefault("AM_PEER_ADDR", ":9090"),
+	)
+}
+
+// PeerOptionsFromConfig 解析副本间转发配置（地址为空=单副本形态，不启用）。
+func PeerOptionsFromConfig(addresses, token, listenAddr string) (service.PeerOptions, bool) {
+	if strings.TrimSpace(addresses) == "" {
 		return service.PeerOptions{}, false
 	}
+	if strings.TrimSpace(listenAddr) == "" {
+		listenAddr = ":9090"
+	}
 	return service.PeerOptions{
-		Token:      os.Getenv("PEER_TOKEN"),
-		ListenAddr: envDefault("AM_PEER_ADDR", ":9090"),
-		Addresses:  service.ParsePeerAddresses(strings.Split(addrs, ",")),
+		Token:      token,
+		ListenAddr: listenAddr,
+		Addresses:  service.ParsePeerAddresses(strings.Split(addresses, ",")),
 	}, true
 }
 

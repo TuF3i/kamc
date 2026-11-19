@@ -34,7 +34,7 @@ func (h *Handler) PreviewAgentInstall(w http.ResponseWriter, r *http.Request) {
 	}
 	data, rsp := h.svc.AgentInstallYAML(r.Context(), &service.AgentInstallParams{
 		Token:       req.Token,
-		PlatformURL: externalURL(r),
+		PlatformURL: h.externalURL(r),
 		ImageRepo:   h.agentImageRepo,
 		ImageTag:    version.Version,
 	})
@@ -47,7 +47,7 @@ func (h *Handler) PreviewAgentInstall(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) AgentInstallYAMLForFetch(w http.ResponseWriter, r *http.Request) {
 	data, rsp := h.svc.AgentInstallYAML(r.Context(), &service.AgentInstallParams{
 		Token:       r.URL.Query().Get("token"),
-		PlatformURL: externalURL(r),
+		PlatformURL: h.externalURL(r),
 		ImageRepo:   h.agentImageRepo,
 		ImageTag:    version.Version,
 	})

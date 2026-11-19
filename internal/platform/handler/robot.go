@@ -82,7 +82,7 @@ func (h *Handler) CreateRobot(w http.ResponseWriter, r *http.Request) {
 	data, rsp := h.svc.GenerateKubeconfig(r.Context(), service.KubeconfigParams{
 		ClusterID:   clusterID,
 		Mode:        service.KubeconfigModeStatic,
-		ExternalURL: externalURL(r),
+		ExternalURL: h.externalURL(r),
 		CallerToken: token,
 		CallerSub:   sub,
 		CAData:      h.caData,
@@ -148,7 +148,7 @@ func (h *Handler) GetRobotKubeconfig(w http.ResponseWriter, r *http.Request) {
 	data, rsp := h.svc.GenerateKubeconfig(r.Context(), service.KubeconfigParams{
 		ClusterID:   robot.ClusterID,
 		Mode:        service.KubeconfigModeStatic,
-		ExternalURL: externalURL(r),
+		ExternalURL: h.externalURL(r),
 		CallerToken: token,
 		CallerSub:   robot.Sub,
 		CAData:      h.caData,

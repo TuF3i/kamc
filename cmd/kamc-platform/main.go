@@ -2,6 +2,7 @@
 package main
 
 import (
+	"flag"
 	"log"
 	"os"
 	"os/signal"
@@ -12,13 +13,18 @@ import (
 )
 
 func main() {
-	cfg := platform.LoadConfig()
+	configPath := flag.String("config", "", "配置文件路径（默认 AM_CONFIG_FILE，或 ./kamc.yaml）")
+	flag.Parse()
+
+	cfg, err := platform.LoadConfig(*configPath)
+	if err != nil {
+		log.Fatalf("[platform] 配置装载失败: %v", err)
+	}
 
 	// 隧道模块：未配置 Redis 时降级启动（仅本地隧道，跨 Pod 路由不可用，§7.2）
 	var trt *tunnel.Runtime
-	if os.Getenv("REDIS_ADDRESSES") != "" || os.Getenv("REDIS_ADDR") != "" {
-		var err error
-		trt, err = tunnel.CreateRuntime()
+	if len(cfg.Tunnel.RedisAddrs) > 0 {
+		trt, err = tunnel.CreateRuntime(tunnel.WithConfig(cfg.Tunnel))
 		if err != nil {
 			log.Fatalf("[platform] 隧道模块初始化失败: %v", err)
 		}
@@ -26,7 +32,7 @@ func main() {
 		log.Printf("[platform] 未配置 Redis，隧道模块未启用（跨 Pod 路由不可用）")
 	}
 
-	prt, err := platform.CreateRuntime(platform.WithAddr(cfg.Addr), platform.WithTunnels(trt))
+	prt, err := platform.CreateRuntime(platform.WithConfig(cfg), platform.WithTunnels(trt))
 	if err != nil {
 		log.Fatalf("[platform] 初始化失败: %v", err)
 	}

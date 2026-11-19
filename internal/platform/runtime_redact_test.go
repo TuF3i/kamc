@@ -40,26 +40,26 @@ func TestValidateProductionGuards(t *testing.T) {
 	t.Setenv("AM_AVATAR_SECRET", "s3cret")
 	t.Setenv("DATABASE_URL", "")
 
-	if err := validateProductionGuards(false, false, true); err != nil {
+	if err := validateProductionGuards(false, false, true, "", ""); err != nil {
 		t.Fatalf("dev should allow: %v", err)
 	}
-	if err := validateProductionGuards(true, false, true); err == nil {
+	if err := validateProductionGuards(true, false, true, "postgres://x", "avatar"); err == nil {
 		t.Fatal("production + dev-token should be rejected")
 	}
-	if err := validateProductionGuards(true, false, false); err == nil {
+	if err := validateProductionGuards(true, false, false, "", "avatar"); err == nil {
 		t.Fatal("production without DATABASE_URL should be rejected")
 	}
 
 	t.Setenv("DATABASE_URL", "host=db user=app password=secret dbname=kamc")
-	if err := validateProductionGuards(true, false, false); err != nil {
+	if err := validateProductionGuards(true, false, false, "host=db", "avatar"); err != nil {
 		t.Fatalf("production with DSN: %v", err)
 	}
-	if err := validateProductionGuards(true, true, false); err != nil {
+	if err := validateProductionGuards(true, true, false, "", "avatar"); err != nil {
 		t.Fatalf("injected DB should skip DSN check: %v", err)
 	}
 
 	t.Setenv("AM_AVATAR_SECRET", "")
-	if err := validateProductionGuards(true, true, false); err == nil {
+	if err := validateProductionGuards(true, true, false, "", ""); err == nil {
 		t.Fatal("production without AM_AVATAR_SECRET should be rejected")
 	}
 }
