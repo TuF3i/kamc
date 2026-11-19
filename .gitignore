@@ -44,3 +44,6 @@ test_file
 
 # 本地工具会话状态
 .zcode/
+
+# Helm 渲染/打包产物
+deploy/helm/dist/

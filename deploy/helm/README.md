@@ -11,6 +11,23 @@
 （`<fullname>-<i>.<fullname>-headless`），Chart 在 `config.peerAddresses`
 留空时按 `replicaCount` 自动生成。
 
+## 快捷操作（Makefile）
+
+```bash
+export DATABASE_URL='postgres://kamc:***@postgres:5432/kamc?sslmode=require'
+export OIDC_CLIENT_ID=kamc OIDC_CLIENT_SECRET=*** PASSWORD_LOGIN_PASSWORD=***
+
+make -C deploy/helm secrets            # namespace + JWT/平台 Secret（幂等）
+make -C deploy/helm install-platform EXTERNAL_URL=https://kamc.example.com \
+  REDIS_ADDR=redis:6379 OIDC_ISSUER=https://sso.example.com/application/o/kamc/
+make -C deploy/helm install-agent CLUSTER_ID=prod-bj \
+  PLATFORM_URL=wss://kamc.example.com/tunnel
+make -C deploy/helm status
+```
+
+根目录也可用透传目标：`make helm-help`、`make helm-lint`、`make helm-install-platform ...`。
+`DRY_RUN=server` 可让安装目标只做服务端校验；`VALUES=a.yaml` 追加 values 文件。
+
 ## 前置条件
 
 - Kubernetes 1.23+

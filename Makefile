@@ -58,3 +58,8 @@ tidy:
 
 clean:
 	rm -rf bin
+
+# ---- Helm 部署（Chart 在 deploy/helm，详见 deploy/helm/README.md）----
+# 例：make helm-help / make helm-lint / make helm-install-platform EXTERNAL_URL=...
+helm-%:
+	$(MAKE) -C deploy/helm $*
