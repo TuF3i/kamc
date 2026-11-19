@@ -1,0 +1,126 @@
+@theme {
+  --font-display:
+    'Reverier Mono', 'Menlo', '-apple-system', 'Noto Sans', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', 'Helvetica',
+    'Consolas', 'Courier', monospace;
+  --font-sans:
+    'Reverier Mono', 'Menlo', '-apple-system', 'Noto Sans', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', 'Helvetica',
+    'Consolas', 'Courier', monospace;
+  --font-mono:
+    'Reverier Mono', 'Menlo', 'Consolas', 'PingFang SC', 'Microsoft YaHei',
+    'Courier', monospace;
+}
+
+/*
+ * 蓝灰 token：深色为石墨蓝灰，浅色为冷雾蓝灰。
+ * 所有面板/边框/悬停都由 layer-content 的 alpha 派生，保持参考示例的通透层次。
+ */
+:root,
+[data-theme='kamc-dark'] {
+  --private-color-layer: oklch(0.23 0.022 255);
+  --private-color-layer-content: oklch(0.93 0.012 250);
+
+  --private-color-primary: oklch(0.66 0.12 252);
+  --private-color-primary-content: oklch(0.99 0.005 250);
+  --private-color-info: oklch(0.72 0.1 245);
+  --private-color-info-content: oklch(0.99 0.005 250);
+  --private-color-success: oklch(0.68 0.09 160);
+  --private-color-success-content: oklch(0.99 0.005 160);
+  --private-color-warning: oklch(0.79 0.1 80);
+  --private-color-warning-content: oklch(0.25 0.03 70);
+  --private-color-error: oklch(0.65 0.15 25);
+  --private-color-error-content: oklch(0.99 0.005 25);
+
+  --code-bg: oklch(0.19 0.02 258);
+  --code-border: oklch(0.32 0.02 255);
+  --syntax-keyword: oklch(0.75 0.1 290);
+  --syntax-string: oklch(0.78 0.09 155);
+  --syntax-number: oklch(0.8 0.1 70);
+  --syntax-comment: oklch(0.62 0.02 250);
+  --syntax-function: oklch(0.78 0.09 245);
+}
+
+[data-theme='kamc-light'] {
+  --private-color-layer: oklch(0.96 0.008 250);
+  --private-color-layer-content: oklch(0.27 0.02 255);
+
+  --private-color-primary: oklch(0.55 0.14 255);
+  --private-color-primary-content: oklch(0.99 0.005 250);
+  --private-color-info: oklch(0.58 0.12 245);
+  --private-color-info-content: oklch(0.99 0.005 250);
+  --private-color-success: oklch(0.52 0.1 160);
+  --private-color-success-content: oklch(0.99 0.005 160);
+  --private-color-warning: oklch(0.71 0.12 78);
+  --private-color-warning-content: oklch(0.22 0.03 70);
+  --private-color-error: oklch(0.55 0.17 25);
+  --private-color-error-content: oklch(0.99 0.005 25);
+
+  --code-bg: oklch(0.975 0.006 250);
+  --code-border: oklch(0.86 0.012 250);
+  --syntax-keyword: oklch(0.48 0.14 295);
+  --syntax-string: oklch(0.43 0.11 155);
+  --syntax-number: oklch(0.5 0.13 65);
+  --syntax-comment: oklch(0.58 0.02 250);
+  --syntax-function: oklch(0.46 0.13 250);
+}
+
+@theme inline {
+  --color-transparent: transparent;
+  --color-primary: var(--private-color-primary);
+  --color-primary-content: var(--private-color-primary-content);
+  --color-info: var(--private-color-info);
+  --color-info-content: var(--private-color-info-content);
+  --color-success: var(--private-color-success);
+  --color-success-content: var(--private-color-success-content);
+  --color-warning: var(--private-color-warning);
+  --color-warning-content: var(--private-color-warning-content);
+  --color-error: var(--private-color-error);
+  --color-error-content: var(--private-color-error-content);
+  --color-layer: var(--private-color-layer);
+  --color-layer-content: var(--private-color-layer-content);
+}
+
+* {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  forced-color-adjust: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  min-width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--private-color-layer);
+  color: var(--private-color-layer-content);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--private-color-layer-content);
+  color: var(--private-color-layer);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+@custom-variant hover (&:hover);

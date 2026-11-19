@@ -1,0 +1,15 @@
+@import 'tailwindcss';
+@import './fonts.css';
+@import './tokens.css';
+@import '../lib/widgets/styles/widgets.css';
+@import './pages.css';
+
+@plugin '@iconify/tailwind4';
+
+@utility grid-cols-fit-8rem {
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+}
+
+@utility grid-cols-fit-16rem {
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+}

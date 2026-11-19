@@ -1,0 +1,37 @@
+{
+  "name": "kamc-console",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "kamc 管理前端（SolidJS + Tailwind 4，蓝灰双主题）",
+  "scripts": {
+    "dev": "vite",
+    "dev:mock": "vite --mode mock",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@codemirror/autocomplete": "^6.20.4",
+    "@codemirror/language": "^6.13.1",
+    "@codemirror/legacy-modes": "^6.5.5",
+    "@codemirror/state": "^6.5.2",
+    "@codemirror/view": "^6.38.1",
+    "@solidjs/router": "^0.15.0",
+    "clsx": "^2.1.1",
+    "codemirror": "^6.0.1",
+    "dayjs": "^1.11.13",
+    "echarts": "^5.6.0",
+    "solid-js": "^1.9.3"
+  },
+  "devDependencies": {
+    "@iconify-json/fluent": "^1.2.10",
+    "@iconify/tailwind4": "^1.2.3",
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^26.6.6",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.3",
+    "vite-plugin-solid": "^2.11.0"
+  }
+}
