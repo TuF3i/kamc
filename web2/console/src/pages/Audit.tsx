@@ -440,7 +440,6 @@ export default function Audit() {
             <span class="text-[13px] text-layer-content/60">结果</span>
             <Select
               class="w-[100px]"
-              size="small"
               value={allowed()}
               options={[
                 { value: 'all', label: '全部' },
@@ -462,7 +461,6 @@ export default function Audit() {
             <span class="text-[13px] text-layer-content/60">条数</span>
             <Select
               class="w-[110px]"
-              size="small"
               value={limit()}
               options={[100, 200, 500, 1000].map((value) => ({
                 value,

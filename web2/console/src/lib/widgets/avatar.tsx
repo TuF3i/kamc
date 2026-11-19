@@ -19,7 +19,7 @@ export function Avatar(props: AvatarProps) {
   return (
     <span
       class={clsx(
-        'relative inline-grid shrink-0 select-none place-items-center overflow-hidden rounded-lg bg-gradient-to-br from-primary to-info font-bold text-primary-content',
+        'relative inline-grid shrink-0 select-none place-items-center overflow-hidden rounded-lg bg-layer-content/10 font-bold text-layer-content',
         props.class,
       )}
       style={{
