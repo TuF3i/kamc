@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kamc-agent.fullname" . }}
+  labels:
+    {{- include "kamc-agent.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "kamc-agent.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "kamc-agent.labels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "kamc-agent.serviceAccountName" . }}
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.podAntiAffinity.enabled }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "kamc-agent.selectorLabels" . | nindent 20 }}
+      {{- else }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: agent
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            - name: PLATFORM_URL
+              value: {{ required "platformURL 必填（wss://<平台域名>/tunnel）" .Values.platformURL | quote }}
+            - name: CLUSTER_ID
+              value: {{ required "clusterID 必填（平台注册的集群 ID）" .Values.clusterID | quote }}
+            - name: AGENT_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: TOKEN_FILE
+              value: /etc/k8s-am/token/{{ .Values.existingSecretKey }}
+            - name: HEARTBEAT_PING_INTERVAL
+              value: {{ .Values.heartbeatPingInterval | quote }}
+            - name: BACKOFF_BASE
+              value: {{ .Values.backoffBase | quote }}
+            - name: BACKOFF_MAX
+              value: {{ .Values.backoffMax | quote }}
+            {{- if .Values.platformInsecure }}
+            - name: PLATFORM_INSECURE
+              value: "1"
+            {{- end }}
+            {{- if .Values.apiserverURL }}
+            - name: APISERVER_URL
+              value: {{ .Values.apiserverURL | quote }}
+            {{- end }}
+            {{- if .Values.serviceAccountTokenFile }}
+            - name: SA_TOKEN_FILE
+              value: {{ .Values.serviceAccountTokenFile | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: token
+              mountPath: /etc/k8s-am/token
+              readOnly: true
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: token
+          secret:
+            secretName: {{ include "kamc-agent.secretName" . }}
+            items:
+              - key: {{ .Values.existingSecretKey }}
+                path: {{ .Values.existingSecretKey }}

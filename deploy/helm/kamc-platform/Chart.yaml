@@ -1,0 +1,15 @@
+apiVersion: v2
+name: kamc-platform
+description: Kubernetes Access Manager Center 平台控制面（API、Casbin 授权、隧道、审计）
+type: application
+version: 0.1.0
+appVersion: "dev"
+kubeVersion: ">=1.23.0-0"
+home: https://github.com/TuF3i/kamc
+sources:
+  - https://github.com/TuF3i/kamc
+keywords:
+  - kubernetes
+  - access-management
+  - casbin
+  - audit

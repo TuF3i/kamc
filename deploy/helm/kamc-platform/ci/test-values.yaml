@@ -1,0 +1,26 @@
+# helm lint/template 用的测试值（不是真实部署配置）
+config:
+  externalURL: https://kamc.example.com
+  redisAddr: redis:6379
+  peerAddresses: kamc-platform-headless-0.kamc-platform-headless:9090
+secrets:
+  databaseURL: postgres://kamc:secret@postgres:5432/kamc?sslmode=require
+  oidcClientID: kamc
+  oidcClientSecret: secret
+  peerToken: peer-secret
+  avatarSecret: avatar-secret
+jwtKeyring:
+  jwtKeyPEM: |
+    -----BEGIN RSA PRIVATE KEY-----
+    test-only
+    -----END RSA PRIVATE KEY-----
+oidc:
+  issuer: https://sso.example.com/application/o/kamc/
+passwordLogin:
+  enabled: true
+  password: test-password
+avatar:
+  persistence:
+    enabled: true
+ingress:
+  enabled: true

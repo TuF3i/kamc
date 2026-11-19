@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kamc-platform.fullname" . }}
+  labels:
+    {{- include "kamc-platform.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "kamc-platform.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+---
+# headless service：副本间 peer 直连（AM_PEER_ADDR / PEER_ADDRESSES，§7.2.4）
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kamc-platform.fullname" . }}-headless
+  labels:
+    {{- include "kamc-platform.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "kamc-platform.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: peer
+      port: {{ .Values.peer.port }}
+      targetPort: peer
+      protocol: TCP

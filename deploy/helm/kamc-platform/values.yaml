@@ -1,0 +1,158 @@
+# kamc-platform 默认配置。
+#
+# 敏感值两种方式（二选一）：
+#   1) 生产推荐：预先创建 Secret，键名见 README，然后设置 secrets.existingSecret
+#   2) 开发/POC：直接填下面的明文值，Chart 会生成 Secret
+# 注意：AM_ENV=production 时平台强制要求 DATABASE_URL / AM_AVATAR_SECRET，
+#       并拒绝 AM_DEV_ISSUE_TOKEN=1。
+
+image:
+  repository: kamc/k8s-am-platform
+  # 留空使用 Chart.appVersion
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+replicaCount: 3
+
+# 敏感配置。existingSecret 非空时忽略下面的明文值（仍可留空）。
+# 键名：database-url / oidc-client-id / oidc-client-secret /
+#       peer-token / avatar-secret / password-login-password
+secrets:
+  existingSecret: ""
+  databaseURL: ""
+  oidcClientID: ""
+  oidcClientSecret: ""
+  peerToken: ""
+  avatarSecret: ""
+
+# JWT 签名密钥环：existingSecret 为专用 Secret（可含 jwt-1.pem、jwt-2.pem …，
+# 文件名即 kid）；未设置时用 jwtKeyPEM 生成单 key Secret（开发用）。
+jwtKeyring:
+  existingSecret: ""
+  jwtKeyPEM: ""
+
+# 平台对外 TLS 的 CA（可选）：设置后 kubeconfig 会嵌入该 CA。
+platformCA:
+  existingSecret: ""
+  key: ca.crt
+
+config:
+  # 平台对外地址（kubeconfig 的 server、Agent 安装清单）。生产必须设置为 https 域名。
+  externalURL: ""
+  # JWT issuer，默认取 externalURL；未设置时回退平台默认值。
+  jwtIssuer: ""
+  environment: production
+  adminGroup: "am:admin"
+  redisAddr: ""
+  redisAddresses: ""
+  # 多副本时可留空（Chart 按 StatefulSet 序号自动生成 per-pod 地址）；
+  # 也可显式覆盖，形如 kamc-0.kamc-platform-headless:9090,...
+  peerAddresses: ""
+  rateLimit: 600
+  loginRateLimit: 30
+  auditSpillFile: "/var/lib/kamc/audit-spill.jsonl"
+  auditRetention: ""
+  agentImageRepo: "tuf3i/k8s-am-agent"
+  # 生产保持 false（平台会拒绝在 production 打开）。
+  devIssueToken: false
+  extraEnv: []
+  extraEnvFrom: []
+
+# 内置密码登录（生产默认关闭；OIDC/LDAP 为推荐登录方式）。
+passwordLogin:
+  enabled: false
+  user: "sysadmin"
+  password: ""
+
+oidc:
+  issuer: ""
+  # 默认 externalURL + /auth/callback
+  redirectURL: ""
+
+service:
+  type: ClusterIP
+  port: 8080
+  annotations: {}
+
+# 副本间转发端口（headless service 与 PEER_ADDRESSES）
+peer:
+  port: 9090
+
+# 头像存储：多副本必须使用 ReadWriteMany 共享卷，否则各 Pod 头像互不可见。
+avatar:
+  persistence:
+    enabled: false
+    existingClaim: ""
+    accessModes:
+      - ReadWriteMany
+    size: 1Gi
+    storageClass: ""
+
+ingress:
+  enabled: false
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+  hosts:
+    - host: kamc.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+# 容器以镜像内用户运行（uid 10001）；fsGroup 保证 emptyDir/PVC 可写。
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  # 平台不访问 Kubernetes API，无需挂载 SA Token
+  automountServiceAccountToken: false
+
+podAnnotations: {}
+podLabels: {}
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+networkPolicy:
+  enabled: true
+  # 8080 入站来源限制；留空=允许所有来源访问 8080（默认，兼容各类网关）。
+  # 集群内 ingress 可填 namespaceSelector/podSelector 收紧。
+  httpIngressFrom: []
+
+# 默认按节点打散（留空则使用 maxSkew=1 / hostname / ScheduleAnyway）。
+topologySpreadConstraints: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

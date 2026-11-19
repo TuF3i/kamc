@@ -1,0 +1,17 @@
+{{- if and .Values.avatar.persistence.enabled (not .Values.avatar.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "kamc-platform.avatarClaimName" . }}
+  labels:
+    {{- include "kamc-platform.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.avatar.persistence.accessModes | nindent 4 }}
+  {{- with .Values.avatar.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.avatar.persistence.size | quote }}
+{{- end }}

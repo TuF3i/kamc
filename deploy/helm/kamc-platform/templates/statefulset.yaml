@@ -1,0 +1,241 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "kamc-platform.fullname" . }}
+  labels:
+    {{- include "kamc-platform.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  serviceName: {{ include "kamc-platform.fullname" . }}-headless
+  podManagementPolicy: Parallel
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      {{- include "kamc-platform.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        checksum/jwt: {{ include (print $.Template.BasePath "/jwt-secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "kamc-platform.labels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "kamc-platform.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml .Values.topologySpreadConstraints | nindent 8 }}
+      {{- else }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "kamc-platform.selectorLabels" . | nindent 14 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: platform
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kamc-platform.secretName" . }}
+                  key: database-url
+            - name: JWT_KEYRING_DIR
+              value: /etc/k8s-am/jwt
+            - name: AM_JWT_ISSUER
+              value: {{ include "kamc-platform.jwtIssuer" . | quote }}
+            - name: AM_EXTERNAL_URL
+              value: {{ include "kamc-platform.externalURL" . | quote }}
+            - name: AM_ENV
+              value: {{ .Values.config.environment | quote }}
+            - name: AM_ADMIN_GROUP
+              value: {{ .Values.config.adminGroup | quote }}
+            - name: AM_PEER_ADDR
+              value: {{ printf ":%v" .Values.peer.port | quote }}
+            - name: AM_RATE_LIMIT
+              value: {{ .Values.config.rateLimit | quote }}
+            - name: AM_LOGIN_RATE_LIMIT
+              value: {{ .Values.config.loginRateLimit | quote }}
+            - name: AM_AUDIT_SPILL_FILE
+              value: {{ .Values.config.auditSpillFile | quote }}
+            - name: AM_AGENT_IMAGE_REPO
+              value: {{ .Values.config.agentImageRepo | quote }}
+            - name: AM_AVATAR_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kamc-platform.secretName" . }}
+                  key: avatar-secret
+            - name: OIDC_REDIRECT_URL
+              value: {{ include "kamc-platform.oidcRedirectURL" . | quote }}
+            {{- if .Values.config.redisAddr }}
+            - name: REDIS_ADDR
+              value: {{ .Values.config.redisAddr | quote }}
+            {{- end }}
+            {{- if .Values.config.redisAddresses }}
+            - name: REDIS_ADDRESSES
+              value: {{ .Values.config.redisAddresses | quote }}
+            {{- end }}
+            {{- $peerAddresses := .Values.config.peerAddresses }}
+            {{- if and (not $peerAddresses) (gt (int .Values.replicaCount) 1) }}
+            {{- $items := list }}
+            {{- range $i := until (int .Values.replicaCount) }}
+            {{- $items = append $items (printf "%s-%d.%s-headless:%v" (include "kamc-platform.fullname" $) $i (include "kamc-platform.fullname" $) $.Values.peer.port) }}
+            {{- end }}
+            {{- $peerAddresses = join "," $items }}
+            {{- end }}
+            {{- if $peerAddresses }}
+            - name: PEER_ADDRESSES
+              value: {{ $peerAddresses | quote }}
+            {{- end }}
+            {{- if .Values.config.auditRetention }}
+            - name: AM_AUDIT_RETENTION
+              value: {{ .Values.config.auditRetention | quote }}
+            {{- end }}
+            {{- if .Values.secrets.peerToken }}
+            - name: PEER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kamc-platform.secretName" . }}
+                  key: peer-token
+            {{- else if .Values.secrets.existingSecret }}
+            - name: PEER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kamc-platform.secretName" . }}
+                  key: peer-token
+                  optional: true
+            {{- end }}
+            {{- if .Values.oidc.issuer }}
+            - name: OIDC_ISSUER
+              value: {{ .Values.oidc.issuer | quote }}
+            - name: OIDC_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kamc-platform.secretName" . }}
+                  key: oidc-client-id
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kamc-platform.secretName" . }}
+                  key: oidc-client-secret
+            {{- end }}
+            - name: AM_PASSWORD_LOGIN
+              value: {{ ternary "1" "0" .Values.passwordLogin.enabled | quote }}
+            {{- if .Values.passwordLogin.enabled }}
+            - name: AM_PASSWORD_LOGIN_USER
+              value: {{ default "sysadmin" .Values.passwordLogin.user | quote }}
+            - name: AM_PASSWORD_LOGIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kamc-platform.secretName" . }}
+                  key: password-login-password
+            {{- end }}
+            {{- if .Values.config.devIssueToken }}
+            - name: AM_DEV_ISSUE_TOKEN
+              value: "1"
+            {{- end }}
+            {{- if .Values.platformCA.existingSecret }}
+            - name: AM_KUBECONFIG_CA_FILE
+              value: /etc/k8s-am/ca/{{ .Values.platformCA.key }}
+            {{- end }}
+            {{- with .Values.config.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.config.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: peer
+              containerPort: {{ .Values.peer.port }}
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          volumeMounts:
+            - name: jwt-keyring
+              mountPath: /etc/k8s-am/jwt
+              readOnly: true
+            - name: audit-spill
+              mountPath: /var/lib/kamc
+            - name: avatar
+              mountPath: /data/avatar
+            {{- if .Values.platformCA.existingSecret }}
+            - name: platform-ca
+              mountPath: /etc/k8s-am/ca
+              readOnly: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: jwt-keyring
+          secret:
+            secretName: {{ include "kamc-platform.jwtSecretName" . }}
+        - name: audit-spill
+          emptyDir: {}
+        - name: avatar
+          {{- if and .Values.avatar.persistence.enabled .Values.avatar.persistence.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ include "kamc-platform.avatarClaimName" . }}
+          {{- else if .Values.avatar.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "kamc-platform.avatarClaimName" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if .Values.platformCA.existingSecret }}
+        - name: platform-ca
+          secret:
+            secretName: {{ .Values.platformCA.existingSecret }}
+        {{- end }}

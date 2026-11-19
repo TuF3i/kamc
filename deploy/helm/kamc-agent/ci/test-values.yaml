@@ -1,0 +1,4 @@
+# helm lint/template 用的测试值（不是真实部署配置）
+platformURL: wss://kamc.example.com/tunnel
+clusterID: prod-bj
+token: am-clu-test

@@ -1,0 +1,27 @@
+kamc-platform 已部署。
+
+1) 就绪检查
+   kubectl -n {{ .Release.Namespace }} rollout status statefulset/{{ include "kamc-platform.fullname" . }} --timeout=180s
+   kubectl -n {{ .Release.Namespace }} get pods
+
+2) 对外入口
+   externalURL: {{ include "kamc-platform.externalURL" . }}
+   {{- if .Values.ingress.enabled }}
+   Ingress 已启用：确认 DNS/TLS 指向入口控制器；WebSocket 依赖较长的 proxy-read-timeout（默认 3600s）。
+   {{- else }}
+   未启用 Ingress：请按 deploy/nginx/nginx.conf 在外部 Nginx 终结 TLS，并反代
+   {{ include "kamc-platform.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}。
+   {{- end }}
+
+3) 首次使用
+   - OIDC：{{ if .Values.oidc.issuer }}{{ .Values.oidc.issuer }}{{ else }}未配置（/auth/login 返回 503；可先用密码登录）{{ end }}
+   - 密码登录：{{ if .Values.passwordLogin.enabled }}已启用（用户 {{ default "sysadmin" .Values.passwordLogin.user }}）{{ else }}已关闭（生产推荐 OIDC/LDAP）{{ end }}
+   - 注册集群后，在目标集群安装 Agent：
+     helm upgrade --install kamc-agent deploy/helm/kamc-agent -n {{ .Release.Namespace }} \
+       --set clusterID=<集群ID> \
+       --set platformURL={{ include "kamc-platform.externalURL" . | replace "https://" "wss://" }}/tunnel \
+       --set existingSecret=<Agent Token Secret>
+
+4) 注意
+   - 多副本头像需要 ReadWriteMany 共享卷（values.avatar.persistence），否则各 Pod 头像互不可见。
+   - 生产请通过 jwtKeyring.existingSecret 提供稳定签名密钥；未配置时开发临时密钥会在重启后失效。

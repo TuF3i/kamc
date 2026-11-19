@@ -1,0 +1,15 @@
+kamc-agent 已部署。
+
+1) 就绪检查
+   kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "kamc-agent.fullname" . }} --timeout=120s
+
+2) 验证接入
+   在平台侧查看集群 {{ .Values.clusterID }} 状态应为 online：
+   kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "kamc-agent.fullname" . }} --tail=50
+
+3) 常见问题
+   - 平台拒绝 Token（401）：在平台重新签发 Agent Token，更新 Secret 后 Pod 会自动重载
+     （TOKEN_FILE 按 mtime 重读）；或 helm upgrade 更新 existingSecret。
+   - TLS 失败：生产平台应使用受信证书；仅自签开发环境可设 platformInsecure=true。
+   - 集群内 RBAC：rbac.clusterRole 默认 cluster-admin（Agent SA 权限即平台数据面上限），
+     安全要求高时替换为覆盖所需 API 的专用 ClusterRole。

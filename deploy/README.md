@@ -7,9 +7,10 @@
 
 | 文件 | 内容 |
 | --- | --- |
+| `helm/` | **生产推荐**：`kamc-platform`（StatefulSet）与 `kamc-agent` 两个 Chart，见 [`helm/README.md`](helm/README.md) |
 | `nginx/nginx.conf` | 接入层配置（TLS 终结、$connection_upgrade、三级超时路由） |
-| `platform/manifests.yaml` | 平台 Deployment/Service/headless/PDB/NetworkPolicy/Secret 模板 |
-| `agent/manifests.yaml` | Agent SA/RBAC/Secret/Deployment（双副本） |
+| `platform/manifests.yaml` | 平台 Deployment/Service/headless/PDB/NetworkPolicy/Secret 模板（无 Helm 环境） |
+| `agent/manifests.yaml` | Agent SA/RBAC/Secret/Deployment（双副本，无 Helm 环境） |
 
 ## 镜像构建
 

@@ -1,0 +1,84 @@
+# kamc-agent 默认配置。
+#
+# 安装到目标集群（通常与平台同名命名空间，便于统一管理）：
+#   helm upgrade --install kamc-agent deploy/helm/kamc-agent -n k8s-am-system --create-namespace \
+#     --set clusterID=prod-bj \
+#     --set platformURL=wss://kamc.example.com/tunnel \
+#     --set existingSecret=k8s-am-agent-token
+#
+# Token 由平台「集群 → Agent 安装」签发；建议放在 Secret 中（键名 token），
+# 或用 --set token=... 让 Chart 创建 Secret（仅开发/POC）。
+
+image:
+  repository: kamc/k8s-am-agent
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+replicaCount: 2
+
+# 平台隧道入口，必须可从目标集群访问：wss://<平台域名>/tunnel
+platformURL: ""
+# 平台注册时的集群 ID（dom）
+clusterID: ""
+
+# Agent Token：existingSecret 优先（键名 token）；否则用 token 明文创建 Secret。
+existingSecret: ""
+existingSecretKey: token
+token: ""
+
+# 开发/POC：平台为自签证书时跳过 TLS 校验（生产禁用）
+platformInsecure: false
+# 显式覆盖 in-cluster apiserver（默认探测 SA）
+apiserverURL: ""
+serviceAccountTokenFile: ""
+
+heartbeatPingInterval: 20s
+backoffBase: 1s
+backoffMax: 30s
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+rbac:
+  create: true
+  # Agent SA 权限即平台数据面上限；安全要求高时替换为覆盖所需 API 的专用 ClusterRole
+  clusterRole: cluster-admin
+
+podAntiAffinity:
+  enabled: true
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+podAnnotations: {}
+podLabels: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
