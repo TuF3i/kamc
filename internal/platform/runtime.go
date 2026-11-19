@@ -353,6 +353,9 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	passwordUser := envDefault("AM_PASSWORD_LOGIN_USER", "sysadmin")
 	passwordPass := envDefault("AM_PASSWORD_LOGIN_PASSWORD", "sysadmin123")
 	passwordEnabled := os.Getenv("AM_PASSWORD_LOGIN") != "0"
+	if passwordEnabled && (strings.TrimSpace(passwordUser) == "" || passwordPass == "") {
+		return nil, fmt.Errorf("platform -> password login enabled with empty credentials")
+	}
 	if production && passwordEnabled && passwordUser == "sysadmin" && passwordPass == "sysadmin123" {
 		return nil, fmt.Errorf("platform -> refuse default password login in production (set AM_PASSWORD_LOGIN=0 or explicit credentials)")
 	}
