@@ -176,3 +176,59 @@ func TestRevocationDisabled(t *testing.T) {
 		t.Fatalf("local revoke should work without store: %v", err)
 	}
 }
+
+// TestRevokedTokenPruning 无吊销存储时本地 jti 集合必须按过期时间清理，
+// 否则反复登录/登出会单调增长（OOM）。
+func TestRevokedTokenPruning(t *testing.T) {
+	clock := time.Now()
+	s, err := NewService(
+		WithIssuer("iss"), WithAudience("aud"),
+		WithNow(func() time.Time { return clock }),
+		WithKey("k", mustPEM(t)),
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	ctx := context.Background()
+
+	for i := 0; i < 2000; i++ {
+		if err := s.RevokeToken(ctx, "jti-"+itoa(i), time.Minute); err != nil {
+			t.Fatalf("revoke: %v", err)
+		}
+	}
+	if got := len(s.revokedTokens); got != 2000 {
+		t.Fatalf("revoked set size: %d", got)
+	}
+
+	// 全部过期 → Verify 热路径的惰性清理应清空
+	clock = clock.Add(2 * time.Minute)
+	s.maybeSyncRevocations()
+	if len(s.revokedTokens) != 0 || len(s.revokedExpiry) != 0 {
+		t.Fatalf("expired jtis not pruned: tokens=%d expiry=%d",
+			len(s.revokedTokens), len(s.revokedExpiry))
+	}
+
+	// 未过期的记录必须保留
+	if err := s.RevokeToken(ctx, "live-jti", time.Hour); err != nil {
+		t.Fatalf("revoke live: %v", err)
+	}
+	clock = clock.Add(30 * time.Minute)
+	s.maybeSyncRevocations()
+	if _, ok := s.revokedTokens["live-jti"]; !ok {
+		t.Fatal("unexpired jti pruned")
+	}
+}
+
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	var buf [20]byte
+	pos := len(buf)
+	for i > 0 {
+		pos--
+		buf[pos] = byte('0' + i%10)
+		i /= 10
+	}
+	return string(buf[pos:])
+}

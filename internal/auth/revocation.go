@@ -136,28 +136,50 @@ func (s *Service) RevokeUser(ctx context.Context, sub string) error {
 }
 
 // RevokeToken 吊销单个 Token（jti；登出用）。ttl 为剩余有效期，
-// 过期后存储端自行清理。
+// 过期后存储端自行清理；本地也记录过期时间，供无存储部署定期清理。
 func (s *Service) RevokeToken(ctx context.Context, jti string, ttl time.Duration) error {
 	if jti == "" {
 		return errors.New("auth -> revoke token: empty jti")
 	}
+	if ttl < 0 {
+		ttl = 0
+	}
+	expiry := s.now().Add(ttl)
 	s.revMu.Lock()
 	s.revokedTokens[jti] = struct{}{}
+	s.revokedExpiry[jti] = expiry
 	s.revMu.Unlock()
 
 	if s.store == nil {
 		return nil
 	}
-	if err := s.store.SaveToken(ctx, jti, s.now().Add(ttl)); err != nil {
+	if err := s.store.SaveToken(ctx, jti, expiry); err != nil {
 		return fmt.Errorf("auth -> save revoked token: %w", err)
 	}
 	return nil
+}
+
+// pruneRevokedTokens 清理已过期的本地吊销记录（调用方持锁）。
+// 无 store 时这是唯一清理路径；有 store 时作为同步前的兜底。
+func (s *Service) pruneRevokedTokensLocked(now time.Time) {
+	for jti, exp := range s.revokedExpiry {
+		if !now.Before(exp) {
+			delete(s.revokedExpiry, jti)
+			delete(s.revokedTokens, jti)
+		}
+	}
 }
 
 // maybeSyncRevocations 惰性周期同步（Verify 热路径只做一次时间判断）。
 // 到期时同步执行：一次 Redis 全量拉取（3s 超时），换跨副本吊销的确定性——
 // 异步执行会让触发请求先于同步完成返回，吊销生效时间不可预期。
 func (s *Service) maybeSyncRevocations() {
+	// 本地过期清理：无 store 时是唯一清理路径，避免登出累积 jti 到 OOM。
+	now := s.now()
+	s.revMu.Lock()
+	s.pruneRevokedTokensLocked(now)
+	s.revMu.Unlock()
+
 	if s.store == nil {
 		return
 	}
@@ -191,6 +213,8 @@ func (s *Service) syncRevocations() {
 		}
 	}
 	s.revokedTokens = tokens
+	// 存储端已按 TTL 清理，本地过期表随之作废（避免与同步结果不一致）
+	s.revokedExpiry = make(map[string]time.Time)
 	s.revMu.Unlock()
 }
 

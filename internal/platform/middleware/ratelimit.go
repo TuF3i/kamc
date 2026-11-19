@@ -86,14 +86,19 @@ func NewMemoryRateLimiter(window time.Duration, limit int) *MemoryRateLimiter {
 // SetNow 覆盖时钟（测试注入）
 func (l *MemoryRateLimiter) SetNow(now func() time.Time) { l.now = now }
 
+// maxMemoryRateLimitKeys 进程内限流键上限：键可由客户端提供（伪造 XFF 场景），
+// 必须有界，否则无 Redis 部署会被随机键耗尽内存。
+const maxMemoryRateLimitKeys = 4096
+
 func (l *MemoryRateLimiter) Allow(_ context.Context, key string) (bool, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
 	cutoff := now.Add(-l.window)
 
-	kept := l.hits[key][:0]
-	for _, t := range l.hits[key] {
+	times, exists := l.hits[key]
+	kept := times[:0]
+	for _, t := range times {
 		if t.After(cutoff) {
 			kept = append(kept, t)
 		}
@@ -102,8 +107,38 @@ func (l *MemoryRateLimiter) Allow(_ context.Context, key string) (bool, error) {
 		l.hits[key] = kept
 		return false, nil
 	}
+	// 新键写入前控制总量：先清过期桶，仍超限则淘汰最久未命中的键。
+	if !exists && len(l.hits) >= maxMemoryRateLimitKeys {
+		l.evictLocked(cutoff)
+	}
 	l.hits[key] = append(kept, now)
 	return true, nil
+}
+
+// evictLocked 清理过期桶并限制键数量（调用方持锁）。
+func (l *MemoryRateLimiter) evictLocked(cutoff time.Time) {
+	for key, times := range l.hits {
+		if len(times) == 0 || !times[len(times)-1].After(cutoff) {
+			delete(l.hits, key)
+		}
+	}
+	for len(l.hits) >= maxMemoryRateLimitKeys {
+		var oldestKey string
+		var oldest time.Time
+		for key, times := range l.hits {
+			if len(times) == 0 {
+				delete(l.hits, key)
+				continue
+			}
+			if last := times[len(times)-1]; oldest.IsZero() || last.Before(oldest) {
+				oldest, oldestKey = last, key
+			}
+		}
+		if oldestKey == "" {
+			return
+		}
+		delete(l.hits, oldestKey)
+	}
 }
 
 func nonce() string {

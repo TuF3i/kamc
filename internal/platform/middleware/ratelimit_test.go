@@ -129,3 +129,40 @@ func TestLoginRateLimit(t *testing.T) {
 		t.Fatalf("different IP: want 200, got %d", rec.Code)
 	}
 }
+
+// TestMemoryRateLimiterBounded 随机键不得无限增长：超过上限时淘汰，
+// 过期桶在写入新键时被清理（无 Redis 部署的 OOM 防护）。
+func TestMemoryRateLimiterBounded(t *testing.T) {
+	now := time.Now()
+	l := NewMemoryRateLimiter(time.Minute, 10)
+	l.SetNow(func() time.Time { return now })
+	ctx := context.Background()
+
+	for i := 0; i < maxMemoryRateLimitKeys*2; i++ {
+		_, _ = l.Allow(ctx, "ip:"+string(rune('a'+i%26))+string(rune('a'+(i/26)%26))+fmtInt(i))
+	}
+	if len(l.hits) > maxMemoryRateLimitKeys {
+		t.Fatalf("limiter keys unbounded: %d", len(l.hits))
+	}
+
+	// 时间前进一个窗口后，新键触发过期清理
+	now = now.Add(2 * time.Minute)
+	_, _ = l.Allow(ctx, "ip:fresh")
+	if len(l.hits) != 1 {
+		t.Fatalf("expired buckets should be swept, got %d", len(l.hits))
+	}
+}
+
+func fmtInt(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	var buf [20]byte
+	pos := len(buf)
+	for i > 0 {
+		pos--
+		buf[pos] = byte('0' + i%10)
+		i /= 10
+	}
+	return string(buf[pos:])
+}

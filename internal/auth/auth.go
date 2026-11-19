@@ -109,6 +109,7 @@ type Service struct {
 	revMu           sync.RWMutex
 	userEpochs      map[string]int64
 	revokedTokens   map[string]struct{}
+	revokedExpiry   map[string]time.Time // 本地过期时间：单副本模式下清理用
 	lastRevSync     time.Time
 }
 
@@ -136,6 +137,7 @@ func NewService(opts ...Option) (*Service, error) {
 	}
 	s.userEpochs = make(map[string]int64)
 	s.revokedTokens = make(map[string]struct{})
+	s.revokedExpiry = make(map[string]time.Time)
 	for _, e := range o.keys {
 		if _, dup := s.keys[e.kid]; dup {
 			return nil, fmt.Errorf("auth -> duplicate kid %q", e.kid)

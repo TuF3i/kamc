@@ -67,10 +67,20 @@ func newMemoryStateStore() *memoryStateStore {
 	return &memoryStateStore{states: make(map[string]time.Time), now: time.Now}
 }
 
+// maxMemoryStates 进程内 state 上限：未完成登录的 state 只能等 TTL 过期，
+// 匿名攻击者可反复 /auth/login 灌入；超过上限时淘汰最早到期项。
+const maxMemoryStates = 8192
+
 func (m *memoryStateStore) Save(_ context.Context, state string, exp time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.states[state] = exp
+	if len(m.states) > maxMemoryStates {
+		m.sweepLocked()
+	}
+	for len(m.states) > maxMemoryStates {
+		m.evictEarliestLocked()
+	}
 	return nil
 }
 
@@ -93,6 +103,21 @@ func (m *memoryStateStore) sweepLocked() {
 			delete(m.states, s)
 		}
 	}
+}
+
+// evictEarliestLocked 淘汰最早到期的 state（调用方持锁；上限兜底）。
+func (m *memoryStateStore) evictEarliestLocked() {
+	var earliestState string
+	var earliest time.Time
+	for s, exp := range m.states {
+		if earliestState == "" || exp.Before(earliest) {
+			earliestState, earliest = s, exp
+		}
+	}
+	if earliestState == "" {
+		return
+	}
+	delete(m.states, earliestState)
 }
 
 // Client OIDC 登录客户端（provider 懒发现，首次使用时请求 discovery）
