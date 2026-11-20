@@ -10,9 +10,10 @@ kamc（Kubernetes Access Manager Center）是基于 Go + Casbin + Authentik SSO 
 | [architecture.md](architecture.md) | 组件、认证、授权、隧道、审计与高可用设计 | 所有人（先读） |
 | [deployment.md](deployment.md) | Docker Compose、原生 K8s、Helm 三种部署方式 | 运维 |
 | [configuration.md](configuration.md) | 全部配置项、环境变量、生产护栏、MinIO | 运维、开发 |
-| [operations.md](operations.md) | 日常运维、备份、轮换、故障排查、验收 | 运维 |
+| [operations.md](operations.md) | 日常运维、备份、轮换、故障排查、验收、指标 | 运维 |
 | [development.md](development.md) | 本地开发、just/make、测试、代码约定 | 开发者 |
 | [security.md](security.md) | 信任边界、威胁模型、上线安全核对表 | 安全、运维 |
+| [../deploy/observability/README.md](../deploy/observability/README.md) | Prometheus/Loki/Promtail/Grafana 观测栈 | 运维 |
 | [design.md](design.md) | v2.0 设计决策记录（历史，部分内容已演进） | 架构参考 |
 | [../api/README.md](../api/README.md) | OpenAPI 使用与更新流程 | 前端、集成方 |
 | [../web/README.md](../web/README.md) | 前端开发、页面与 API 约定 | 前端 |

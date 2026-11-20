@@ -63,6 +63,8 @@ npm run build      # 产出 data/web/
 三种方式（本地 Compose、原生 K8s、Helm）见 [docs/deployment.md](docs/deployment.md)；
 目录与占位符说明见 [deploy/README.md](deploy/README.md)。生产推荐
 `deploy/helm`，本地一键环境用 `deploy/docker`。
+观测栈（Prometheus + Loki + Promtail + Grafana）见
+[deploy/observability/README.md](deploy/observability/README.md)。
 
 ## 许可
 

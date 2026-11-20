@@ -93,8 +93,19 @@ npm run build      # 产物 data/web
 - 修改前端后若 8080 由平台托管页面，需要 `just web` 重新构建；
 - 修改后端接口时同步 `web/src/api/types.ts` 与 mock 数据。
 
-## 五、测试
+## 五、日志与观测
 
+- 应用日志：Zap JSON（默认）→ stdout；本地调试可 `AM_LOG_FORMAT=console`，
+  级别 `AM_LOG_LEVEL=debug`；
+- 访问日志：结构化字段（method/path/status/latency/request_id）；
+- 集群审计：`AM_AUDIT_LOG_FILE`（默认 `data/cluster-audit.jsonl`）JSONL，
+  自动按大小轮转；
+- 指标：`curl -s localhost:8080/metrics | grep kamc_`；
+- 观测栈：`just compose-up-observability` 或
+  `docker compose -f deploy/docker/compose.yaml --profile observability up -d`，
+  见 [deploy/observability/README.md](../deploy/observability/README.md)。
+
+## 六、测试
 ### 单元测试
 
 ```bash
@@ -141,7 +152,7 @@ just helm-lint            # 两个 Chart
 npx --yes @redocly/cli@latest lint api/openapi.yaml
 ```
 
-## 六、代码结构约定
+## 七、代码结构约定
 
 ```text
 cmd/                入口（kamc-platform / kamc-agent / kamc）
@@ -151,16 +162,18 @@ internal/
     service/        业务逻辑
     dao/            gorm 访问
     modules/        模型/DTO（叶包）
-    middleware/     认证/鉴权/限流/日志
-    audit/          审计写入与导出
+    middleware/     认证/鉴权/限流/日志/指标
+    audit/          审计写入、文件出口与回放
     avatarstore/    头像对象存储（local/minio）
     webstatic/      前端静态托管
+  metrics/          Prometheus 指标定义
+  logging/          Zap 初始化（JSON/Console、级别）
   agent/            Agent 模块
   tunnel/           隧道管理器与注册表
   auth/             JWT 服务
   login/            exec 插件登录缓存
 web/                SolidJS 前端
-deploy/             helm / k8s / docker / extra
+deploy/             helm / k8s / docker / observability / extra
 docs/               文档
 api/                OpenAPI
 ```
@@ -174,7 +187,7 @@ api/                OpenAPI
 - 非业务错误用 sentinel + `%w` 包装；
 - 注释中文，导出符号必须有注释。
 
-## 七、新增一个 API 的步骤
+## 八、新增一个 API 的步骤
 
 1. `internal/platform/modules` 定义模型/DTO（如需要）；
 2. `dao` 增加读写方法，`service` 实现业务；
@@ -184,7 +197,7 @@ api/                OpenAPI
 6. 增加单测/集成测试，`just test` 通过；
 7. 涉及权限的接口确认 Casbin 行为（数据面资源级 vs 管理面组）。
 
-## 八、常见问题
+## 九、常见问题
 
 | 现象 | 原因/处理 |
 | --- | --- |
@@ -198,7 +211,7 @@ api/                OpenAPI
 | 多副本头像互不可见 | 启用 MinIO 或挂载 RWX 卷 |
 | 普通用户 discovery 403 | 策略需包含 nonresource 路径（`/api`、`/apis` 等） |
 
-## 九、提交前检查
+## 十、提交前检查
 
 ```bash
 just fmt-check

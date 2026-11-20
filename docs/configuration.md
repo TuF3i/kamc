@@ -71,11 +71,10 @@ tunnel:
 audit:
   spill_file: /var/lib/kamc/audit-spill.jsonl
   retention: 720h                  # 0=不清理
-  syslog:
-    addr: ""                       # udp:// | tcp:// | tls://host:6514
-    tag: kamc-cluster-audit
-    ca_file: ""
-    insecure: false
+  cluster_log:
+    file: /var/log/kamc/cluster-audit.jsonl   # 空=不写文件；Promtail 采集
+    max_mb: 100                    # 单文件上限，超过按时间戳轮转
+    backups: 5                     # 保留轮转文件数
 
 geoip:
   db: ""                           # MaxMind .mmdb
@@ -164,11 +163,17 @@ web:
 | --- | --- | --- |
 | `AM_AUDIT_SPILL_FILE` | `/tmp/kamc-audit-spill.jsonl` | PG 故障暂存文件 |
 | `AM_AUDIT_RETENTION` | `720h` | 保留期，0=不清理 |
-| `AM_SYSLOG_ADDR` | — | `udp://`、`tcp://`、`tls://host:6514` |
-| `AM_SYSLOG_TAG` | `kamc-cluster-audit` | syslog APP-NAME |
-| `AM_SYSLOG_CA_FILE` | 系统根证书 | TLS CA |
-| `AM_SYSLOG_INSECURE` | off | TLS 跳过校验（仅开发） |
+| `AM_AUDIT_LOG_FILE` | `data/cluster-audit.jsonl` | 集群审计 JSONL（Promtail 采集；空=关闭） |
+| `AM_AUDIT_LOG_MAX_MB` | `100` | 单文件上限（MB），超过轮转 |
+| `AM_AUDIT_LOG_BACKUPS` | `5` | 保留的轮转文件数 |
 | `AM_GEOIP_DB` | — | MaxMind `.mmdb`，未配置不解析 |
+
+### 日志（Zap）
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `AM_LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error` |
+| `AM_LOG_FORMAT` | `json` | `json`（生产）或 `console`（本地） |
 
 ### 头像与前端
 
@@ -285,7 +290,15 @@ AM_AVATAR_MINIO_SECRET_KEY=***
 AM_AUDIT_RETENTION=2160h
 ```
 
-## 六、排查配置是否生效
+## 六、可观测性
+
+- 应用日志：Zap JSON → stdout，由容器日志驱动收集；本地可设 `AM_LOG_FORMAT=console`；
+- 集群审计：写 `AM_AUDIT_LOG_FILE`（JSONL，自动轮转），Promtail 采集 → Loki；
+- 指标：`GET /metrics`（Prometheus 格式），包含 HTTP/Casbin/隧道/审计/头像等；
+- 本地观测栈见 [deploy/observability/README.md](../deploy/observability/README.md)；
+- Helm 可开启 `promtail.enabled=true` sidecar 采集审计文件。
+
+## 七、排查配置是否生效
 
 - 启动日志会打印监听地址、web 目录、头像后端（不含密钥）、Redis/LDAP 状态；
 - `GET /version` 返回版本与 commit；

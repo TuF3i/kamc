@@ -19,14 +19,15 @@
 
 ## 二、日志
 
-- 平台日志带 `[模块]` 前缀：`[platform]`、`[tunnel]`、`[postgres]`、`[redis]`；
-- 请求日志由 chi 中间件输出：方法、路径、状态、耗时、request_id；
+- 应用日志使用 Zap 输出 JSON（`AM_LOG_FORMAT=console` 可切可读格式），
+  统一带 `service` 与模块前缀（`[platform]`、`[tunnel]`、`[postgres]`、`[redis]`）；
+- HTTP 访问日志为结构化字段：method/path/status/latency/remote/request_id；
 - 敏感值（DSN 密码、OIDC secret、MinIO key）不会打印；
 - Kubernetes：`kubectl -n k8s-am-system logs -l app.kubernetes.io/instance=kamc`；
 - Compose：`docker compose -f deploy/docker/compose.yaml logs -f platform`。
 
 启动日志会明确输出：监听地址、web 目录、头像后端（local/minio 与 endpoint/bucket）、
-Redis 是否启用、LDAP 是否启用、syslog 是否启用、审计保留期。
+Redis/LDAP 是否启用、集群审计文件路径、审计保留期。
 
 ## 三、审计
 
@@ -34,13 +35,30 @@ Redis 是否启用、LDAP 是否启用、syslog 是否启用、审计保留期�
 | --- | --- |
 | 存储 | PostgreSQL `audit_events`，异步批量写入 |
 | PG 故障 | 写入 `AM_AUDIT_SPILL_FILE`，恢复后回放 |
-| syslog | `AM_SYSLOG_ADDR` 可导出到外部 SIEM |
+| 文件出口 | `AM_AUDIT_LOG_FILE` 写 JSONL（默认 100MB × 5 轮转），Promtail 采集到 Loki |
 | 保留 | `AM_AUDIT_RETENTION`（默认 720h，每小时清理） |
 | 查询 | 管理面 `/api/v1/audit`，列表可 `summary=1` 省流量 |
 | 详情 | `GET /api/v1/audit/{id}` 含请求/响应摘要 |
 
 排障顺序：先看审计页筛选失败事件（`allowed=false`），再对照平台日志的
-request_id。
+request_id，或直接在 Grafana 的 Loki 面板按 `cluster`/`allowed` 过滤。
+
+### 指标
+
+`/metrics` 暴露：
+
+- HTTP：请求数/耗时/并发/响应字节（`kamc_http_*`）；
+- 认证：登录尝试与 JWT 失败（`kamc_auth_attempts_total`、
+  `kamc_jwt_auth_failures_total`）；
+- 鉴权：Casbin allow/deny/error 与耗时（`kamc_casbin_*`）；
+- 隧道：在线数、attach/detach、peer 转发（`kamc_tunnel_*`）；
+- 审计：写入/spill/丢弃/回放、队列深度、写入耗时（`kamc_audit_*`）；
+- 头像：按后端与结果（`kamc_avatar_operations_total`）；
+- 构建与就绪：`kamc_build_info`、`kamc_ready`；
+- Go/进程指标由 Prometheus client 默认暴露。
+
+本地观测栈（Prometheus/Loki/Promtail/Grafana）：
+[deploy/observability/README.md](../deploy/observability/README.md)。
 
 ## 四、备份与恢复
 
@@ -58,6 +76,12 @@ pg_restore -d "$DATABASE_URL" --clean --if-exists kamc-$(date +%F).dump
 - 本地模式：备份 `AM_AVATAR_DIR`（或 RWX 卷快照）；
 - MinIO：使用 `mc mirror` 或 bucket 版本/复制策略；
 - `avatar_url` 存于数据库，恢复时与对象存储需配套。
+
+### 集群审计文件
+
+- `AM_AUDIT_LOG_FILE` 默认只保留本机轮转副本（100MB × 5），长期保留在 Loki；
+- 需要归档原文件时，把 `clusterlog` 卷/目录一并备份；
+- 文件含请求/响应摘要，备份与访问需按审计数据保护。
 
 ### JWT 密钥环
 

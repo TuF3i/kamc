@@ -14,7 +14,7 @@ kamc（Kubernetes Access Manager Center）是基于 Go 的多集群 Kubernetes �
 
 Go 1.26+ / chi v5 / gorm(PostgreSQL) / go-redis v9 / gorilla/websocket / hashicorp/yamux
 golang-jwt v5 + go-oidc v3（认证） / casbin v2 + k8s.io/apiserver（RequestInfo 鉴权）
-minio-go v7（可选头像对象存储） / gopher-lua（登录映射脚本）
+minio-go v7（可选头像对象存储） / gopher-lua（登录映射脚本） / go.uber.org/zap（结构化日志）
 前端：SolidJS 1.9 + Tailwind CSS 4 + TypeScript + Vite（web/，见 web/README.md）
 
 ## 目录结构
@@ -28,6 +28,7 @@ internal/
   wsconn/            WebSocket → net.Conn 适配器（yamux 依赖它，平台/Agent 共用）
   tunnel/            平台侧隧道模块：隧道管理器 + Redis 注册表
   platform/          平台 HTTP 模块：认证/鉴权/集群管理 API
+  logging/           统一日志初始化（Zap JSON/Console、级别、全局替换）
   agent/             Agent 模块：拨出连接循环、Token 轮询、流处理
 infrastructure/
   postgres/          gorm PostgreSQL 连接统一构建
@@ -48,6 +49,7 @@ deploy/
   helm/              Helm Charts（平台 StatefulSet + Agent）
   k8s/               原生 Kubernetes 清单
   docker/            Docker Compose 本地环境
+  observability/     Prometheus/Loki/Promtail/Grafana 配置与面板
   extra/             数据库迁移 SQL、Nginx 配置等
 web/                 管理前端（SolidJS + Tailwind CSS 4 + Vite + TypeScript；见 web/README.md）
 justfile             日常命令入口（Makefile 保留兼容）
@@ -114,10 +116,11 @@ justfile             日常命令入口（Makefile 保留兼容）
 | `AM_AUDIT_SPILL_FILE` | `/tmp/kamc-audit-spill.jsonl` | 审计本地暂存文件（PG 故障时） |
 | `AM_AUDIT_RETENTION` | `720h` | 审计保留期（0=不清理）；每小时后台清理 |
 | `AM_GEOIP_DB` | — | MaxMind GeoLite2/GeoIP2 `.mmdb` 路径（审计地理信息；未配置不解析） |
-| `AM_SYSLOG_ADDR` | — | 集群审计 syslog 导出地址，`udp://`、`tcp://` 或 `tls://host:6514`（空=不导出） |
-| `AM_SYSLOG_TAG` | `kamc-cluster-audit` | syslog APP-NAME |
-| `AM_SYSLOG_CA_FILE` | 系统根证书 | TLS 模式自定义 CA |
-| `AM_SYSLOG_INSECURE` | off | TLS 模式跳过证书校验（仅开发） |
+| `AM_AUDIT_LOG_FILE` | `data/cluster-audit.jsonl` | 集群审计 JSONL（Promtail 采集；空=关闭） |
+| `AM_AUDIT_LOG_MAX_MB` | `100` | 单文件上限，超过按时间戳轮转 |
+| `AM_AUDIT_LOG_BACKUPS` | `5` | 保留的轮转文件数 |
+| `AM_LOG_LEVEL` | `info` | Zap 日志级别（debug/info/warn/error） |
+| `AM_LOG_FORMAT` | `json` | Zap 编码（json/console） |
 | `AM_AVATAR_DIR` | `data/avatar` | 用户头像文件存储目录 |
 | `AM_AVATAR_SECRET` | 派生 | 头像 URL 签名密钥；**生产必填**（缺失拒绝启动），开发环境由部署配置派生 |
 | `AM_AVATAR_BACKEND` | `auto` | 头像存储后端：`auto`/`local`/`minio`（auto：配置 MinIO endpoint 即用对象存储） |

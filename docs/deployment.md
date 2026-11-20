@@ -179,8 +179,27 @@ psql "$DATABASE_URL" -f deploy/extra/migrations/2026-11-02-policy-reset.sql
 - [ ] 普通用户 kubeconfig 可 `kubectl get ns`，未授权资源 403
 - [ ] 管理员策略编辑后 5s 内全部副本生效
 - [ ] 审计页能看到登录与 kubectl 请求；PG 故障时 spill 可回放
+- [ ] `AM_AUDIT_LOG_FILE` 有 JSONL 输出，Promtail 已推送、Loki 可查询
+- [ ] `/metrics` 可抓取，Grafana 面板有数据
 - [ ] 头像上传/展示正常（本地或 MinIO）
 - [ ] Nginx 断连、平台单 Pod 故障、Agent 单副本故障演练
 - [ ] `AM_PASSWORD_LOGIN=0` 或已改默认密码；`AM_AVATAR_SECRET` 已设置
 
 完整人工验收清单见 [deploy/README.md](../deploy/README.md)。
+
+## 十、可观测性
+
+本地一键观测栈（Prometheus + Loki + Promtail + Grafana）：
+
+```bash
+docker compose -f deploy/docker/compose.yaml \
+  --profile observability up -d --build
+```
+
+- 应用日志：Zap JSON 输出到 stdout，由容器日志驱动收集；
+- 集群审计：写 `AM_AUDIT_LOG_FILE`（JSONL，轮转），Promtail 采集 → Loki；
+- 指标：Prometheus 抓取平台 `/metrics`，Grafana 自动导入 kamc 概览面板；
+- K8s：Helm 可开启 `promtail.enabled=true` sidecar；Loki/Grafana/Prometheus
+  建议使用官方 Chart 或外部服务。
+
+详见 [deploy/observability/README.md](../deploy/observability/README.md)。

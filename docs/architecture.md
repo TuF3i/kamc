@@ -51,7 +51,9 @@ kamc 是多集群 Kubernetes 访问管理平台：
 | 前端 | `web/` | SolidJS 管理控制台（构建到 `data/web`） |
 | 鉴权 | `internal/platform/authz` | Casbin RequestInfo 模型与策略同步 |
 | 认证 | `internal/auth`、`internal/platform/oidc` | JWT 签发/校验、JWKS、OIDC |
-| 审计 | `internal/platform/audit` | 异步落库、spill、syslog、保留期 |
+| 审计 | `internal/platform/audit` | 异步落库、spill、文件出口、保留期 |
+| 日志 | `internal/logging` | Zap 初始化（JSON/Console、级别、service 字段） |
+| 指标 | `internal/metrics` | Prometheus 指标定义（HTTP/认证/Casbin/隧道/审计/头像） |
 
 ## 三、请求链路
 
@@ -170,9 +172,16 @@ nonresource 路径同样支持，保证普通用户可以执行 discovery。
 | 集群审计 | 经隧道的 kubectl 请求 | 集群、verb/resource/namespace、allow/deny、请求/响应摘要、GeoIP |
 
 - 异步批量写 PostgreSQL；PG 故障时写本地 spill 文件并在恢复后回放；
-- 可选 syslog 导出（UDP/TCP/TLS）；
+- 集群事件同时写本地 JSONL 文件（`AM_AUDIT_LOG_FILE`，自动轮转），由 Promtail 采集到 Loki；
 - 保留期 `AM_AUDIT_RETENTION`（默认 720h，每小时清理）；
 - 列表默认不返回报文正文（`summary=1`），详情走 `/api/v1/audit/{id}`。
+
+### 日志与指标
+
+- 应用日志：Zap（JSON/Console），统一 `service` 字段，级别 `AM_LOG_LEVEL`；
+- HTTP 访问日志：Zap 结构化字段（method/path/status/latency/request_id）；
+- 指标：`/metrics` 暴露 HTTP、认证、Casbin、隧道、审计、头像、构建与就绪指标；
+- 审计文件出口：JSON Lines + 按大小轮转，Promtail → Loki → Grafana。
 
 ## 九、数据模型（主要表）
 

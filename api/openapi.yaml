@@ -1188,7 +1188,7 @@ paths:
       summary: 审计查询（管理面）
       description: |
         kind=platform 返回平台事件（登录/Token/下载/管理动作，同步输出到 stdio）；
-        kind=cluster 返回集群操作（数据面 API，含原始请求/响应前缀，可经 syslog 导出）。
+        kind=cluster 返回集群操作（数据面 API，含原始请求/响应前缀，可经审计文件导出到 Loki）。
       security:
         - platformJWT: []
       parameters:
