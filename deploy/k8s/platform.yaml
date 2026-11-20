@@ -3,7 +3,7 @@
 # 占位符（部署前替换）：
 #   __IMAGE__                    平台镜像（your-registry/k8s-am-platform:vX.Y.Z）
 #   __PG_DSN__                   PostgreSQL 连接串
-#   __OIDC_ISSUEER_URL__ 等       Authentik 相关（见 deploy/README.md）
+#   __OIDC_ISSUER_URL__ 等       Authentik 相关（见 deploy/README.md）
 #   __DOMAIN__                   平台对外域名
 #
 # 说明：

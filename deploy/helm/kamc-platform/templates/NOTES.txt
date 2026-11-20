@@ -9,7 +9,7 @@ kamc-platform 已部署。
    {{- if .Values.ingress.enabled }}
    Ingress 已启用：确认 DNS/TLS 指向入口控制器；WebSocket 依赖较长的 proxy-read-timeout（默认 3600s）。
    {{- else }}
-   未启用 Ingress：请按 deploy/nginx/nginx.conf 在外部 Nginx 终结 TLS，并反代
+   未启用 Ingress：请按 deploy/extra/nginx/nginx.conf 在外部 Nginx 终结 TLS，并反代
    {{ include "kamc-platform.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}。
    {{- end }}
 

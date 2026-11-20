@@ -17,7 +17,7 @@ type AgentInstallParams struct {
 	ImageTag    string // 镜像 tag（与平台版本一致）
 }
 
-// agentInstallTpl 与 deploy/agent/manifests.yaml 保持一致（§11.3 + §6.2）：
+// agentInstallTpl 与 deploy/k8s/agent.yaml 保持一致（§11.3 + §6.2）：
 // 双副本 HA + 反亲和打散，Token 经 Secret 挂载，Agent 只做字节转发。
 var agentInstallTpl = template.Must(template.New("agent-install").Parse(`# kamc Agent 一键安装清单（由平台生成）
 # 集群：{{.ClusterID}} · 镜像：{{.Image}} · 隧道：{{.TunnelURL}}

@@ -11,7 +11,7 @@
 #   export OIDC_CLIENT_ID=kamc OIDC_CLIENT_SECRET=*** PASSWORD_LOGIN_PASSWORD=***
 #
 # Docker 镜像需提前构建并推送到集群可访问的仓库：
-#   make -C .. image-platform VERSION=v1.0.0
+#   make -C ../.. image-platform VERSION=v1.0.0
 
 SHELL := /bin/bash
 

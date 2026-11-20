@@ -1,22 +1,31 @@
 # kamc 部署指南
 
 对应设计文档 §10（接入层）/§11（部署）。**上线前必须完成文末人工验收清单**
-（本仓库的自动化测试不覆盖真实集群演练）。
+（本仓库的自动化测试不覆盖真实集群演练）。三种部署方式的取舍：
+
+| 方式 | 目录 | 适用场景 |
+| --- | --- | --- |
+| Helm（推荐） | [`helm/`](helm/README.md) | 生产集群；StatefulSet、自动 peer 地址、Secret 契约、PDB/NetworkPolicy |
+| 原生 K8s | [`k8s/`](k8s/README.md) | 无 Helm 的集群；静态清单 + 手工占位符 |
+| Docker Compose | [`docker/`](docker/README.md) | 本地开发/验收；平台 + PG + Redis（可选 MinIO） |
 
 ## 目录
 
-| 文件 | 内容 |
+| 路径 | 内容 |
 | --- | --- |
-| `helm/` | **生产推荐**：`kamc-platform`（StatefulSet）与 `kamc-agent` 两个 Chart，见 [`helm/README.md`](helm/README.md) |
-| `nginx/nginx.conf` | 接入层配置（TLS 终结、$connection_upgrade、三级超时路由） |
-| `platform/manifests.yaml` | 平台 Deployment/Service/headless/PDB/NetworkPolicy/Secret 模板（无 Helm 环境） |
-| `agent/manifests.yaml` | Agent SA/RBAC/Secret/Deployment（双副本，无 Helm 环境） |
+| `helm/` | 生产推荐：`kamc-platform`（StatefulSet）与 `kamc-agent` 两个 Chart |
+| `k8s/platform.yaml` | 平台 Deployment/Service/headless/PDB/NetworkPolicy/Secret 模板 |
+| `k8s/agent.yaml` | Agent SA/RBAC/Secret/Deployment（双副本） |
+| `docker/compose.yaml` | 本地一键环境（PostgreSQL、Redis、可选 MinIO profile） |
+| `extra/nginx/nginx.conf` | 接入层配置（TLS 终结、$connection_upgrade、三级超时路由） |
+| `extra/migrations/` | 一次性数据库迁移 SQL |
 
 ## 镜像构建
 
 ```bash
 make image-platform VERSION=v1.0.0
 make image-agent VERSION=v1.0.0
+# 或：just image-platform / just image-agent
 ```
 
 `kamc-platform` 镜像已包含 `data/web` 前端产物；Agent 镜像只含隧道客户端。
@@ -28,14 +37,15 @@ make image-agent VERSION=v1.0.0
 - Authentik（OIDC Provider）：创建 Application，Redirect URI
   `https://__DOMAIN__/auth/callback`，Scope `openid profile email groups`
 - Nginx ×2 + keepalived VIP（或云 LB）
+- 可选：MinIO / S3 兼容对象存储（多副本共享头像，替代 RWX 卷）
 
 ## 占位符清单
 
 | 位置 | 占位符 | 说明 |
 | --- | --- | --- |
-| nginx.conf | `__AM_DOMAIN__` `__AM_CERT__` `__AM_KEY__` `__PLATFORM_ENDPOINTS__` | 域名/证书/平台副本地址 |
-| platform | `__IMAGE__` `__PG_DSN__` `__REDIS_ADDR__` `__OIDC_*__` `__DOMAIN__` `__PEER_ADDRESSES__` `__PEER_TOKEN__` `__JWT1_PEM_BASE64__` `__AVATAR_SECRET__` | 见文件头注释 |
-| agent | `__IMAGE__` `__PLATFORM_URL__` `__AGENT_TOKEN__` `__CLUSTER_ID__` | Token 经平台签发 |
+| `extra/nginx/nginx.conf` | `__AM_DOMAIN__` `__AM_CERT__` `__AM_KEY__` `__PLATFORM_ENDPOINTS__` | 域名/证书/平台副本地址 |
+| `k8s/platform.yaml` | `__IMAGE__` `__PG_DSN__` `__REDIS_ADDR__` `__OIDC_*__` `__DOMAIN__` `__PEER_ADDRESSES__` `__PEER_TOKEN__` `__JWT1_PEM_BASE64__` `__AVATAR_SECRET__` | 见文件头注释 |
+| `k8s/agent.yaml` | `__IMAGE__` `__PLATFORM_URL__` `__AGENT_TOKEN__` `__CLUSTER_ID__` | Token 经平台签发 |
 
 密钥生成：
 
@@ -52,12 +62,23 @@ base64 -w0 jwt-1.pem                        # __JWT1_PEM_BASE64__
 ## 部署顺序（§11.4）
 
 1. Authentik 配置 OIDC Provider（双副本 + LB）
-2. PostgreSQL（HA）、Redis
-3. 平台集群应用 `deploy/platform/manifests.yaml`（替换占位符后）
-4. Nginx ×2 + keepalived，加载 `deploy/nginx/nginx.conf`
-5. 平台注册目标集群 → 签发 Token
-6. 目标集群应用 `deploy/agent/manifests.yaml`（替换占位符后）
-7. 验证：`GET /api/v1/clusters/{id}` 状态 `online`；kubeconfig 下载后 kubectl 可用
+2. PostgreSQL（HA）、Redis；如需共享头像，准备 MinIO 并创建 bucket
+3. 按需执行 `extra/migrations/` 中的一次性 SQL
+4. 平台集群应用 `k8s/platform.yaml`（替换占位符后）或 Helm 安装
+5. Nginx ×2 + keepalived，加载 `extra/nginx/nginx.conf`
+6. 平台注册目标集群 → 签发 Token
+7. 目标集群应用 `k8s/agent.yaml`（替换占位符后）或 Helm 安装 Agent
+8. 验证：`GET /api/v1/clusters/{id}` 状态 `online`；kubeconfig 下载后 kubectl 可用
+
+## 头像存储
+
+默认本地目录（`AM_AVATAR_DIR`，镜像内 `/data/avatar`）。多副本时必须使用共享存储：
+
+- 推荐：配置 MinIO，`AM_AVATAR_BACKEND=minio` + `AM_AVATAR_MINIO_*`；
+- 或给所有副本挂载同一 RWX 卷。
+
+浏览器始终访问平台签名的 `/avatars/{uid}?token=...`，对象存储地址不下发。
+完整配置见 [docs/configuration.md](../docs/configuration.md)。
 
 ## 运维要点
 
@@ -71,6 +92,7 @@ base64 -w0 jwt-1.pem                        # __JWT1_PEM_BASE64__
 - **Token 轮换**：重新签发即旧 Token 进 24h 宽限期；彻底失效后 Agent 自动停止
   重试并等待新 Token（更新 Secret 即恢复，§6.5）
 - **踢出用户**：`POST /api/v1/auth/revoke {"sub":"..."}`（5s 内同步到全部副本）
+- **审计保留**：`AM_AUDIT_RETENTION` 默认 720h；PG 故障时写本地 spill 并回放
 
 ## 上线前人工验收清单（真实环境，本仓库自动化不覆盖）
 
@@ -88,3 +110,4 @@ base64 -w0 jwt-1.pem                        # __JWT1_PEM_BASE64__
 - [ ] 确认 `AM_PASSWORD_LOGIN=0` 或已配置非默认密码（生产清单默认关闭）
 - [ ] 审计保留期 `AM_AUDIT_RETENTION` 与 syslog TLS 目标已确认
 - [ ] 踢出用户后全部副本 5s 内生效
+- [ ] 头像多副本可见（MinIO 或 RWX 卷）

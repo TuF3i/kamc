@@ -33,7 +33,7 @@ make -C deploy/helm status
 - Kubernetes 1.23+
 - 镜像已推送到可访问的仓库（`make image-platform` / `make image-agent`）
 - PostgreSQL（推荐 HA）、Redis（可选；多副本跨 Pod 转发与吊销同步需要）
-- 平台对外 TLS（推荐外部 Nginx + `deploy/nginx/nginx.conf`；WebSocket 需要长读超时）
+- 平台对外 TLS（推荐外部 Nginx + `deploy/extra/nginx/nginx.conf`；WebSocket 需要长读超时）
 - OIDC（Authentik）或内置密码登录
 
 ## 安装平台
@@ -86,7 +86,7 @@ helm upgrade --install kamc deploy/helm/kamc-platform \
 
 ### 3) 外部入口
 
-- 默认不创建 Ingress：按 `deploy/nginx/nginx.conf` 在外部 Nginx 终结 TLS，
+- 默认不创建 Ingress：按 `deploy/extra/nginx/nginx.conf` 在外部 Nginx 终结 TLS，
   反代 `<fullname>:8080`。
 - 或 `--set ingress.enabled=true --set ingress.hosts[0].host=kamc.example.com`，
   默认已带 WebSocket 所需的 `proxy-read-timeout/send-timeout=3600` 与关闭 buffering。
@@ -132,5 +132,5 @@ helm template kamc deploy/helm/kamc-platform -n k8s-am-system -f deploy/helm/kam
 
 ## 与静态清单的关系
 
-`deploy/platform/manifests.yaml` 与 `deploy/agent/manifests.yaml` 保留作为无 Helm
+`deploy/k8s/platform.yaml` 与 `deploy/k8s/agent.yaml` 保留作为无 Helm
 环境的最小模板；两者字段保持一致。生产建议使用 Helm（Secret 管理、升级与回滚更可控）。

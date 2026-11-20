@@ -15,8 +15,8 @@ import (
 func manifestFiles(t *testing.T) []string {
 	t.Helper()
 	var files []string
-	for _, dir := range []string{"platform", "agent"} {
-		path := filepath.Join(dir, "manifests.yaml")
+	for _, name := range []string{"platform.yaml", "agent.yaml"} {
+		path := filepath.Join("k8s", name)
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("manifest missing: %v", err)
 		}
@@ -48,7 +48,7 @@ func TestManifestsAreValidYAML(t *testing.T) {
 
 // TestPlatformManifestEssentials 平台清单关键结构抽查（HA 语义不可回退）。
 func TestPlatformManifestEssentials(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("platform", "manifests.yaml"))
+	raw, err := os.ReadFile(filepath.Join("k8s", "platform.yaml"))
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestPlatformManifestEssentials(t *testing.T) {
 
 // TestAgentManifestEssentials Agent 清单关键结构抽查。
 func TestAgentManifestEssentials(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("agent", "manifests.yaml"))
+	raw, err := os.ReadFile(filepath.Join("k8s", "agent.yaml"))
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
