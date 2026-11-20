@@ -1,9 +1,10 @@
 openapi: 3.0.3
 info:
   title: kamc 平台 API
-  version: 2.0.0
+  version: 3.1.0
   description: |
-    Kubernetes Access Manager Center 平台 HTTP API（设计文档 docs/design.md v2.0）。
+    Kubernetes Access Manager Center 平台 HTTP API。架构与鉴权细节见
+    `docs/architecture.md`；历史设计决策见 `docs/design.md`（v2.0）。
 
     ## 响应约定（错误处理模式 B）
 
@@ -27,12 +28,17 @@ info:
     | 自服务（kubeconfig 生成、登出、/auth/me） | 平台 JWT（Bearer） | 仅需有效身份 |
     | `/api/v1/agent/register` | 注册 Token（Bearer，`am-reg-` 前缀） | 一次性换取长期 Token |
     | `/tunnel` | 长期 Agent Token（Bearer，`am-clu-` 前缀） | Agent 专用（WebSocket 升级） |
-    | `/proxy/{clusterID}/**` | 平台 JWT（Bearer） | 数据面，Casbin 资源级鉴权 + Impersonation 注入 |
+    | `/proxy/{clusterID}/**` | 平台 JWT（Bearer） | 数据面，平台 Casbin 资源级鉴权（集群侧不注入 Impersonation） |
+    | `/avatars/{uid}` | 查询参数 `token`（HMAC 签名） | 头像读取；`<img>` 无法携带 Authorization |
 
     平台 JWT 获取途径：OIDC 登录（/auth/login → /auth/callback）、
     ID Token 兑换（/auth/token-exchange，exec plugin 用）、
-    内置账号密码登录（/auth/password-login，默认 sysadmin/sysadmin123）。
+    内置账号密码登录（/auth/password-login，默认 sysadmin/sysadmin123）、
+    LDAP 登录（/auth/ldap-login，配置 LDAP 后可用）。
     开发环境可经 `/auth/dev-token` 直签（AM_DEV_ISSUE_TOKEN=1，生产默认 404）。
+
+    头像字节默认存本地目录，配置 MinIO/S3 后透明切换；对外 URL 始终是
+    `/avatars/{uid}?token=...`，对象存储地址与凭据不下发。
 servers:
   - url: https://{domain}
     variables:
@@ -45,11 +51,15 @@ tags:
   - name: 认证
     description: OIDC 登录、平台 JWT 签发与吊销
   - name: 集群管理
-    description: 目标集群注册与管理（管理面）
+    description: 目标集群注册、管理与运行时信息（管理面）
   - name: Agent Token
     description: Agent Token 签发/轮换/吊销/注册交换
   - name: kubeconfig
     description: 用户 kubeconfig 生成（自服务）
+  - name: 用户目录
+    description: 平台用户/组目录与头像（管理面）
+  - name: 映射脚本
+    description: 登录期 Lua 映射脚本（管理面）
   - name: 权限策略
     description: 组织/用户直接策略与集群资源发现（管理面）
   - name: 机器人
@@ -57,7 +67,7 @@ tags:
   - name: 审计
     description: 审计事件查询（管理面）
   - name: 数据面
-    description: kubectl 请求代理（JWT + Casbin + Impersonation）
+    description: kubectl 请求代理（JWT + 平台 Casbin；集群侧不做 Impersonation）
   - name: Agent
     description: Agent 反向隧道入口
 
@@ -251,6 +261,38 @@ paths:
         '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
         '404': {description: 密码登录未启用（AM_PASSWORD_LOGIN=0）}
 
+  /auth/ldap-login:
+    post:
+      tags: [认证]
+      summary: LDAP 账号密码登录
+      description: |
+        独立 LDAP 直登端点（CLI/exec 插件场景；Web 端优先使用
+        /auth/password-login 的统一 fallback 链路）。认证成功后同步平台用户/组、
+        执行映射脚本并签发平台 JWT。未配置 LDAP 时返回业务错误信封。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: {type: string}
+                password: {type: string}
+      responses:
+        '200':
+          description: 平台 JWT；业务错误时 `status != 0`（LDAP 未启用/凭证错误）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/IssuedCredential'}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+
   /auth/me:
     get:
       tags: [认证]
@@ -287,6 +329,40 @@ paths:
                 allOf:
                   - $ref: '#/components/schemas/Envelope'
         '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+
+  /avatars/{uid}:
+    get:
+      tags: [用户目录]
+      summary: 读取用户头像（签名 token）
+      description: |
+        匿名读取头像字节。`token` 为平台对 uid 的 HMAC 签名，作为读取凭证
+        （`<img src>` 无法携带 Authorization 头）。本地目录与 MinIO 后端对
+        客户端透明，响应内容一致。
+      security: []
+      parameters:
+        - name: uid
+          in: path
+          required: true
+          schema: {type: string}
+        - name: token
+          in: query
+          required: true
+          schema: {type: string}
+        - name: v
+          in: query
+          required: false
+          description: 重新上传后的缓存破坏参数
+          schema: {type: string}
+      responses:
+        '200':
+          description: 图片字节（Content-Type 为上传时的类型）
+          content:
+            image/png: {schema: {type: string, format: binary}}
+            image/jpeg: {schema: {type: string, format: binary}}
+            image/webp: {schema: {type: string, format: binary}}
+            image/gif: {schema: {type: string, format: binary}}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '404': {description: 头像不存在}
 
   /.well-known/jwks.json:
     get:
@@ -580,7 +656,12 @@ paths:
                 new_password: {type: string, description: 新密码（8-72 字节，bcrypt 落库）}
       responses:
         '200':
-          description: 修改成功（data.changed=true；当前 Token 已吊销）
+          description: |
+            修改成功（data.changed=true；当前 Token 已吊销）。业务错误同样返回
+            HTTP 200 信封：40012 当前密码不正确；40013 密码由身份源管理
+            （SSO/LDAP）；40014 未设置本地密码；10001 新密码长度不在 8-72
+            字节范围内。
+          x-kamc-business-errors: [40012, 40013, 40014, 10001]
           content:
             application/json:
               schema:
@@ -593,14 +674,6 @@ paths:
                         properties:
                           changed: {type: boolean}
         '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
-        '200-business-error':
-          description: |
-            业务错误（HTTP 200 信封）：40012 当前密码不正确；40013 密码由
-            身份源管理（SSO/LDAP）；40014 未设置本地密码；10001 新密码长度
-            不在 8-72 字节范围内。
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/Envelope'}
 
   /api/v1/profile/avatar:
     post:
@@ -608,7 +681,8 @@ paths:
       summary: 修改自己的头像（自服务）
       description: |
         仅需 JWT：上传 raw 图片体（image/png、image/jpeg、image/webp、
-        image/gif，≤2MB），保存到平台头像目录并返回带签名 token 的展示 URL。
+        image/gif，≤2MB），写入头像存储（本地目录或 MinIO）并返回带签名
+        token 的展示 URL。
       security:
         - platformJWT: []
       requestBody:
@@ -639,6 +713,51 @@ paths:
         '400':
           description: 类型/大小非法（纯文本）
         '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '503':
+          description: 头像存储未启用（纯文本）
+
+  /api/v1/users/{username}/avatar:
+    post:
+      tags: [用户目录]
+      summary: 修改指定用户头像（管理面）
+      description: |
+        管理员上传 raw 图片体（image/png、image/jpeg、image/webp、image/gif，
+        ≤2MB），写入该用户的头像对象并更新 `avatar_url`。存储后端（本地目录或
+        MinIO）对客户端透明。
+      security:
+        - platformJWT: []
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          image/png:
+            schema: {type: string, format: binary}
+          image/jpeg:
+            schema: {type: string, format: binary}
+          image/webp:
+            schema: {type: string, format: binary}
+          image/gif:
+            schema: {type: string, format: binary}
+      responses:
+        '200':
+          description: 新头像 URL
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          avatar_url: {type: string}
+        '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
+        '403': {$ref: '#/components/responses/PlainTextForbidden'}
         '503':
           description: 头像存储未启用（纯文本）
 
@@ -955,7 +1074,7 @@ paths:
 
   /api/v1/clusters/{id}/info:
     get:
-      tags: [集群]
+      tags: [集群管理]
       summary: 集群概要信息（kubectl cluster-info 语义）
       description: |
         经 Agent 隧道读取目标集群的版本与控制平面/CoreDNS 地址：
@@ -982,7 +1101,7 @@ paths:
 
   /api/v1/clusters/{id}/agent-install:
     post:
-      tags: [集群]
+      tags: [集群管理]
       summary: 生成 Agent 一键安装预览
       description: |
         用刚签发的长期 Agent Token 生成一键安装清单预览（kubectl 命令 + YAML）。
@@ -1013,7 +1132,7 @@ paths:
 
   /agent-install.yaml:
     get:
-      tags: [集群]
+      tags: [集群管理]
       summary: 拉取 Agent 一键安装清单（kubectl apply 用）
       description: |
         kubectl apply -f 的拉取端点：Agent 长期 Token 即拉取凭证（与清单内嵌
@@ -1238,7 +1357,7 @@ paths:
       security:
         - platformJWT: []
       parameters:
-        - $ref: '#/components/parameters/ClusterID'
+        - $ref: '#/components/parameters/ClusterIDPath'
       responses:
         '200':
           description: 上游响应原样透传（含流式/101 升级；任意内容类型）
@@ -1261,7 +1380,7 @@ paths:
       security:
         - platformJWT: []
       parameters:
-        - $ref: '#/components/parameters/ClusterID'
+        - $ref: '#/components/parameters/ClusterIDPath'
       responses:
         '200': {description: 上游响应透传}
         '401': {$ref: '#/components/responses/PlainTextUnauthorized'}
@@ -1276,7 +1395,7 @@ paths:
       security:
         - platformJWT: []
       parameters:
-        - $ref: '#/components/parameters/ClusterID'
+        - $ref: '#/components/parameters/ClusterIDPath'
         - name: path
           in: path
           required: true
@@ -1293,7 +1412,7 @@ paths:
       security:
         - platformJWT: []
       parameters:
-        - $ref: '#/components/parameters/ClusterID'
+        - $ref: '#/components/parameters/ClusterIDPath'
         - name: path
           in: path
           required: true
@@ -1494,6 +1613,12 @@ components:
       required: true
       schema: {type: string, maxLength: 64}
       description: 集群 ID（Casbin dom）
+    ClusterIDPath:
+      name: clusterID
+      in: path
+      required: true
+      schema: {type: string, maxLength: 64}
+      description: 集群 ID（数据面代理路径参数）
 
   responses:
     PlainTextUnauthorized:
@@ -1662,7 +1787,7 @@ components:
         uid: {type: string, description: 平台内部唯一 ID}
         username: {type: string}
         nickname: {type: string}
-        avatar_url: {type: string, description: '头像展示 URL（平台签名的 /avatars/{uid}?token=… 或外部 URL）'}
+        avatar_url: {type: string, description: '头像展示 URL（平台签名的 /avatars/{uid}?token=…，存储后端 local/MinIO 对客户端透明；也可能是 SSO 外部图片）'}
         groups:
           type: array
           items: {type: string}
