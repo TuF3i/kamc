@@ -18,6 +18,7 @@
 just --list          # 查看全部命令
 just build           # bin/kamc-platform、bin/kamc-agent、bin/kamc
 just release         # 前端 data/web + 后端
+just kamc-cross      # exec 插件跨平台构建（linux/windows amd64）
 just test            # go test -count=1 ./...
 just vet             # go vet ./...
 just fmt             # gofmt -w

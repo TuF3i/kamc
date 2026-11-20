@@ -44,6 +44,22 @@ agent:
 kamc:
     go build -ldflags "{{ldflags}}" -o bin/kamc ./cmd/kamc
 
+# 跨平台构建 exec 插件（默认 linux/windows amd64；KAMC_TARGETS 可覆盖）
+kamc-cross:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p bin
+    targets="${KAMC_TARGETS:-linux/amd64 windows/amd64}"
+    for target in $targets; do
+      os="${target%/*}"
+      arch="${target#*/}"
+      ext=""
+      if [ "$os" = "windows" ]; then ext=".exe"; fi
+      out="bin/kamc-${os}-${arch}${ext}"
+      echo "==> $out"
+      GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags "{{ldflags}}" -o "$out" ./cmd/kamc
+    done
+
 # 全量测试（数据库用例需 TEST_PG_DSN）
 test:
     go test -count=1 ./...

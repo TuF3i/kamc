@@ -10,7 +10,7 @@ LDFLAGS := -X github.com/TuF3i/kamc/internal/version.Version=$(VERSION) \
 WEB_DIR  := web
 WEB_OUT  := data/web
 
-.PHONY: build release web platform agent kamc image-platform image-agent test vet fmt tidy clean
+.PHONY: build release web platform agent kamc kamc-cross image-platform image-agent test vet fmt tidy clean
 
 # 仅后端三件套（开发迭代用）
 build: platform agent kamc
@@ -34,6 +34,19 @@ agent:
 
 kamc:
 	go build -ldflags "$(LDFLAGS)" -o bin/kamc ./cmd/kamc
+
+# 跨平台构建 exec 插件（默认 linux/windows amd64；
+# 可用 KAMC_TARGETS="linux/arm64 windows/amd64" 覆盖）
+KAMC_TARGETS ?= linux/amd64 windows/amd64
+kamc-cross:
+	@mkdir -p bin
+	@set -e; for target in $(KAMC_TARGETS); do \
+		os=$${target%/*}; arch=$${target#*/}; ext=""; \
+		if [ "$$os" = "windows" ]; then ext=".exe"; fi; \
+		out="bin/kamc-$$os-$$arch$$ext"; \
+		echo "==> $$out"; \
+		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o "$$out" ./cmd/kamc; \
+	done
 
 # 容器镜像（需要本机 docker；tag 默认 VERSION）
 image-platform:

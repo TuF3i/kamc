@@ -142,6 +142,7 @@ justfile             日常命令入口（Makefile 保留兼容）
 just build   # bin/kamc-platform + bin/kamc-agent + bin/kamc（exec 插件）
 just test    # 全量测试
 just vet
+just kamc-cross # 跨平台构建 exec 插件（linux/windows amd64）
 just web     # 前端 tsc + vite build → data/web
 just dev-web # 前端开发（代理 127.0.0.1:8080）
 # Makefile 保留兼容：make build / make test / make release / make helm-*
