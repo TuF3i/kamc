@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import { App, Button } from 'antd';
-import { CheckOutlined, CopyOutlined } from '@ant-design/icons';
+import { createSignal } from 'solid-js';
+import { Button } from '@/lib/widgets';
+import { toast } from '@/lib/storage/toast';
+import { CheckOutlined, CopyOutlined } from '@/lib/icons';
 
-interface CopyButtonProps {
+export interface CopyButtonProps {
   text: string;
   size?: 'small' | 'middle' | 'large';
   label?: string;
@@ -10,17 +11,16 @@ interface CopyButtonProps {
 }
 
 /** 复制到剪贴板，Clipboard API 不可用时回退到 textarea。 */
-export function CopyButton({ text, size = 'small', label, type = 'text' }: CopyButtonProps) {
-  const { message } = App.useApp();
-  const [copied, setCopied] = useState(false);
+export function CopyButton(props: CopyButtonProps) {
+  const [copied, setCopied] = createSignal(false);
 
   const copy = async () => {
     try {
       if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
+        await navigator.clipboard.writeText(props.text);
       } else {
         const area = document.createElement('textarea');
-        area.value = text;
+        area.value = props.text;
         area.style.position = 'fixed';
         area.style.opacity = '0';
         document.body.appendChild(area);
@@ -29,21 +29,21 @@ export function CopyButton({ text, size = 'small', label, type = 'text' }: CopyB
         area.remove();
       }
       setCopied(true);
-      message.success('已复制到剪贴板');
+      toast.success('已复制到剪贴板');
       window.setTimeout(() => setCopied(false), 1500);
     } catch {
-      message.error('复制失败，请手动选择文本');
+      toast.error('复制失败，请手动选择文本');
     }
   };
 
   return (
     <Button
-      size={size}
-      type={type}
-      icon={copied ? <CheckOutlined /> : <CopyOutlined />}
-      onClick={copy}
+      size={props.size ?? 'small'}
+      type={props.type ?? 'text'}
+      icon={copied() ? <CheckOutlined class="h-4 w-4" /> : <CopyOutlined class="h-4 w-4" />}
+      onClick={() => void copy()}
     >
-      {label ?? '复制'}
+      {props.label ?? '复制'}
     </Button>
   );
 }

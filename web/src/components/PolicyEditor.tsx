@@ -1,16 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
-  App,
-  Button,
-  Drawer,
-  Radio,
-  Select,
-  Space,
-  Tag,
-  Typography,
-} from 'antd';
-import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
+  For,
+  Show,
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+} from 'solid-js';
 import { createPolicies } from '@/api/access';
 import { listGroups, listUsers } from '@/api/users';
 import { listClusterResources } from '@/api/resources';
@@ -21,6 +16,17 @@ import type {
   PolicyRuleInput,
   Robot,
 } from '@/api/types';
+import { toast } from '@/lib/storage/toast';
+import {
+  Alert,
+  Button,
+  Drawer,
+  Segmented,
+  Select,
+  Tag,
+  type SelectOption,
+} from '@/lib/widgets';
+import { DeleteOutlined, PlusOutlined } from '@/lib/icons';
 
 interface PolicyEditorProps {
   open: boolean;
@@ -62,36 +68,34 @@ function newRule(key: number): RuleDraft {
   return { key, resourceKey: undefined, namespace: '*', verbs: [] };
 }
 
-export function PolicyEditor({
-  open,
-  clusters,
-  robots = [],
-  robotOnly = false,
-  initialSubjectType,
-  initialSubject,
-  onClose,
-  onCreated,
-}: PolicyEditorProps) {
-  const { message } = App.useApp();
-  const [subjectType, setSubjectType] = useState<SubjectType>(robotOnly ? 'robot' : 'user');
-  const [subject, setSubject] = useState<string>();
-  const [cluster, setCluster] = useState<string>();
-  const [directoryOptions, setDirectoryOptions] = useState<DirectoryOption[]>([]);
-  const [directoryLoading, setDirectoryLoading] = useState(false);
-  const [directoryError, setDirectoryError] = useState<string | null>(null);
-  const [resources, setResources] = useState<ClusterResource[]>([]);
-  const [namespaces, setNamespaces] = useState<string[]>([]);
-  const [resourceLoading, setResourceLoading] = useState(false);
-  const [resourceError, setResourceError] = useState<string | null>(null);
-  const [rules, setRules] = useState<RuleDraft[]>([newRule(1)]);
-  const [submitting, setSubmitting] = useState(false);
-  const ruleSeq = useRef(2);
-  const searchTimer = useRef<number>();
+export function PolicyEditor(props: PolicyEditorProps) {
+  const [subjectType, setSubjectType] = createSignal<SubjectType>(
+    props.robotOnly ? 'robot' : 'user',
+  );
+  const [subject, setSubject] = createSignal<string | undefined>(undefined);
+  const [cluster, setCluster] = createSignal<string | undefined>(undefined);
+  const [directoryOptions, setDirectoryOptions] = createSignal<DirectoryOption[]>([]);
+  const [directoryLoading, setDirectoryLoading] = createSignal(false);
+  const [directoryError, setDirectoryError] = createSignal<string | null>(null);
+  const [resources, setResources] = createSignal<ClusterResource[]>([]);
+  const [namespaces, setNamespaces] = createSignal<string[]>([]);
+  const [resourceLoading, setResourceLoading] = createSignal(false);
+  const [resourceError, setResourceError] = createSignal<string | null>(null);
+  const [rules, setRules] = createSignal<RuleDraft[]>([newRule(1)]);
+  const [submitting, setSubmitting] = createSignal(false);
 
-  /** 机器人主体候选：值使用机器人 ID（后端拼 robot:<id> 与 Token sub 对齐） */
-  const robotOptions = useMemo<DirectoryOption[]>(
-    () => robots.map((r) => ({ value: r.id, label: `${r.name}（${r.sub}）` })),
-    [robots],
+  let ruleSeq = 2;
+  let searchTimer: number | undefined;
+
+  onCleanup(() => {
+    if (searchTimer) window.clearTimeout(searchTimer);
+  });
+
+  const robotOptions = createMemo<DirectoryOption[]>(() =>
+    (props.robots ?? []).map((robot) => ({
+      value: robot.id,
+      label: `${robot.name}（${robot.sub}）`,
+    })),
   );
 
   const loadDirectory = async (type: SubjectType, query: string) => {
@@ -99,7 +103,12 @@ export function PolicyEditor({
     if (type === 'robot') {
       const q = query.trim().toLowerCase();
       setDirectoryOptions(
-        robotOptions.filter((o) => !q || o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q)),
+        robotOptions().filter(
+          (option) =>
+            !q ||
+            option.label.toLowerCase().includes(q) ||
+            option.value.toLowerCase().includes(q),
+        ),
       );
       setDirectoryLoading(false);
       return;
@@ -110,19 +119,27 @@ export function PolicyEditor({
       const options: DirectoryOption[] =
         type === 'org'
           ? (await listGroups())
-              .filter((g) => !q || g.name.toLowerCase().includes(q) || g.desc.toLowerCase().includes(q))
-              .map((g) => ({ value: g.name, label: `组 · ${g.name}（${g.members.length} 人）` }))
+              .filter(
+                (group) =>
+                  !q ||
+                  group.name.toLowerCase().includes(q) ||
+                  group.desc.toLowerCase().includes(q),
+              )
+              .map((group) => ({
+                value: group.name,
+                label: `组 · ${group.name}（${group.members.length} 人）`,
+              }))
           : (await listUsers())
               .filter(
-                (u) =>
+                (user) =>
                   !q ||
-                  u.username.toLowerCase().includes(q) ||
-                  u.nickname.toLowerCase().includes(q) ||
-                  u.email.toLowerCase().includes(q),
+                  user.username.toLowerCase().includes(q) ||
+                  user.nickname.toLowerCase().includes(q) ||
+                  user.email.toLowerCase().includes(q),
               )
-              .map((u) => ({
-                value: u.username,
-                label: `${u.nickname || u.username}（${u.username}）`,
+              .map((user) => ({
+                value: user.username,
+                label: `${user.nickname || user.username}（${user.username}）`,
               }));
       setDirectoryOptions(options);
     } catch (err) {
@@ -133,25 +150,24 @@ export function PolicyEditor({
     }
   };
 
-  useEffect(() => {
-    if (!open) return;
-    const type = initialSubjectType ?? (robotOnly ? 'robot' : 'user');
+  createEffect(() => {
+    if (!props.open) return;
+    const type = props.initialSubjectType ?? (props.robotOnly ? 'robot' : 'user');
     setSubjectType(type);
-    setSubject(initialSubject);
+    setSubject(props.initialSubject);
     setCluster(undefined);
     setResources([]);
     setNamespaces([]);
     setRules([newRule(1)]);
-    ruleSeq.current = 2;
+    ruleSeq = 2;
     setResourceError(null);
     void loadDirectory(type, '');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, initialSubjectType, initialSubject]);
+  });
 
   const onSubjectSearch = (query: string) => {
-    if (searchTimer.current) window.clearTimeout(searchTimer.current);
-    searchTimer.current = window.setTimeout(() => {
-      void loadDirectory(subjectType, query);
+    if (searchTimer) window.clearTimeout(searchTimer);
+    searchTimer = window.setTimeout(() => {
+      void loadDirectory(subjectType(), query);
     }, 300);
   };
 
@@ -162,39 +178,40 @@ export function PolicyEditor({
     void loadDirectory(type, '');
   };
 
-  const resourceMap = useMemo(() => {
+  const resourceMap = createMemo(() => {
     const map = new Map<string, ClusterResource>();
-    for (const resource of resources) {
-      map.set(resourceKey(resource), resource);
-    }
+    for (const resource of resources()) map.set(resourceKey(resource), resource);
     return map;
-  }, [resources]);
+  });
 
-  const resourceOptions = useMemo(() => {
+  const resourceOptions = createMemo<SelectOption[]>(() => {
     const groups = new Map<string, { value: string; label: string }[]>();
-    for (const resource of resources) {
-      const groupLabel = resource.group ? `${resource.group}/${resource.version}` : resource.version;
+    for (const resource of resources()) {
+      const groupLabel = resource.group
+        ? `${resource.group}/${resource.version}`
+        : resource.version;
       const label = `${resource.resource}${resource.subresource ? `/${resource.subresource}` : ''} · ${resource.kind}`;
       const list = groups.get(groupLabel) ?? [];
       list.push({ value: resourceKey(resource), label });
       groups.set(groupLabel, list);
     }
     return [
-      { label: '通配', options: [{ value: '*', label: '*（全部资源）' }] },
+      { label: '通配', value: '', options: [{ value: '*', label: '*（全部资源）' }] },
       {
         label: '非资源路径',
+        value: '',
         options: [{ value: NONRESOURCE_KEY, label: 'nonresource/*（版本与发现接口）' }],
       },
-      ...Array.from(groups.entries()).map(([label, options]) => ({ label, options })),
+      ...Array.from(groups.entries()).map(([label, options]) => ({ label, value: '', options })),
     ];
-  }, [resources]);
+  });
 
-  const loadResources = async (clusterID: string) => {
+  const loadResources = async (clusterID: string | undefined) => {
     setCluster(clusterID);
     setResources([]);
     setNamespaces([]);
     setResourceError(null);
-    setRules([newRule(ruleSeq.current++)]);
+    setRules([newRule(ruleSeq++)]);
     if (!clusterID) return;
     setResourceLoading(true);
     try {
@@ -202,7 +219,7 @@ export function PolicyEditor({
       setResources(data.resources);
       setNamespaces(data.namespaces);
       if (data.partial) {
-        message.warning('部分 API 组的资源发现失败，资源列表可能不完整');
+        toast.warning('部分 API 组的资源发现失败，资源列表可能不完整');
       }
     } catch (err) {
       setResourceError(err instanceof Error ? err.message : '集群资源加载失败');
@@ -212,7 +229,9 @@ export function PolicyEditor({
   };
 
   const updateRule = (key: number, patch: Partial<RuleDraft>) => {
-    setRules((prev) => prev.map((rule) => (rule.key === key ? { ...rule, ...patch } : rule)));
+    setRules((prev) =>
+      prev.map((rule) => (rule.key === key ? { ...rule, ...patch } : rule)),
+    );
   };
 
   const onResourceChange = (key: number, value: string) => {
@@ -224,7 +243,7 @@ export function PolicyEditor({
       updateRule(key, { resourceKey: value, namespace: '', verbs: [] });
       return;
     }
-    const resource = resourceMap.get(value);
+    const resource = resourceMap().get(value);
     updateRule(key, {
       resourceKey: value,
       namespace: resource?.namespaced ? '*' : '',
@@ -234,7 +253,7 @@ export function PolicyEditor({
 
   const selectedResource = (rule: RuleDraft): ClusterResource | undefined =>
     rule.resourceKey && rule.resourceKey !== '*' && rule.resourceKey !== NONRESOURCE_KEY
-      ? resourceMap.get(rule.resourceKey)
+      ? resourceMap().get(rule.resourceKey)
       : undefined;
 
   const verbsOptions = (rule: RuleDraft) => {
@@ -245,9 +264,7 @@ export function PolicyEditor({
       ];
     }
     const resource = selectedResource(rule);
-    if (!resource) {
-      return [{ value: '*', label: '*（全部动作）' }];
-    }
+    if (!resource) return [{ value: '*', label: '*（全部动作）' }];
     return [
       { value: '*', label: '*（全部动作）' },
       ...resource.verbs.map((verb) => ({ value: verb, label: verb })),
@@ -258,62 +275,68 @@ export function PolicyEditor({
     updateRule(key, { verbs: values.includes('*') ? ['*'] : values });
   };
 
-  const addRule = () => {
-    setRules((prev) => [...prev, newRule(ruleSeq.current++)]);
-  };
+  const addRule = () => setRules((prev) => [...prev, newRule(ruleSeq++)]);
 
   const removeRule = (key: number) => {
-    setRules((prev) => (prev.length === 1 ? prev : prev.filter((rule) => rule.key !== key)));
+    setRules((prev) =>
+      prev.length === 1 ? prev : prev.filter((rule) => rule.key !== key),
+    );
   };
 
-  const previewRows = useMemo<PreviewRow[]>(() => {
-    if (!subject || !cluster) return [];
-    const sub = `${subjectType}:${subject}`;
+  const previewRows = createMemo<PreviewRow[]>(() => {
+    const currentSubject = subject();
+    const currentCluster = cluster();
+    if (!currentSubject || !currentCluster) return [];
+    const sub = `${subjectType()}:${currentSubject}`;
     const rows: PreviewRow[] = [];
-    for (const rule of rules) {
+    for (const rule of rules()) {
       if (!rule.resourceKey || rule.verbs.length === 0) continue;
       if (rule.resourceKey === '*') {
-        rows.push({ sub, dom: cluster, obj: '*', act: '.*' });
+        rows.push({ sub, dom: currentCluster, obj: '*', act: '.*' });
         continue;
       }
       const act = rule.verbs.includes('*') ? '.*' : rule.verbs.join('|');
       if (rule.resourceKey === NONRESOURCE_KEY) {
-        rows.push({ sub, dom: cluster, obj: NONRESOURCE_KEY, act });
+        rows.push({ sub, dom: currentCluster, obj: NONRESOURCE_KEY, act });
         continue;
       }
-      const resource = resourceMap.get(rule.resourceKey);
+      const resource = resourceMap().get(rule.resourceKey);
       if (!resource) continue;
       if (resource.namespaced) {
         const namespace = rule.namespace || '*';
         const obj = `${namespace}/${resource.resource}${resource.subresource ? `/${resource.subresource}` : ''}`;
-        rows.push({ sub, dom: cluster, obj, act });
+        rows.push({ sub, dom: currentCluster, obj, act });
         if (namespace === '*' && !resource.subresource) {
-          rows.push({ sub, dom: cluster, obj: `cluster/${resource.resource}`, act });
+          rows.push({ sub, dom: currentCluster, obj: `cluster/${resource.resource}`, act });
         }
       } else {
         const obj = `cluster/${resource.resource}${resource.subresource ? `/${resource.subresource}` : ''}`;
-        rows.push({ sub, dom: cluster, obj, act });
+        rows.push({ sub, dom: currentCluster, obj, act });
         if (resource.resource === 'namespaces' && !resource.subresource) {
-          rows.push({ sub, dom: cluster, obj: '*/namespaces', act });
+          rows.push({ sub, dom: currentCluster, obj: '*/namespaces', act });
         }
       }
     }
     return rows;
-  }, [subject, subjectType, cluster, rules, resourceMap]);
+  });
 
-  const hasWildcard = rules.some((rule) => rule.resourceKey === '*');
+  const hasWildcard = createMemo(() =>
+    rules().some((rule) => rule.resourceKey === '*'),
+  );
 
   const submit = async () => {
-    if (!subject) {
-      message.warning('请选择主体');
+    const currentSubject = subject();
+    if (!currentSubject) {
+      toast.warning('请选择主体');
       return;
     }
-    if (!cluster) {
-      message.warning('请选择集群');
+    const currentCluster = cluster();
+    if (!currentCluster) {
+      toast.warning('请选择集群');
       return;
     }
     const payloadRules: PolicyRuleInput[] = [];
-    for (const rule of rules) {
+    for (const rule of rules()) {
       if (!rule.resourceKey || rule.verbs.length === 0) continue;
       if (rule.resourceKey === '*') {
         payloadRules.push({
@@ -333,7 +356,7 @@ export function PolicyEditor({
         });
         continue;
       }
-      const resource = resourceMap.get(rule.resourceKey);
+      const resource = resourceMap().get(rule.resourceKey);
       if (!resource) continue;
       payloadRules.push({
         namespace: resource.namespaced ? rule.namespace || '*' : '',
@@ -344,22 +367,22 @@ export function PolicyEditor({
       });
     }
     if (payloadRules.length === 0) {
-      message.warning('请至少添加一条资源与动作');
+      toast.warning('请至少添加一条资源与动作');
       return;
     }
     setSubmitting(true);
     try {
       const result = await createPolicies({
-        subject_type: subjectType,
-        subject,
-        cluster,
+        subject_type: subjectType(),
+        subject: currentSubject,
+        cluster: currentCluster,
         rules: payloadRules,
       });
-      message.success(`已创建 ${result.created} 条策略`);
-      onCreated();
-      onClose();
+      toast.success(`已创建 ${result.created} 条策略`);
+      props.onCreated();
+      props.onClose();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '创建策略失败');
+      toast.error(err instanceof Error ? err.message : '创建策略失败');
     } finally {
       setSubmitting(false);
     }
@@ -367,195 +390,221 @@ export function PolicyEditor({
 
   return (
     <Drawer
-      title={robotOnly ? '配置机器人策略' : '创建策略'}
-      open={open}
-      onClose={onClose}
+      title={props.robotOnly ? '配置机器人策略' : '创建策略'}
+      open={props.open}
+      onClose={props.onClose}
       width={860}
-      destroyOnHidden
-      className="policy-drawer"
+      class="policy-drawer"
       footer={
-        <div className="policy-drawer-footer">
-          <Button onClick={onClose}>取消</Button>
-          <Button type="primary" loading={submitting} onClick={() => void submit()}>
+        <div class="policy-drawer-footer">
+          <Button size="small" onClick={props.onClose}>
+            取消
+          </Button>
+          <Button
+            type="primary"
+            size="small"
+            loading={submitting()}
+            onClick={() => void submit()}
+          >
             创建策略
           </Button>
         </div>
       }
     >
-      <div className="policy-builder">
-        <section className="policy-section">
-          <div className="policy-section-title">
-            <span className="policy-step">1</span>
+      <div class="policy-builder">
+        <section class="policy-section">
+          <div class="policy-section-title">
+            <span class="policy-step">1</span>
             <span>选择匹配主体</span>
           </div>
-          {robotOnly ? (
-            <Space size={8}>
-              <Tag color="geekblue">机器人</Tag>
-              <Typography.Text type="secondary">机器人主体由平台签发，仅使用自身策略</Typography.Text>
-            </Space>
-          ) : (
-            <Radio.Group
-              value={subjectType}
-              optionType="button"
-              buttonStyle="solid"
-              onChange={(e) => onSubjectTypeChange(e.target.value as SubjectType)}
+          <Show
+            when={!props.robotOnly}
+            fallback={
+              <div class="flex flex-wrap items-center gap-2">
+                <Tag level="info">机器人</Tag>
+                <span class="text-[13px] text-layer-content/50">
+                  机器人主体由平台签发，仅使用自身策略
+                </span>
+              </div>
+            }
+          >
+            <Segmented
+              class="self-start"
+              value={subjectType()}
               options={[
                 { value: 'user', label: '用户' },
                 { value: 'org', label: '组' },
               ]}
+              onChange={(value) => onSubjectTypeChange(value as SubjectType)}
             />
-          )}
+          </Show>
           <Select
             showSearch
             allowClear
-            className="policy-subject-select"
+            class="policy-subject-select"
             placeholder={
-              subjectType === 'org'
+              subjectType() === 'org'
                 ? '选择组'
-                : subjectType === 'robot'
+                : subjectType() === 'robot'
                   ? '选择机器人'
                   : '选择用户'
             }
-            value={subject}
-            loading={directoryLoading}
+            value={subject()}
+            loading={directoryLoading()}
             filterOption={false}
             onSearch={onSubjectSearch}
-            onChange={setSubject}
-            options={directoryOptions}
-            notFoundContent={directoryLoading ? '加载中…' : '没有匹配项'}
+            onChange={(value) => setSubject(value === undefined ? undefined : String(value))}
+            options={directoryOptions()}
+            notFoundContent={directoryLoading() ? '加载中…' : '没有匹配项'}
           />
-          {directoryError ? (
+          <Show when={directoryError()}>
             <Alert
               type="warning"
-              showIcon
               message="用户/组目录不可用"
-              description={directoryError}
+              description={directoryError() ?? undefined}
             />
-          ) : null}
+          </Show>
         </section>
 
-        <section className="policy-section">
-          <div className="policy-section-title">
-            <span className="policy-step">2</span>
+        <section class="policy-section">
+          <div class="policy-section-title">
+            <span class="policy-step">2</span>
             <span>选择集群</span>
           </div>
           <Select
             showSearch
-            className="policy-cluster-select"
+            class="policy-cluster-select"
             placeholder="选择目标集群"
-            value={cluster}
-            onChange={(value) => void loadResources(value)}
-            options={clusters.map((item) => ({
+            value={cluster()}
+            onChange={(value) =>
+              void loadResources(value === undefined ? undefined : String(value))
+            }
+            options={props.clusters.map((item) => ({
               value: item.id,
               label: `${item.id} · ${item.name}`,
             }))}
             optionFilterProp="label"
           />
-          {resourceError ? (
-            <Alert type="error" showIcon message="集群资源加载失败" description={resourceError} />
-          ) : null}
+          <Show when={resourceError()}>
+            <Alert
+              type="error"
+              message="集群资源加载失败"
+              description={resourceError() ?? undefined}
+            />
+          </Show>
         </section>
 
-        <section className="policy-section">
-          <div className="policy-section-title">
-            <span className="policy-step">3</span>
+        <section class="policy-section">
+          <div class="policy-section-title">
+            <span class="policy-step">3</span>
             <span>添加允许的资源与动作</span>
           </div>
-          <div className="policy-rule-list">
-            {rules.map((rule, index) => {
-              const resource = selectedResource(rule);
-              const isWildcard = rule.resourceKey === '*';
-              return (
-                <div className="policy-rule-row" key={rule.key}>
-                  <div className="policy-rule-index">{index + 1}</div>
-                  <div className="policy-rule-field">
-                    <span className="policy-rule-label">资源</span>
-                    <Select
-                      showSearch
-                      placeholder="选择资源"
-                      value={rule.resourceKey}
-                      loading={resourceLoading}
-                      disabled={!cluster}
-                      options={resourceOptions}
-                      optionFilterProp="label"
-                      onChange={(value) => onResourceChange(rule.key, value)}
-                    />
-                  </div>
-                  {resource?.namespaced ? (
-                    <div className="policy-rule-field">
-                      <span className="policy-rule-label">命名空间</span>
+          <div class="policy-rule-list">
+            <For each={rules()}>
+              {(rule, index) => {
+                const resource = () => selectedResource(rule);
+                const isWildcard = () => rule.resourceKey === '*';
+                return (
+                  <div class="policy-rule-row">
+                    <div class="policy-rule-index">{index() + 1}</div>
+                    <div class="policy-rule-field">
+                      <span class="policy-rule-label">资源</span>
                       <Select
                         showSearch
-                        value={rule.namespace}
-                        options={[
-                          { value: '*', label: '*（全部命名空间）' },
-                          ...namespaces.map((name) => ({ value: name, label: name })),
-                        ]}
+                        placeholder="选择资源"
+                        value={rule.resourceKey}
+                        loading={resourceLoading()}
+                        disabled={!cluster()}
+                        options={resourceOptions()}
                         optionFilterProp="label"
-                        onChange={(value) => updateRule(rule.key, { namespace: value })}
+                        onChange={(value) =>
+                          onResourceChange(rule.key, String(value ?? ''))
+                        }
                       />
                     </div>
-                  ) : null}
-                  <div className="policy-rule-field policy-rule-verbs">
-                    <span className="policy-rule-label">动作</span>
-                    <Select
-                      mode="multiple"
-                      placeholder="选择动作"
-                      value={rule.verbs}
-                      disabled={!rule.resourceKey || isWildcard}
-                      options={verbsOptions(rule)}
-                      maxTagCount="responsive"
-                      onChange={(values) => onVerbsChange(rule.key, values)}
+                    <Show when={resource()?.namespaced}>
+                      <div class="policy-rule-field">
+                        <span class="policy-rule-label">命名空间</span>
+                        <Select
+                          showSearch
+                          value={rule.namespace}
+                          options={[
+                            { value: '*', label: '*（全部命名空间）' },
+                            ...namespaces().map((name) => ({ value: name, label: name })),
+                          ]}
+                          optionFilterProp="label"
+                          onChange={(value) =>
+                            updateRule(rule.key, { namespace: String(value ?? '') })
+                          }
+                        />
+                      </div>
+                    </Show>
+                    <div class="policy-rule-field policy-rule-verbs">
+                      <span class="policy-rule-label">动作</span>
+                      <Select
+                        mode="multiple"
+                        placeholder="选择动作"
+                        value={rule.verbs}
+                        disabled={!rule.resourceKey || isWildcard()}
+                        options={verbsOptions(rule)}
+                        maxTagCount="responsive"
+                        onChange={(values) =>
+                          onVerbsChange(rule.key, Array.isArray(values) ? values.map(String) : [])
+                        }
+                      />
+                    </div>
+                    <Button
+                      type="text"
+                      danger
+                      icon={<DeleteOutlined class="h-4 w-4" />}
+                      disabled={rules().length === 1}
+                      onClick={() => removeRule(rule.key)}
                     />
                   </div>
-                  <Button
-                    type="text"
-                    danger
-                    icon={<DeleteOutlined />}
-                    disabled={rules.length === 1}
-                    onClick={() => removeRule(rule.key)}
-                  />
-                </div>
-              );
-            })}
+                );
+              }}
+            </For>
           </div>
           <Button
             type="dashed"
             block
-            icon={<PlusOutlined />}
-            disabled={!cluster || resourceLoading}
+            icon={<PlusOutlined class="h-4 w-4" />}
+            disabled={!cluster() || resourceLoading()}
             onClick={addRule}
           >
             添加一条资源规则
           </Button>
-          {hasWildcard ? (
+          <Show when={hasWildcard()}>
             <Alert
               type="warning"
-              showIcon
               message="已选择全部资源：动作将自动为全部动作（*）"
             />
-          ) : null}
+          </Show>
         </section>
 
-        <section className="policy-section">
-          <div className="policy-section-title">
-            <span className="policy-step">4</span>
+        <section class="policy-section">
+          <div class="policy-section-title">
+            <span class="policy-step">4</span>
             <span>通配与预览</span>
           </div>
-          <Typography.Text type="secondary">
-            资源选择 <code className="mono">*</code> 时自动授予全部动作；以下为最终策略行。
-          </Typography.Text>
-          <pre className="policy-preview">
-            {previewRows.length > 0
-              ? previewRows.map((row) => `p, ${row.sub}, ${row.dom}, ${row.obj}, ${row.act}`).join('\n')
+          <div class="text-[13px] text-layer-content/50">
+            资源选择 <code class="mono">*</code> 时自动授予全部动作；以下为最终策略行。
+          </div>
+          <pre class="policy-preview">
+            {previewRows().length > 0
+              ? previewRows()
+                  .map((row) => `p, ${row.sub}, ${row.dom}, ${row.obj}, ${row.act}`)
+                  .join('\n')
               : '请先选择主体、集群与至少一条资源规则'}
           </pre>
-          {previewRows.length > 0 ? (
-            <Space size={[6, 6]} wrap>
-              <Tag color="blue">{previewRows.length} 条策略</Tag>
-              {hasWildcard ? <Tag color="gold">包含全部权限</Tag> : null}
-            </Space>
-          ) : null}
+          <Show when={previewRows().length > 0}>
+            <div class="flex flex-wrap gap-1.5">
+              <Tag level="primary">{previewRows().length} 条策略</Tag>
+              <Show when={hasWildcard()}>
+                <Tag level="gold">包含全部权限</Tag>
+              </Show>
+            </div>
+          </Show>
         </section>
       </div>
     </Drawer>

@@ -48,5 +48,5 @@ test_file
 # Helm 渲染/打包产物
 deploy/helm/dist/
 
-# web2 参考样例（不纳入产品构建；新版前端见 web2/console）
+# 设计参考样例（不纳入产品构建）
 web2/example/

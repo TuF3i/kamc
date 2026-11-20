@@ -13,7 +13,7 @@ v1.0 缺陷修复记录 BUG-1~8、高可用设计与故障模式分析）。
 
 Go 1.24+ / chi v5 / gorm(PostgreSQL) / go-redis v9 / gorilla/websocket / hashicorp/yamux
 golang-jwt v5 + go-oidc v3（认证） / casbin v2 + k8s.io/apiserver（RequestInfo 鉴权）
-前端：React 18 + Ant Design 5 + TypeScript + Vite（web/，见 web/README.md）
+前端：SolidJS 1.9 + Tailwind CSS 4 + TypeScript + Vite（web/，见 web/README.md）
 
 ## 目录结构
 
@@ -35,7 +35,7 @@ docs/
 api/
   openapi.yaml       平台 HTTP API 的 OpenAPI 3.0 规范（与代码包分离）
 deploy/              部署产物（nginx/manifests/README，见其内部说明）
-web/                 管理前端（React 18 + Ant Design 5 + Vite + TypeScript；见 web/README.md）
+web/                 管理前端（SolidJS + Tailwind CSS 4 + Vite + TypeScript；见 web/README.md）
 ```
 
 ## 架构约定（摘要）
@@ -119,7 +119,7 @@ make test    # 全量测试
 make vet
 
 cd web && npm install
-npm run build   # tsc 严格类型检查 + vite build → web/dist/
+npm run build   # tsc 严格类型检查 + vite build → data/web/
 KAMC_API=http://127.0.0.1:8080 npm run dev
 ```
 
@@ -169,10 +169,12 @@ KAMC_API=http://127.0.0.1:8080 npm run dev
       只在机器人页配置）；用户策略优先并完全遮蔽组策略，多组策略取并集；
       组可标记 `is_admin`，成员登录时在 JWT 中注入管理组声明。集群 GVR/动词
       通过 Agent 隧道实时 discovery（5 分钟缓存）。
-- [x] Web 前端（web/，React 18 + Ant Design 5 + TypeScript + Vite）：
+- [x] Web 前端（web/，SolidJS 1.9 + Tailwind CSS 4 + TypeScript + Vite，
+      蓝灰深色/浅色双主题）：
       登录（SSO + 用户名密码）、概览、集群/Token 管理、权限策略编辑器、
-      机器人、审计、kubeconfig 下载；exec/port-forward 流式代理（无内置终端 UI，
+      机器人、审计、kubeconfig 下载、个人中心（头像/修改密码）；
+      exec/port-forward 流式代理（无内置终端 UI，
       浏览器 WebSocket 可用 access_token 查询参数——仅 WS 升级接受）。浏览器接入后端配合：
       /auth/callback 浏览器导航返回桥接页（写 localStorage['kamc_token'] 后跳
-      SPA）。开发：KAMC_API=… npm run dev；生产构建 dist/ + 同源反代
+      SPA）。开发：KAMC_API=… npm run dev；生产构建 data/web/ + 同源反代
       （web/README.md）

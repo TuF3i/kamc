@@ -121,7 +121,9 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
         body = undefined;
       }
     }
-    return mockApi<T>(method, path, body);
+    const result = await mockApi<T>(method, path, body);
+    // Mock 数据为模块级单例数组；返回深拷贝，避免 setState 同引用不触发渲染。
+    return structuredClone(result);
   }
 
   const headers = buildHeaders(init.headers);

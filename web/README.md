@@ -1,8 +1,16 @@
 # kamc Web 前端
 
-kamc 管理控制台：React 18 + Ant Design 5 + TypeScript + Vite + Recharts。
-深色悬浮导航运维控制台风格，覆盖集群、Agent Token、Casbin 权限、审计、
-机器人、kubeconfig 与平台信息页。
+kamc 管理控制台：SolidJS + Tailwind CSS 4 + TypeScript + Vite，蓝灰深色/浅色双主题。
+覆盖集群、Agent Token、Casbin 权限、审计、机器人、kubeconfig 与平台信息页。
+
+## 技术栈
+
+- SolidJS 1.9 + `@solidjs/router` 0.15（HashRouter，保持 `/#/...` 路由）
+- TypeScript strict + Vite 6 + Tailwind CSS 4
+- `@iconify/tailwind4`（Fluent 图标）、`clsx`
+- ECharts（概览图表，tree-shaken）
+- CodeMirror 6（Lua 映射脚本编辑器）
+- dayjs
 
 ## 生产构建（前后端一起启动）
 
@@ -25,7 +33,7 @@ npm run dev        # release 模式：连接后端（KAMC_API 指定平台地址
 npm run dev:mock   # mock 模式：完全脱离后端，使用前端内置模拟数据（刷新重置）
 ```
 
-打开 <http://localhost:5173>：
+打开 <http://localhost:5174>：
 
 - 默认显示 **SSO 登录**。
 - 点击「使用用户名和密码」切换到内置账号登录，默认 `sysadmin / sysadmin123`
@@ -51,8 +59,15 @@ npm run dev:mock   # mock 模式：完全脱离后端，使用前端内置模拟
 `KAMC_API` 只影响开发代理目标，不是前端运行时 baseURL。
 
 > OIDC 联调：`OIDC_REDIRECT_URL` 应与前端访问源一致（如
-> `http://localhost:5173/auth/callback`），否则桥接页会把 token 写到另一个源的
+> `http://localhost:5174/auth/callback`），否则桥接页会把 token 写到另一个源的
 > localStorage。
+
+## 构建
+
+```bash
+npm run typecheck
+npm run build      # tsc --noEmit + vite build → data/web/
+```
 
 ## 页面
 
@@ -67,7 +82,13 @@ npm run dev:mock   # mock 模式：完全脱离后端，使用前端内置模拟
 | `/audit` | 审计日志查询（平台日志 / 集群日志） | 管理员 |
 | `/robots` | CICD 机器人：签发长期 kubeconfig、配置策略、下载、吊销 | 管理员 |
 | `/kubeconfig` | 独立 kubeconfig 下载页（普通用户默认落地页） | 登录 |
-| `/account` | 个人中心：身份详情、修改头像 | 登录 |
+| `/account` | 个人中心：身份详情、修改头像、修改密码 | 登录 |
+
+## 主题
+
+- 深色 `kamc-dark` / 浅色 `kamc-light`，token 定义在 `src/styles/tokens.css`。
+- 主题切换在右上角用户菜单内；持久化 key：`localStorage['kamc_theme']`。
+- `index.html` 内联脚本在首屏前设置 `data-theme`，避免闪跳。
 
 ## 权限模型与策略编辑器
 
@@ -113,7 +134,7 @@ Vite 依赖优化缓存损坏时，浏览器会出现 `504 Outdated Optimize Dep
 ```bash
 rm -rf node_modules/.vite
 npm run dev -- --force
-npm run dev:mock -- --force --port 5174
+npm run dev:mock -- --force
 ```
 
 ## 认证与 API 约定
@@ -127,6 +148,8 @@ npm run dev:mock -- --force --port 5174
   （仅 WS 升级请求有效）。
 - **密码登录**：`POST /auth/password-login`（`{username,password}`），默认
   `sysadmin/sysadmin123`，返回与 OIDC 相同的 `IssuedCredential`。
+- **修改密码**：`POST /api/v1/profile/password`（`{old_password,new_password}`），
+  成功后平台吊销该用户全部 JWT，需用新密码重新登录；SSO/LDAP 账号由身份源管理。
 - **管理员判定**：`GET /api/v1/clusters` 返回 200 = 管理员，403 = 普通用户；
   `/auth/me` 没有 `is_admin` 字段。
 - **401**：清理 token 并跳 `/#/login?expired=1`；403 不视为登录失效。
@@ -146,21 +169,22 @@ web/src/
   stores/      auth（token/claims/管理员探测）
   layouts/     AppLayout（悬浮三段式导航：Logo / 标签页选择器 / 用户面板）
   components/  PageHeader / StatusTag / CopyButton / PolicyEditor / 路由守卫
+  lib/         自定义 UI 组件（widgets）、主题与 Toast（storage）、图标映射
   pages/       Login / Dashboard / Clusters / ClusterDetail / Access /
                Audit / Robots / Kubeconfig / Platform / Account / NotFound
+  styles/      tokens.css（蓝灰双主题变量）、全局与页面样式
   utils/       时间与剩余有效期格式化
-  theme.ts     Ant Design ConfigProvider 主题
 ```
 
 ## 构建与部署
 
 ```bash
-npm run build     # tsc --noEmit + vite build → web/dist/
-npm run preview   # 本地预览 dist（无后端代理，仅静态）
+npm run build     # tsc --noEmit + vite build → data/web/
 ```
 
-生产必须同源部署：Nginx 托管 `dist/` 的 SPA 回退，并显式反代 API/认证/数据面。
-现有 `deploy/nginx/nginx.conf` 只反代平台、未托管静态文件，可参考以下片段整合：
+生产必须同源部署：后端从 `AM_WEB_DIR` 托管 `data/web/` 并做 SPA 回退；
+若由 Nginx 托管静态文件，需显式反代 API/认证/数据面。现有
+`deploy/nginx/nginx.conf` 只反代平台、未托管静态文件，可参考以下片段整合：
 
 ```nginx
 root /usr/share/nginx/html/kamc;

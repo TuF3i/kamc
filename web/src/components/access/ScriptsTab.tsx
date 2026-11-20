@@ -1,62 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
-import {
-  Alert,
-  App,
-  Button,
-  Card,
-  Divider,
-  Drawer,
-  Form,
-  Input,
-  Space,
-  Spin,
-  Switch,
-  Table,
-  Tag,
-  Typography,
-} from 'antd';
-import { PlayCircleOutlined, SaveOutlined } from '@ant-design/icons';
-import CodeMirror from '@uiw/react-codemirror';
-import { StreamLanguage } from '@codemirror/language';
-import { lua } from '@codemirror/legacy-modes/mode/lua';
-import { autocompletion, closeBrackets, snippetCompletion } from '@codemirror/autocomplete';
-import type { CompletionContext } from '@codemirror/autocomplete';
-
-/** Lua 关键字/内置 API 补全来源（静态符号 + kamc 桥接 API 片段）。 */
-function luaCompletions(context: CompletionContext) {
-  const word = context.matchBefore(/[\w.]+/);
-  if (!word || (word.from === word.to && !context.explicit)) return null;
-  const kamcApi = [
-    'kamc.upsert_user(username, nickname, groups_csv)',
-    'kamc.upsert_group(name, desc)',
-    'kamc.list_users()',
-    'kamc.list_groups()',
-    'kamc.add_policy(sub, dom, obj, act)',
-    'kamc.remove_policy(sub, dom, obj, act)',
-    'kamc.has_policy(sub, dom, obj, act)',
-    'kamc.list_policies()',
-  ];
-  const options = [
-    // kamc 桥接 API（带 snippet 占位符，Tab 跳转）
-    ...kamcApi.map((label) =>
-      snippetCompletion(label, {
-        label,
-        type: 'function',
-        detail: 'kamc 桥接',
-        boost: 2,
-      }),
-    ),
-    ...['for', 'if', 'else', 'elseif', 'end', 'while', 'do', 'then', 'function', 'local', 'return', 'in', 'ipairs', 'pairs', 'tostring', 'string', 'table', 'math', 'true', 'false', 'nil', 'and', 'or', 'not', 'break'].map((k) => ({
-      label: k,
-      type: k === 'true' || k === 'false' || k === 'nil' ? 'constant' : 'keyword',
-    })),
-    snippetCompletion("for ${i} = 1, #${items} do\n\t\nend", { label: 'fori', type: 'keyword', detail: '数值 for 循环' }),
-    snippetCompletion("for _, ${v} in ipairs(${t}) do\n\t\nend", { label: 'forin', type: 'keyword', detail: 'ipairs 遍历' }),
-    snippetCompletion("if ${cond} then\n\t\nend", { label: 'ifthen', type: 'keyword', detail: '条件块' }),
-    snippetCompletion("local function ${name}()\n\t\nend", { label: 'func', type: 'keyword', detail: '函数定义' }),
-  ];
-  return { from: word.from, options, validFor: /^[\w.]*$/ };
-}
+import { Show, createSignal, onMount } from 'solid-js';
 import {
   deleteScript,
   getScript,
@@ -66,6 +8,24 @@ import {
   type ScriptRunResult,
 } from '@/api/users';
 import type { UserScript } from '@/api/types';
+import { toast } from '@/lib/storage/toast';
+import {
+  Alert,
+  Button,
+  Card,
+  Divider,
+  Drawer,
+  Field,
+  Input,
+  Switch,
+  Table,
+  Tag,
+  confirm,
+  type TableColumnsType,
+} from '@/lib/widgets';
+import { createForm } from '@/lib/widgets/form';
+import { LuaEditor } from '@/components/LuaEditor';
+import { PlayCircleOutlined, SaveOutlined, SpinnerIcon } from '@/lib/icons';
 
 const DEFAULT_TEMPLATE = `-- 登录期映射脚本：把 SSO/LDAP 的 claims 映射到平台用户与策略。
 -- 可用全局：claims = { sub, email, source, groups = {...}, extra = {...} }
@@ -92,53 +52,70 @@ interface Draft {
 }
 
 /** 测试面板的执行结果展示 */
-function RunResult({ result, error }: { result: ScriptRunResult | null; error: string | null }) {
-  if (error) {
-    return (
-      <Alert type="error" showIcon message="执行失败" description={<pre className="code-block" style={{ margin: 0, maxHeight: 180, overflow: 'auto' }}>{error}</pre>} />
-    );
-  }
-  if (!result) return null;
+function RunResult(props: { result: ScriptRunResult | null; error: string | null }) {
   return (
-    <Alert
-      type="success"
-      showIcon
-      message={`执行成功${result.dry_run ? '（dry-run，未落库）' : '（已执行）'} · ${result.actions.length} 个动作`}
-      description={
-        result.actions.length ? (
-          <Table
-            rowKey={(r) => r.api + JSON.stringify(r.args)}
-            dataSource={result.actions}
-            size="small"
-            pagination={false}
-            columns={[
-              { title: 'API', dataIndex: 'api', width: 140, render: (v: string) => <code className="mono">{v}</code> },
-              { title: '参数', dataIndex: 'args', render: (args: string[]) => <code className="mono" style={{ fontSize: 12 }}>{args.join(', ') || '—'}</code> },
-            ]}
+    <Show when={!props.error} fallback={
+      <Alert
+        type="error"
+        message="执行失败"
+        description={<pre class="code-block m-0 max-h-[180px] overflow-auto">{props.error}</pre>}
+      />
+    }>
+      <Show when={props.result}>
+        {(result) => (
+          <Alert
+            type="success"
+            message={`执行成功${result().dry_run ? '（dry-run，未落库）' : '（已执行）'} · ${result().actions.length} 个动作`}
+            description={
+              result().actions.length ? (
+                <Table
+                  rowKey={(record) => record.api + JSON.stringify(record.args)}
+                  dataSource={result().actions}
+                  pagination={false}
+                  columns={[
+                    {
+                      title: 'API',
+                      dataIndex: 'api',
+                      width: 140,
+                      render: (value) => <code class="mono">{String(value)}</code>,
+                    },
+                    {
+                      title: '参数',
+                      dataIndex: 'args',
+                      render: (value) => (
+                        <code class="mono text-[12px]">
+                          {(value as string[]).join(', ') || '—'}
+                        </code>
+                      ),
+                    },
+                  ]}
+                />
+              ) : (
+                '无动作'
+              )
+            }
           />
-        ) : (
-          '无动作'
-        )
-      }
-    />
+        )}
+      </Show>
+    </Show>
   );
 }
 
 /** 映射脚本 Tab：列表 + 右侧 Drawer 编辑器（Lua 高亮 / 测试执行 / 改名）。 */
 export function ScriptsTab() {
-  const { message, modal } = App.useApp();
-  const [scripts, setScripts] = useState<UserScript[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [draft, setDraft] = useState<Draft | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [running, setRunning] = useState(false);
-  const [runResult, setRunResult] = useState<ScriptRunResult | null>(null);
-  const [runError, setRunError] = useState<string | null>(null);
-  const [form] = Form.useForm<{ sub: string; email: string; groups: string; source: string }>();
+  const [scripts, setScripts] = createSignal<UserScript[]>([]);
+  const [loading, setLoading] = createSignal(true);
+  const [error, setError] = createSignal<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = createSignal(false);
+  const [draft, setDraft] = createSignal<Draft | null>(null);
+  const [saving, setSaving] = createSignal(false);
+  const [running, setRunning] = createSignal(false);
+  const [runResult, setRunResult] = createSignal<ScriptRunResult | null>(null);
+  const [runError, setRunError] = createSignal<string | null>(null);
 
-  const load = useCallback(async () => {
+  const claimsForm = createForm({ sub: '', email: '', groups: '', source: 'sso' });
+
+  const load = async () => {
     setLoading(true);
     setError(null);
     try {
@@ -148,89 +125,96 @@ export function ScriptsTab() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  };
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  onMount(() => void load());
 
   const openCreate = () => {
     setDraft({ originName: '', name: '', content: DEFAULT_TEMPLATE, enabled: true });
-    form.resetFields();
+    claimsForm.reset();
     setRunResult(null);
     setRunError(null);
     setDrawerOpen(true);
   };
 
-  const openEdit = async (sc: UserScript) => {
+  const openEdit = async (script: UserScript) => {
     try {
-      const full = await getScript(sc.name);
-      setDraft({ originName: sc.name, name: sc.name, content: full.content, enabled: full.enabled });
-      form.resetFields();
+      const full = await getScript(script.name);
+      setDraft({
+        originName: script.name,
+        name: script.name,
+        content: full.content,
+        enabled: full.enabled,
+      });
+      claimsForm.reset();
       setRunResult(null);
       setRunError(null);
       setDrawerOpen(true);
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '加载脚本失败');
+      toast.error(err instanceof Error ? err.message : '加载脚本失败');
     }
   };
 
   const save = async () => {
-    if (!draft) return;
-    const name = draft.name.trim();
+    const current = draft();
+    if (!current) return;
+    const name = current.name.trim();
     if (!name) {
-      message.warning('请输入脚本名称');
+      toast.warning('请输入脚本名称');
       return;
     }
     setSaving(true);
     try {
       // 改名：保存新名字后删除旧记录
-      await putScript(name, draft.content, draft.enabled);
-      if (draft.originName && draft.originName !== name) {
-        await deleteScript(draft.originName);
+      await putScript(name, current.content, current.enabled);
+      if (current.originName && current.originName !== name) {
+        await deleteScript(current.originName);
       }
-      message.success(`脚本 ${name} 已保存`);
-      setDraft({ ...draft, originName: name });
+      toast.success(`脚本 ${name} 已保存`);
+      setDraft({ ...current, originName: name });
       await load();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '保存失败（Lua 语法错误？）');
+      toast.error(err instanceof Error ? err.message : '保存失败（Lua 语法错误？）');
     } finally {
       setSaving(false);
     }
   };
 
   const execute = async (dryRun: boolean) => {
-    if (!draft) return;
-    const name = draft.name.trim();
+    const current = draft();
+    if (!current) return;
+    const name = current.name.trim();
     if (!name) {
-      message.warning('请先填写脚本名称并保存');
+      toast.warning('请先填写脚本名称并保存');
       return;
     }
     // 未保存的修改先落库（执行读取的是服务端内容）
     try {
-      await putScript(name, draft.content, draft.enabled);
-      if (draft.originName && draft.originName !== name) {
-        await deleteScript(draft.originName);
-        setDraft({ ...draft, originName: name });
+      await putScript(name, current.content, current.enabled);
+      if (current.originName && current.originName !== name) {
+        await deleteScript(current.originName);
+        setDraft({ ...current, originName: name });
       }
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '保存失败，无法执行');
+      toast.error(err instanceof Error ? err.message : '保存失败，无法执行');
       return;
     }
 
-    const values = await form.validateFields().catch(() => null);
-    if (!values) return;
     setRunning(true);
     setRunResult(null);
     setRunError(null);
     try {
+      const groups = String(claimsForm.values.groups);
       const result = await runScript(name, dryRun, {
-        sub: values.sub?.trim() || undefined,
-        email: values.email?.trim() || undefined,
-        groups: values.groups
-          ? values.groups.split(',').map((g) => g.trim()).filter(Boolean)
+        sub: String(claimsForm.values.sub).trim() || undefined,
+        email: String(claimsForm.values.email).trim() || undefined,
+        groups: groups
+          ? groups
+              .split(',')
+              .map((group) => group.trim())
+              .filter(Boolean)
           : undefined,
-        source: values.source || undefined,
+        source: String(claimsForm.values.source) || undefined,
       });
       setRunResult(result);
       if (!dryRun) await load();
@@ -241,170 +225,211 @@ export function ScriptsTab() {
     }
   };
 
-  const remove = (sc: UserScript) => {
-    modal.confirm({
-      title: `删除脚本「${sc.name}」？`,
+  const remove = (script: UserScript) => {
+    confirm({
+      title: `删除脚本「${script.name}」？`,
       content: '删除后登录链路不再执行该脚本。',
       okText: '删除',
-      okButtonProps: { danger: true },
+      danger: true,
       cancelText: '取消',
       onOk: async () => {
         try {
-          await deleteScript(sc.name);
-          message.success(`脚本 ${sc.name} 已删除`);
+          await deleteScript(script.name);
+          toast.success(`脚本 ${script.name} 已删除`);
           await load();
         } catch (err) {
-          message.error(err instanceof Error ? err.message : '删除失败');
+          toast.error(err instanceof Error ? err.message : '删除失败');
         }
       },
     });
   };
 
-  const columns: {
-    title: string;
-    dataIndex?: string;
-    key: string;
-    width?: number;
-    render: (value: any, record: UserScript, index: number) => any;
-  }[] = [
+  const columns: TableColumnsType<UserScript> = [
     {
       title: '脚本名',
       dataIndex: 'name',
       key: 'name',
       width: 260,
-      render: (name: string) => <code className="mono strong">{name}</code>,
+      render: (value) => <code class="mono strong">{String(value)}</code>,
     },
     {
       title: '状态',
       dataIndex: 'enabled',
       key: 'enabled',
       width: 110,
-      render: (enabled: boolean) =>
-        enabled ? <Tag color="success">启用</Tag> : <Tag>已禁用</Tag>,
+      render: (value) =>
+        value ? <Tag level="success">启用</Tag> : <Tag>已禁用</Tag>,
     },
     {
       title: '更新时间',
       dataIndex: 'updated_at',
       key: 'updated_at',
       width: 180,
-      render: (v: string) => new Date(v).toLocaleString(),
+      render: (value) => new Date(String(value)).toLocaleString(),
     },
     {
       title: '操作',
       key: 'actions',
       width: 140,
-      render: (_, sc: UserScript) => (
-        <Space size={0}>
-          <Button type="link" size="small" onClick={() => void openEdit(sc)}>编辑</Button>
-          <Button type="link" size="small" danger onClick={() => remove(sc)}>删除</Button>
-        </Space>
+      render: (_value, script) => (
+        <div class="table-actions">
+          <Button type="link" size="small" onClick={() => void openEdit(script)}>
+            编辑
+          </Button>
+          <Button type="link" size="small" danger onClick={() => remove(script)}>
+            删除
+          </Button>
+        </div>
       ),
     },
   ];
 
   return (
     <div>
-      {error ? <Typography.Paragraph type="danger">{error}</Typography.Paragraph> : null}
+      <Show when={error()}>
+        <p class="mb-3 text-sm text-error">{error()}</p>
+      </Show>
       <Alert
         type="info"
-        showIcon
-        style={{ marginBottom: 12 }}
         message="脚本在每次 SSO/LDAP 登录与 Token 兑换时按名称顺序执行（fail-closed）：脚本出错将拒绝签发 Token。"
+        class="mb-3"
       />
-      <Space style={{ marginBottom: 12 }}>
+      <div class="mb-3">
         <Button type="primary" onClick={openCreate}>
           新建脚本
         </Button>
-      </Space>
-      <Card className="soft-card" styles={{ body: { padding: 0 } }}>
-        <Table
+      </div>
+      <Card class="soft-card" contentClass="p-0">
+        <Table<UserScript>
           rowKey="name"
           columns={columns}
-          dataSource={scripts}
-          loading={loading}
-          size="middle"
+          dataSource={scripts()}
+          loading={loading()}
           pagination={false}
           locale={{ emptyText: '暂无映射脚本' }}
         />
       </Card>
 
       <Drawer
-        title={draft?.originName ? `编辑脚本 · ${draft.originName}` : '新建映射脚本'}
-        open={drawerOpen}
+        open={drawerOpen()}
+        title={draft()?.originName ? `编辑脚本 · ${draft()!.originName}` : '新建映射脚本'}
         onClose={() => setDrawerOpen(false)}
         width={860}
-        destroyOnHidden
         footer={
-          <Space style={{ float: 'right' }}>
-            <Switch checkedChildren="启用" unCheckedChildren="禁用" checked={draft?.enabled ?? true} onChange={(v) => setDraft((d) => (d ? { ...d, enabled: v } : d))} />
-            <Button onClick={() => setDrawerOpen(false)}>关闭</Button>
-            <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={() => void save()}>
+          <div class="ml-auto flex items-center gap-2">
+            <Switch
+              checked={draft()?.enabled ?? true}
+              checkedChildren="启用"
+              unCheckedChildren="禁用"
+              onChange={(checked) =>
+                setDraft((current) =>
+                  current ? { ...current, enabled: checked } : current,
+                )
+              }
+            />
+            <Button size="small" onClick={() => setDrawerOpen(false)}>
+              关闭
+            </Button>
+            <Button
+              type="primary"
+              size="small"
+              icon={<SaveOutlined class="h-4 w-4" />}
+              loading={saving()}
+              onClick={() => void save()}
+            >
               保存
             </Button>
-          </Space>
+          </div>
         }
       >
-        {draft ? (
-          <div className="script-drawer">
-            <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
-              <Input
-                addonBefore="脚本名称"
-                value={draft.name}
-                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                placeholder="如 dev-team-policy"
-                className="mono"
-                maxLength={128}
-              />
-            </Space.Compact>
+        <Show when={draft()}>
+          {(current) => (
+            <div class="script-drawer">
+              <div class="flex w-full">
+                <span class="flex min-h-12 shrink-0 items-center whitespace-nowrap rounded-l-lg border-r border-layer-content/10 bg-layer-content/10 px-3 text-[13px] text-layer-content/60">
+                  脚本名称
+                </span>
+                <Input
+                  value={current().name}
+                  onValueChange={(value) =>
+                    setDraft((state) => (state ? { ...state, name: value } : state))
+                  }
+                  placeholder="如 dev-team-policy"
+                  class="mono rounded-l-none"
+                  maxLength={128}
+                />
+              </div>
 
-            <CodeMirror
-              value={draft.content}
-              height="420px"
-              extensions={[
-                StreamLanguage.define(lua),
-                autocompletion({ override: [luaCompletions] }),
-                closeBrackets(),
-              ]}
-              theme="dark"
-              basicSetup={{ foldGutter: false, highlightActiveLine: true, autocompletion: false }}
-              onChange={(value) => setDraft((d) => (d ? { ...d, content: value } : d))}
-              style={{ fontSize: 13, border: '1px solid var(--kamc-border)', borderRadius: 8 }}
-            />
+              <div class="mt-3">
+                <LuaEditor
+                  value={current().content}
+                  onChange={(value) =>
+                    setDraft((state) => (state ? { ...state, content: value } : state))
+                  }
+                />
+              </div>
 
-            <Divider plain>测试执行</Divider>
-            <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
-              注入模拟 claims 执行脚本（服务端 dry-run 不落库）；保存后亦可去掉 dry-run 真实执行。
-            </Typography.Paragraph>
-            <Form form={form} layout="inline" style={{ rowGap: 8 }}>
-              <Form.Item name="sub" label="sub" initialValue="">
-                <Input placeholder="alice" style={{ width: 140 }} />
-              </Form.Item>
-              <Form.Item name="email" label="email" initialValue="">
-                <Input placeholder="alice@example.com" style={{ width: 200 }} />
-              </Form.Item>
-              <Form.Item name="groups" label="组" initialValue="">
-                <Input placeholder="dev-team, qa-team" style={{ width: 220 }} />
-              </Form.Item>
-              <Form.Item name="source" label="来源" initialValue="sso">
-                <Input style={{ width: 110 }} placeholder="sso / ldap" />
-              </Form.Item>
-              <Form.Item>
-                <Space>
-                  <Button icon={<PlayCircleOutlined />} loading={running} onClick={() => void execute(true)}>
+              <Divider>测试执行</Divider>
+              <p class="mb-2 text-[13px] leading-6 text-layer-content/50">
+                注入模拟 claims 执行脚本（服务端 dry-run 不落库）；保存后亦可去掉 dry-run 真实执行。
+              </p>
+              <div class="flex flex-wrap items-end gap-3">
+                <Field label="sub">
+                  <Input
+                    value={String(claimsForm.values.sub)}
+                    onValueChange={(value) => claimsForm.setValue('sub', value)}
+                    placeholder="alice"
+                    class="w-[140px]"
+                  />
+                </Field>
+                <Field label="email">
+                  <Input
+                    value={String(claimsForm.values.email)}
+                    onValueChange={(value) => claimsForm.setValue('email', value)}
+                    placeholder="alice@example.com"
+                    class="w-[200px]"
+                  />
+                </Field>
+                <Field label="组">
+                  <Input
+                    value={String(claimsForm.values.groups)}
+                    onValueChange={(value) => claimsForm.setValue('groups', value)}
+                    placeholder="dev-team, qa-team"
+                    class="w-[220px]"
+                  />
+                </Field>
+                <Field label="来源">
+                  <Input
+                    value={String(claimsForm.values.source)}
+                    onValueChange={(value) => claimsForm.setValue('source', value)}
+                    placeholder="sso / ldap"
+                    class="w-[110px]"
+                  />
+                </Field>
+                <div class="flex items-center gap-2">
+                  <Button
+                    icon={<PlayCircleOutlined class="h-4 w-4" />}
+                    loading={running()}
+                    onClick={() => void execute(true)}
+                  >
                     Dry-run
                   </Button>
-                  <Button danger loading={running} onClick={() => void execute(false)}>
+                  <Button danger loading={running()} onClick={() => void execute(false)}>
                     真实执行
                   </Button>
-                </Space>
-              </Form.Item>
-            </Form>
-            {running ? <Spin size="small" style={{ marginTop: 12 }} /> : null}
-            <div style={{ marginTop: 12 }}>
-              <RunResult result={runResult} error={runError} />
+                </div>
+              </div>
+              <Show when={running()}>
+                <div class="mt-3">
+                  <SpinnerIcon class="h-4 w-4 animate-spin text-primary" />
+                </div>
+              </Show>
+              <div class="mt-3">
+                <RunResult result={runResult()} error={runError()} />
+              </div>
             </div>
-          </div>
-        ) : null}
+          )}
+        </Show>
       </Drawer>
     </div>
   );

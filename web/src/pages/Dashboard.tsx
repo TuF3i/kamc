@@ -1,21 +1,42 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import {
+  For,
+  Show,
+  createEffect,
+  createMemo,
+  createSignal,
+} from 'solid-js';
+import { Navigate, useNavigate, useSearchParams } from '@solidjs/router';
+import dayjs from 'dayjs';
+import { auth } from '@/stores/auth';
+import { listClusters } from '@/api/clusters';
+import { listAudit } from '@/api/audit';
+import { listPolicies } from '@/api/access';
+import { listRobots } from '@/api/robots';
+import { fetchSystemInfo } from '@/api/system';
+import type { AuditEvent, Cluster, Robot, SystemInfo } from '@/api/types';
+import { fmtUptime } from '@/utils/format';
+import { colorScheme } from '@/lib/storage/theme';
 import {
   Alert,
   Button,
   Card,
-  Col,
   Empty,
-  Row,
   Skeleton,
-  Space,
-  Statistic,
   Table,
   Tabs,
   Tag,
   Tooltip,
   type TableColumnsType,
-} from 'antd';
+} from '@/lib/widgets';
+import { PageHeader } from '@/components/PageHeader';
+import { AuditDetailDrawer } from '@/components/AuditDetailDrawer';
+import { EChart } from '@/components/EChart';
+import {
+  chartPalette,
+  donutOption,
+  resourceBarOption,
+  trendOption,
+} from '@/components/chart';
 import {
   ApiOutlined,
   BranchesOutlined,
@@ -29,34 +50,7 @@ import {
   RobotOutlined,
   SafetyCertificateOutlined,
   ThunderboltOutlined,
-} from '@ant-design/icons';
-import {
-  Area,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  ComposedChart,
-  Legend,
-  Line,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip as ChartTooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
-import dayjs from 'dayjs';
-import { useAuthStore } from '@/stores/auth';
-import { listClusters } from '@/api/clusters';
-import { listAudit } from '@/api/audit';
-import { listPolicies } from '@/api/access';
-import { listRobots } from '@/api/robots';
-import { fetchSystemInfo } from '@/api/system';
-import type { AuditEvent, Cluster, Robot, SystemInfo } from '@/api/types';
-import { PageHeader } from '@/components/PageHeader';
-import { AuditDetailDrawer } from '@/components/AuditDetailDrawer';
-import { fmtUptime } from '@/utils/format';
+} from '@/lib/icons';
 
 type DashTab = 'ops' | 'access' | 'identity';
 
@@ -86,25 +80,6 @@ interface ResourceSlice {
   denied: number;
 }
 
-const CHART_COLORS = {
-  ops: '#4c9aff',
-  blocked: '#f87171',
-  logins: '#34d399',
-  grid: '#1a2a3e',
-  axis: '#8aa0b8',
-  palette: ['#4c9aff', '#34d399', '#fbbf24', '#a78bfa', '#f87171', '#22d3ee', '#f472b6', '#94a3b8'],
-};
-
-const chartTooltipStyle = {
-  background: '#0d1826',
-  border: '1px solid #1e2e44',
-  borderRadius: 8,
-  color: '#dbe7f5',
-  fontSize: 12,
-};
-
-const chartAxisTick = { fill: CHART_COLORS.axis, fontSize: 12 };
-
 const COUNTRY_LABELS: Record<string, string> = {
   CN: '中国',
   US: '美国',
@@ -128,7 +103,7 @@ function countryLabel(code: string): string {
 }
 
 function buildTrend(events: AuditEvent[]): TrendPoint[] {
-  const days = Array.from({ length: 7 }, (_, i) => dayjs().subtract(6 - i, 'day'));
+  const days = Array.from({ length: 7 }, (_, index) => dayjs().subtract(6 - index, 'day'));
   const buckets = new Map<string, DayBucket>();
   for (const day of days) {
     buckets.set(day.format('YYYY-MM-DD'), { logins: 0, ops: 0, blocked: 0 });
@@ -289,61 +264,69 @@ function fmtBytes(n?: number): string {
   return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
 }
 
-function RankList({
-  items,
-  empty,
-  unit = '次',
-  compact = false,
-}: {
+function param(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value[0] ?? '';
+  return value ?? '';
+}
+
+function RankList(props: {
   items: RankItem[];
   empty: string;
   unit?: string;
   compact?: boolean;
 }) {
-  if (items.length === 0) {
-    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={empty} style={{ padding: '18px 0' }} />;
-  }
-  const max = Math.max(...items.map((item) => item.value), 1);
+  const max = createMemo(() => Math.max(...props.items.map((item) => item.value), 1));
   return (
-    <div className="mini-list">
-      {items.map((item) => (
-        <div className={`mini-row${compact ? ' compact' : ''}`} key={item.name}>
-          <Tooltip title={item.raw || item.name}>
-            <span className="mini-name">{item.name}</span>
-          </Tooltip>
-          {compact ? null : (
-            <div className="mini-bar">
-              <span style={{ width: `${Math.max(6, (item.value / max) * 100)}%` }} />
+    <Show
+      when={props.items.length > 0}
+      fallback={<Empty description={props.empty} class="border-0 py-4" />}
+    >
+      <div class="mini-list">
+        <For each={props.items}>
+          {(item) => (
+            <div class={`mini-row${props.compact ? ' compact' : ''}`}>
+              <Tooltip title={item.raw || item.name}>
+                <span class="mini-name">{item.name}</span>
+              </Tooltip>
+              <Show when={!props.compact}>
+                <div class="mini-bar">
+                  <span
+                    style={{
+                      width: `${Math.max(6, (item.value / max()) * 100)}%`,
+                    }}
+                  />
+                </div>
+              </Show>
+              <span class="mini-count">
+                {item.value}
+                {props.unit ?? '次'}
+                <Show when={item.denied}>
+                  <em class="mini-denied"> · {item.denied} 拦截</em>
+                </Show>
+              </span>
             </div>
           )}
-          <span className="mini-count">
-            {item.value}
-            {unit}
-            {item.denied ? <em className="mini-denied"> · {item.denied} 拦截</em> : null}
-          </span>
-        </div>
-      ))}
-    </div>
+        </For>
+      </div>
+    </Show>
   );
 }
 
-export function Dashboard() {
+export default function Dashboard() {
   const navigate = useNavigate();
-  const claims = useAuthStore((s) => s.claims);
-  const profile = useAuthStore((s) => s.profile);
-  const isAdmin = useAuthStore((s) => s.isAdmin);
-  const [clusters, setClusters] = useState<Cluster[]>([]);
-  const [robots, setRobots] = useState<Robot[]>([]);
-  const [policyCount, setPolicyCount] = useState(0);
-  const [audit, setAudit] = useState<AuditEvent[]>([]);
-  const [system, setSystem] = useState<SystemInfo | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [detail, setDetail] = useState<AuditEvent | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
 
+  const [clusters, setClusters] = createSignal<Cluster[]>([]);
+  const [robots, setRobots] = createSignal<Robot[]>([]);
+  const [policyCount, setPolicyCount] = createSignal(0);
+  const [audit, setAudit] = createSignal<AuditEvent[]>([]);
+  const [system, setSystem] = createSignal<SystemInfo | null>(null);
+  const [loading, setLoading] = createSignal(true);
+  const [error, setError] = createSignal<string | null>(null);
+  const [detail, setDetail] = createSignal<AuditEvent | null>(null);
+
   const load = async () => {
-    if (!isAdmin) return;
+    if (!auth.isAdmin()) return;
     setLoading(true);
     setError(null);
     try {
@@ -352,8 +335,12 @@ export function Dashboard() {
           listClusters(),
           fetchSystemInfo().catch(() => null),
           listRobots().catch(() => []),
-          listPolicies().then((list) => list.length).catch(() => 0),
-          listAudit({ kind: 'cluster', event: 'k8s-api', limit: 1000, summary: true }).catch(() => []),
+          listPolicies()
+            .then((list) => list.length)
+            .catch(() => 0),
+          listAudit({ kind: 'cluster', event: 'k8s-api', limit: 1000, summary: true }).catch(
+            () => [],
+          ),
           listAudit({ kind: 'platform', limit: 1000, summary: true }).catch(() => []),
         ]);
       setClusters(clusterList);
@@ -368,91 +355,81 @@ export function Dashboard() {
     }
   };
 
-  useEffect(() => {
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAdmin]);
+  createEffect(() => {
+    if (auth.isAdmin()) void load();
+  });
 
-  const windowEvents = useMemo(() => {
+  const windowEvents = createMemo(() => {
     const cutoff = dayjs().startOf('day').subtract(6, 'day');
-    return audit.filter((event) => !dayjs(event.timestamp).isBefore(cutoff));
-  }, [audit]);
-  const platformEvents = useMemo(
-    () => windowEvents.filter((event) => event.kind === 'platform' && event.event !== 'tunnel-attached'),
-    [windowEvents],
+    return audit().filter((event) => !dayjs(event.timestamp).isBefore(cutoff));
+  });
+  const platformEvents = createMemo(() =>
+    windowEvents().filter(
+      (event) => event.kind === 'platform' && event.event !== 'tunnel-attached',
+    ),
   );
   // 只统计数据面代理请求（k8s-api）；历史隧道/后台事件不算访问画像
-  const clusterEvents = useMemo(
-    () => windowEvents.filter((event) => event.kind === 'cluster' && event.event === 'k8s-api'),
-    [windowEvents],
+  const clusterEvents = createMemo(() =>
+    windowEvents().filter(
+      (event) => event.kind === 'cluster' && event.event === 'k8s-api',
+    ),
   );
-  const analyticsEvents = useMemo(
-    () => [...clusterEvents, ...platformEvents],
-    [clusterEvents, platformEvents],
+  const analyticsEvents = createMemo(() => [...clusterEvents(), ...platformEvents()]);
+
+  const trend = createMemo(() => buildTrend(analyticsEvents()));
+  const verbSlices = createMemo(() => countBy(clusterEvents(), (event) => event.verb, 6));
+  const resourceSlices = createMemo(() => resourceBreakdown(clusterEvents(), 6));
+  const userSlices = createMemo(() =>
+    actorBreakdown(
+      clusterEvents(),
+      (event) => (event.user && event.user !== 'unknown' ? event.user : ''),
+      5,
+    ),
+  );
+  const groupSlices = createMemo(() =>
+    actorBreakdown(
+      clusterEvents(),
+      (event) =>
+        event.groups
+          ? event.groups
+              .split(',')
+              .map((group) => group.trim())
+              .filter((group) => Boolean(group) && group !== 'robot')
+          : '',
+      5,
+    ),
+  );
+  const countrySlices = createMemo(() =>
+    countBy(
+      analyticsEvents(),
+      (event) => (event.geo_country ? countryLabel(event.geo_country) : ''),
+      6,
+    ),
+  );
+  const citySlices = createMemo(() =>
+    countBy(
+      analyticsEvents(),
+      (event) =>
+        event.geo_city
+          ? `${event.geo_country ? `${event.geo_country} · ` : ''}${event.geo_city}`
+          : '',
+      4,
+    ),
+  );
+  const uaSlices = createMemo(() => uaBreakdown(analyticsEvents(), 5));
+
+  const recent = createMemo(() =>
+    [...clusterEvents()]
+      .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+      .slice(0, 8),
   );
 
-  const trend = useMemo(() => buildTrend(analyticsEvents), [analyticsEvents]);
-  const verbSlices = useMemo(
-    () => countBy(clusterEvents, (event) => event.verb, 6),
-    [clusterEvents],
-  );
-  const resourceSlices = useMemo(() => resourceBreakdown(clusterEvents, 6), [clusterEvents]);
-  const userSlices = useMemo(
-    () => actorBreakdown(clusterEvents, (event) => (event.user && event.user !== 'unknown' ? event.user : ''), 5),
-    [clusterEvents],
-  );
-  const groupSlices = useMemo(
-    () =>
-      actorBreakdown(
-        clusterEvents,
-        (event) =>
-          event.groups
-            ? event.groups
-                .split(',')
-                .map((group) => group.trim())
-                .filter((group) => Boolean(group) && group !== 'robot')
-            : '',
-        5,
-      ),
-    [clusterEvents],
-  );
-  const countrySlices = useMemo(
-    () =>
-      countBy(
-        analyticsEvents,
-        (event) => (event.geo_country ? countryLabel(event.geo_country) : ''),
-        6,
-      ),
-    [analyticsEvents],
-  );
-  const citySlices = useMemo(
-    () =>
-      countBy(
-        analyticsEvents,
-        (event) =>
-          event.geo_city
-            ? `${event.geo_country ? `${event.geo_country} · ` : ''}${event.geo_city}`
-            : '',
-        4,
-      ),
-    [analyticsEvents],
-  );
-  const uaSlices = useMemo(() => uaBreakdown(analyticsEvents, 5), [analyticsEvents]);
-
-  const recent = useMemo(
-    () =>
-      [...clusterEvents]
-        .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-        .slice(0, 8),
-    [clusterEvents],
-  );
-
-  const payload = useMemo(() => {
+  const payload = createMemo(() => {
     let requestChars = 0;
     let responseChars = 0;
     let latencySum = 0;
     let latencyCount = 0;
-    for (const event of clusterEvents) {
+    for (const event of clusterEvents()) {
       requestChars += requestSize(event);
       responseChars += responseSize(event);
       if (event.latency_ms && event.latency_ms > 0) {
@@ -460,7 +437,7 @@ export function Dashboard() {
         latencyCount += 1;
       }
     }
-    const top = [...clusterEvents]
+    const top = [...clusterEvents()]
       .filter((event) => responseSize(event) > 0)
       .sort((a, b) => responseSize(b) - responseSize(a))
       .slice(0, 3);
@@ -470,34 +447,71 @@ export function Dashboard() {
       avgLatency: latencyCount > 0 ? Math.round(latencySum / latencyCount) : 0,
       top,
     };
-  }, [clusterEvents]);
+  });
 
-  const online = clusters.filter((cluster) => cluster.status === 'online').length;
-  const pending = clusters.filter((cluster) => cluster.status === 'pending').length;
-  const offline = clusters.filter((cluster) => cluster.status === 'offline').length;
-  const activeRobots = robots.filter((robot) => robot.status === 'active').length;
-  const totalOps = trend.reduce((sum, point) => sum + point.ops, 0);
-  const totalBlocked = trend.reduce((sum, point) => sum + point.blocked, 0);
-  const totalRequests = totalOps + totalBlocked;
-  const denyRate = totalRequests > 0 ? (totalBlocked / totalRequests) * 100 : 0;
-  const hasTrendData = trend.some((point) => point.logins > 0 || point.ops > 0 || point.blocked > 0);
+  const online = createMemo(
+    () => clusters().filter((cluster) => cluster.status === 'online').length,
+  );
+  const pending = createMemo(
+    () => clusters().filter((cluster) => cluster.status === 'pending').length,
+  );
+  const offline = createMemo(
+    () => clusters().filter((cluster) => cluster.status === 'offline').length,
+  );
+  const activeRobots = createMemo(
+    () => robots().filter((robot) => robot.status === 'active').length,
+  );
+  const totalOps = createMemo(() => trend().reduce((sum, point) => sum + point.ops, 0));
+  const totalBlocked = createMemo(() =>
+    trend().reduce((sum, point) => sum + point.blocked, 0),
+  );
+  const totalRequests = createMemo(() => totalOps() + totalBlocked());
+  const denyRate = createMemo(() =>
+    totalRequests() > 0 ? (totalBlocked() / totalRequests()) * 100 : 0,
+  );
+  const hasTrendData = createMemo(() =>
+    trend().some((point) => point.logins > 0 || point.ops > 0 || point.blocked > 0),
+  );
 
-  const activeUsers = new Set(
-    analyticsEvents
-      .filter((event) => event.user && event.user !== 'unknown')
-      .map((event) => event.user),
-  ).size;
-  const activeGroups = new Set(
-    analyticsEvents.flatMap((event) =>
-      event.groups
-        ? event.groups
-            .split(',')
-            .map((group) => group.trim())
-            .filter((group) => Boolean(group) && group !== 'robot')
-        : [],
+  const activeUsers = createMemo(
+    () =>
+      new Set(
+        analyticsEvents()
+          .filter((event) => event.user && event.user !== 'unknown')
+          .map((event) => event.user),
+      ).size,
+  );
+  const activeGroups = createMemo(
+    () =>
+      new Set(
+        analyticsEvents().flatMap((event) =>
+          event.groups
+            ? event.groups
+                .split(',')
+                .map((group) => group.trim())
+                .filter((group) => Boolean(group) && group !== 'robot')
+            : [],
+        ),
+      ).size,
+  );
+  const countryCount = createMemo(
+    () =>
+      new Set(
+        analyticsEvents()
+          .map((event) => event.geo_country)
+          .filter(Boolean),
+      ).size,
+  );
+
+  const palette = createMemo(() => chartPalette(colorScheme() === 'dark'));
+  const trendChart = createMemo(() => trendOption(trend(), palette()));
+  const donutChart = createMemo(() =>
+    donutOption(
+      verbSlices().map((slice) => ({ name: slice.name, value: slice.value })),
+      palette(),
     ),
-  ).size;
-  const countryCount = new Set(analyticsEvents.map((event) => event.geo_country).filter(Boolean)).size;
+  );
+  const barChart = createMemo(() => resourceBarOption(resourceSlices(), palette()));
 
   const recentColumns: TableColumnsType<AuditEvent> = [
     {
@@ -505,17 +519,17 @@ export function Dashboard() {
       dataIndex: 'timestamp',
       key: 'timestamp',
       width: 150,
-      render: (value: string) => dayjs(value).format('MM-DD HH:mm:ss'),
+      render: (value) => dayjs(String(value)).format('MM-DD HH:mm:ss'),
     },
     {
       title: '用户',
       dataIndex: 'user',
       key: 'user',
       width: 130,
-      render: (value: string) =>
+      render: (value) =>
         value ? (
-          <code className="mono audit-actor" title={value}>
-            {value}
+          <code class="mono audit-actor" title={String(value)}>
+            {String(value)}
           </code>
         ) : (
           '—'
@@ -526,30 +540,32 @@ export function Dashboard() {
       dataIndex: 'cluster',
       key: 'cluster',
       width: 110,
-      render: (value: string) => <code className="mono">{value || '—'}</code>,
+      render: (value) => <code class="mono">{String(value ?? '') || '—'}</code>,
     },
     {
       title: '动作',
       dataIndex: 'verb',
       key: 'verb',
       width: 90,
-      render: (value: string) => (value ? <Tag color="blue">{value}</Tag> : '—'),
+      render: (value) => (value ? <Tag level="primary">{String(value)}</Tag> : '—'),
     },
     {
       title: '资源',
       key: 'resource',
       width: 170,
       ellipsis: true,
-      render: (_, record) => <code className="mono">{resourceName(record)}</code>,
+      render: (_value, record) => <code class="mono">{resourceName(record)}</code>,
     },
     {
       title: '来源',
       key: 'source',
       width: 190,
-      render: (_, record) => (
-        <div className="table-source">
-          <span>{[record.geo_country, record.geo_city].filter(Boolean).join(' · ') || '—'}</span>
-          <code className="mono">{record.source_ip || '—'}</code>
+      render: (_value, record) => (
+        <div class="table-source">
+          <span>
+            {[record.geo_country, record.geo_city].filter(Boolean).join(' · ') || '—'}
+          </span>
+          <code class="mono">{record.source_ip || '—'}</code>
         </div>
       ),
     },
@@ -558,10 +574,14 @@ export function Dashboard() {
       dataIndex: 'status_code',
       key: 'status',
       width: 80,
-      render: (value?: number) => {
-        if (!value) return '—';
-        const color = value >= 500 ? 'error' : value >= 400 ? 'warning' : 'success';
-        return <Tag color={color}>{value}</Tag>;
+      render: (value) => {
+        const code = Number(value);
+        if (!code) return '—';
+        return (
+          <Tag level={code >= 500 ? 'error' : code >= 400 ? 'warning' : 'success'}>
+            {code}
+          </Tag>
+        );
       },
     },
     {
@@ -570,14 +590,14 @@ export function Dashboard() {
       key: 'latency',
       width: 84,
       align: 'right',
-      render: (value?: number) => (value ? `${value} ms` : '—'),
+      render: (value) => (value ? `${value} ms` : '—'),
     },
     {
       title: '请求/响应',
       key: 'payload',
       width: 120,
-      render: (_, record) => (
-        <span className="mono dashboard-size">
+      render: (_value, record) => (
+        <span class="mono dashboard-size">
           {fmtChars(requestSize(record))} / {fmtChars(responseSize(record))}
         </span>
       ),
@@ -587,147 +607,150 @@ export function Dashboard() {
       key: 'detail',
       width: 82,
       fixed: 'right',
-      render: (_, record) => (
-        <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => setDetail(record)}>
+      render: (_value, record) => (
+        <Button
+          type="link"
+          size="small"
+          icon={<EyeOutlined class="h-3.5 w-3.5" />}
+          onClick={() => setDetail(record)}
+        >
           详情
         </Button>
       ),
     },
   ];
 
-  const tabParam = searchParams.get('tab');
-  const tab: DashTab = tabParam === 'access' || tabParam === 'identity' ? tabParam : 'ops';
+  const tab = createMemo<DashTab>(() => {
+    const value = param(searchParams.tab);
+    return value === 'access' || value === 'identity' ? value : 'ops';
+  });
   const onTabChange = (key: string) => {
-    const next = new URLSearchParams(searchParams);
-    next.set('tab', key);
-    setSearchParams(next, { replace: true });
+    setSearchParams({ tab: key }, { replace: true });
   };
 
-  if (!isAdmin) {
-    return <Navigate to="/kubeconfig" replace />;
-  }
-
   return (
-    <div>
-      <PageHeader
-        title={`欢迎回来，${profile?.nickname || claims?.sub || '管理员'}`}
-        subtitle="平台运行态势"
-        tags={<Tag color="blue">管理员</Tag>}
-        extra={
-          <Space>
-            <Button icon={<ReloadOutlined />} onClick={() => void load()} loading={loading}>
-              刷新
-            </Button>
-            <Button icon={<FileSearchOutlined />} onClick={() => navigate('/audit')}>
-              审计日志
-            </Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/clusters')}>
-              管理集群
-            </Button>
-          </Space>
-        }
-      />
-
-      {error ? (
-        <Alert
-          type="error"
-          showIcon
-          message="概览加载失败"
-          description={error}
-          style={{ marginBottom: 16 }}
-          action={
-            <Button size="small" onClick={() => void load()}>
-              重试
-            </Button>
+    <Show when={auth.isAdmin()} fallback={<Navigate href="/kubeconfig" />}>
+      <div>
+        <PageHeader
+          title={`欢迎回来，${auth.profile()?.nickname || auth.claims()?.sub || '管理员'}`}
+          subtitle="平台运行态势"
+          tags={<Tag level="primary">管理员</Tag>}
+          extra={
+            <div class="flex flex-wrap items-center gap-2">
+              <Button
+                icon={<ReloadOutlined class="h-4 w-4" />}
+                onClick={() => void load()}
+                loading={loading()}
+              >
+                刷新
+              </Button>
+              <Button
+                icon={<FileSearchOutlined class="h-4 w-4" />}
+                onClick={() => navigate('/audit')}
+              >
+                审计日志
+              </Button>
+              <Button
+                type="primary"
+                icon={<PlusOutlined class="h-4 w-4" />}
+                onClick={() => navigate('/clusters')}
+              >
+                管理集群
+              </Button>
+            </div>
           }
         />
-      ) : null}
 
-      {loading ? (
-        <Row gutter={[16, 16]}>
-          {[0, 1, 2, 3, 4, 5].map((index) => (
-            <Col xs={12} lg={8} xl={4} key={index}>
-              <Card>
-                <Skeleton active paragraph={{ rows: 1 }} />
-              </Card>
-            </Col>
-          ))}
-        </Row>
-      ) : (
-        <>
-          <Row gutter={[16, 16]}>
-            <Col xs={12} lg={8} xl={4}>
-              <Card className="stat-card">
-                <Statistic
-                  title="集群总数"
-                  value={clusters.length}
-                  prefix={<ClusterOutlined className="stat-icon blue" />}
-                />
-                <div className="stat-foot">
-                  {online} 在线 · {pending} 待接入 · {offline} 离线
-                </div>
-              </Card>
-            </Col>
-            <Col xs={12} lg={8} xl={4}>
-              <Card className="stat-card">
-                <Statistic
-                  title="在线隧道"
-                  value={online}
-                  valueStyle={{ color: '#34d399' }}
-                  prefix={<ApiOutlined className="stat-icon green" />}
-                />
-                <div className="stat-foot">Agent 反向隧道已建立</div>
-              </Card>
-            </Col>
-            <Col xs={12} lg={8} xl={4}>
-              <Card className="stat-card">
-                <Statistic
-                  title="机器人"
-                  value={activeRobots}
-                  prefix={<RobotOutlined className="stat-icon violet" />}
-                />
-                <div className="stat-foot">共 {robots.length} 个 CICD 机器人</div>
-              </Card>
-            </Col>
-            <Col xs={12} lg={8} xl={4}>
-              <Card className="stat-card">
-                <Statistic
-                  title="策略"
-                  value={policyCount}
-                  prefix={<SafetyCertificateOutlined className="stat-icon amber" />}
-                />
-                <div className="stat-foot">已配置访问策略</div>
-              </Card>
-            </Col>
-            <Col xs={12} lg={8} xl={4}>
-              <Card className="stat-card">
-                <Statistic
-                  title="近 7 天操作"
-                  value={totalOps}
-                  prefix={<ThunderboltOutlined className="stat-icon blue" />}
-                />
-                <div className="stat-foot">
-                  拦截 {totalBlocked} · 拦截率 {denyRate.toFixed(1)}%
-                </div>
-              </Card>
-            </Col>
-            <Col xs={12} lg={8} xl={4}>
-              <Card className="stat-card">
-                <Statistic
-                  title="活跃身份"
-                  value={activeUsers}
-                  prefix={<ApiOutlined className="stat-icon violet" />}
-                />
-                <div className="stat-foot">
-                  {activeGroups} 个组 · {countryCount} 个国家/地区
-                </div>
-              </Card>
-            </Col>
-          </Row>
+        <Show when={error()}>
+          <Alert
+            type="error"
+            message="概览加载失败"
+            description={error() ?? undefined}
+            class="mb-4"
+            action={
+              <Button size="small" onClick={() => void load()}>
+                重试
+              </Button>
+            }
+          />
+        </Show>
+
+        <Show
+          when={!loading()}
+          fallback={
+            <div class="stat-grid">
+              <For each={[0, 1, 2, 3, 4, 5]}>
+                {() => (
+                  <Card>
+                    <Skeleton paragraph={{ rows: 1 }} />
+                  </Card>
+                )}
+              </For>
+            </div>
+          }
+        >
+          <div class="stat-grid">
+            <Card class="stat-card">
+              <div class="stat-head">
+                <span class="stat-title">集群总数</span>
+                <ClusterOutlined class="stat-icon blue" />
+              </div>
+              <div class="stat-value">{clusters().length}</div>
+              <div class="stat-foot">
+                {online()} 在线 · {pending()} 待接入 · {offline()} 离线
+              </div>
+            </Card>
+            <Card class="stat-card">
+              <div class="stat-head">
+                <span class="stat-title">在线隧道</span>
+                <ApiOutlined class="stat-icon green" />
+              </div>
+              <div class="stat-value" style={{ color: 'var(--private-color-success)' }}>
+                {online()}
+              </div>
+              <div class="stat-foot">Agent 反向隧道已建立</div>
+            </Card>
+            <Card class="stat-card">
+              <div class="stat-head">
+                <span class="stat-title">机器人</span>
+                <RobotOutlined class="stat-icon violet" />
+              </div>
+              <div class="stat-value">{activeRobots()}</div>
+              <div class="stat-foot">共 {robots().length} 个 CICD 机器人</div>
+            </Card>
+            <Card class="stat-card">
+              <div class="stat-head">
+                <span class="stat-title">策略</span>
+                <SafetyCertificateOutlined class="stat-icon amber" />
+              </div>
+              <div class="stat-value">{policyCount()}</div>
+              <div class="stat-foot">已配置访问策略</div>
+            </Card>
+            <Card class="stat-card">
+              <div class="stat-head">
+                <span class="stat-title">近 7 天操作</span>
+                <ThunderboltOutlined class="stat-icon blue" />
+              </div>
+              <div class="stat-value">{totalOps()}</div>
+              <div class="stat-foot">
+                拦截 {totalBlocked()} · 拦截率 {denyRate().toFixed(1)}%
+              </div>
+            </Card>
+            <Card class="stat-card">
+              <div class="stat-head">
+                <span class="stat-title">活跃身份</span>
+                <ApiOutlined class="stat-icon violet" />
+              </div>
+              <div class="stat-value">{activeUsers()}</div>
+              <div class="stat-foot">
+                {activeGroups()} 个组 · {countryCount()} 个国家/地区
+              </div>
+            </Card>
+          </div>
 
           <Tabs
-            className="dashboard-tabs"
-            activeKey={tab}
+            class="dashboard-tabs"
+            activeKey={tab()}
             onChange={onTabChange}
             items={[
               { key: 'ops', label: '运行态势' },
@@ -736,364 +759,259 @@ export function Dashboard() {
             ]}
           />
 
-          {tab === 'ops' ? (
+          <Show when={tab() === 'ops'}>
             <>
-              <Row gutter={[16, 16]} className="dashboard-row">
-                <Col xs={24} xl={16}>
-                                <Card
-                                  title="近 7 天访问趋势"
-                                  className="soft-card dashboard-chart-card"
-                                  extra={
-                                    <span className="chart-summary">
-                                      操作 {totalOps} · 拦截 {totalBlocked} · 登录{' '}
-                                      {trend.reduce((sum, point) => sum + point.logins, 0)}
-                                    </span>
-                                  }
-                                >
-                                  {hasTrendData ? (
-                                    <div className="dashboard-chart">
-                                      <ResponsiveContainer width="100%" height="100%">
-                                        <ComposedChart data={trend} margin={{ top: 8, right: 12, bottom: 0, left: -12 }}>
-                                          <defs>
-                                            <linearGradient id="opsFill" x1="0" y1="0" x2="0" y2="1">
-                                              <stop offset="5%" stopColor={CHART_COLORS.ops} stopOpacity={0.35} />
-                                              <stop offset="95%" stopColor={CHART_COLORS.ops} stopOpacity={0} />
-                                            </linearGradient>
-                                            <linearGradient id="blockedFill" x1="0" y1="0" x2="0" y2="1">
-                                              <stop offset="5%" stopColor={CHART_COLORS.blocked} stopOpacity={0.3} />
-                                              <stop offset="95%" stopColor={CHART_COLORS.blocked} stopOpacity={0} />
-                                            </linearGradient>
-                                          </defs>
-                                          <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} vertical={false} />
-                                          <XAxis
-                                            dataKey="date"
-                                            tick={chartAxisTick}
-                                            axisLine={{ stroke: CHART_COLORS.grid }}
-                                            tickLine={false}
-                                          />
-                                          <YAxis
-                                            yAxisId="left"
-                                            allowDecimals={false}
-                                            tick={chartAxisTick}
-                                            axisLine={false}
-                                            tickLine={false}
-                                          />
-                                          <YAxis
-                                            yAxisId="right"
-                                            orientation="right"
-                                            allowDecimals={false}
-                                            tick={chartAxisTick}
-                                            axisLine={false}
-                                            tickLine={false}
-                                          />
-                                          <ChartTooltip contentStyle={chartTooltipStyle} labelStyle={{ color: '#8aa0b8' }} />
-                                          <Legend wrapperStyle={{ color: '#8aa0b8', fontSize: 12 }} />
-                                          <Area
-                                            yAxisId="left"
-                                            type="monotone"
-                                            dataKey="ops"
-                                            name="K8s 操作"
-                                            stroke={CHART_COLORS.ops}
-                                            fill="url(#opsFill)"
-                                            strokeWidth={2}
-                                          />
-                                          <Area
-                                            yAxisId="left"
-                                            type="monotone"
-                                            dataKey="blocked"
-                                            name="操作拦截"
-                                            stroke={CHART_COLORS.blocked}
-                                            fill="url(#blockedFill)"
-                                            strokeWidth={2}
-                                          />
-                                          <Line
-                                            yAxisId="right"
-                                            type="monotone"
-                                            dataKey="logins"
-                                            name="登录次数"
-                                            stroke={CHART_COLORS.logins}
-                                            strokeWidth={2}
-                                            dot={false}
-                                            activeDot={{ r: 4 }}
-                                          />
-                                        </ComposedChart>
-                                      </ResponsiveContainer>
-                                    </div>
-                                  ) : (
-                                    <Empty description="最近 7 天暂无审计数据" style={{ padding: '48px 0' }} />
-                                  )}
-                                </Card>
-            
-                </Col>
-                <Col xs={24} xl={8}>
-                                <Card title="系统信息" className="soft-card dashboard-panel-card">
-                                  <div className="runtime-grid">
-                                    <div className="runtime-metric">
-                                      <div className="runtime-icon">
-                                        <CodeOutlined />
-                                      </div>
-                                      <div className="runtime-label">Go 版本</div>
-                                      <div className="runtime-value mono">{system?.go_version ?? '—'}</div>
-                                    </div>
-                                    <div className="runtime-metric">
-                                      <div className="runtime-icon">
-                                        <ClockCircleOutlined />
-                                      </div>
-                                      <div className="runtime-label">运行时长</div>
-                                      <div className="runtime-value">{fmtUptime(system?.uptime_seconds)}</div>
-                                    </div>
-                                    <div className="runtime-metric">
-                                      <div className="runtime-icon">
-                                        <BranchesOutlined />
-                                      </div>
-                                      <div className="runtime-label">Goroutines</div>
-                                      <div className="runtime-value">{system?.goroutines ?? '—'}</div>
-                                    </div>
-                                  </div>
-                                  <div className="info-row">
-                                    <span className="info-label">堆内存</span>
-                                    <span className="info-value">{fmtBytes(system?.heap_alloc_bytes)}</span>
-                                  </div>
-                                  <div className="info-row">
-                                    <span className="info-label">DB 连接</span>
-                                    <span className="info-value">
-                                      {system ? `${system.db_in_use} / ${system.db_open_connections}` : '—'}
-                                    </span>
-                                  </div>
-                                  <div className="info-row">
-                                    <span className="info-label">审计样本</span>
-                                    <span className="info-value">{analyticsEvents.length} 条</span>
-                                  </div>
-                                  <div className="info-row">
-                                    <span className="info-label">拦截率</span>
-                                    <span className="info-value">{denyRate.toFixed(1)}%</span>
-                                  </div>
-                                </Card>
-            
-                </Col>
-              </Row>
-              <Row gutter={[16, 16]} className="dashboard-row">
-                <Col span={24}>
-                                <Card
-                                  title="最近 K8s 请求"
-                                  className="soft-card"
-                                  extra={
-                                    <Button type="link" size="small" onClick={() => navigate('/audit')}>
-                                      查看全部
-                                    </Button>
-                                  }
-                                  styles={{ body: { padding: 0 } }}
-                                >
-                                  {recent.length > 0 ? (
-                                    <Table<AuditEvent>
-                                      rowKey="id"
-                                      columns={recentColumns}
-                                      dataSource={recent}
-                                      pagination={false}
-                                      scroll={{ x: 1200 }}
-                                      size="middle"
-                                    />
-                                  ) : (
-                                    <Empty description="最近 7 天暂无集群操作" style={{ padding: '32px 0' }} />
-                                  )}
-                                </Card>
-            
-                </Col>
-              </Row>
+              <div class="dashboard-row cols-main">
+                <Card
+                  title="近 7 天访问趋势"
+                  class="soft-card dashboard-chart-card"
+                  extra={
+                    <span class="chart-summary">
+                      操作 {totalOps()} · 拦截 {totalBlocked()} · 登录{' '}
+                      {trend().reduce((sum, point) => sum + point.logins, 0)}
+                    </span>
+                  }
+                >
+                  <Show
+                    when={hasTrendData()}
+                    fallback={<Empty description="最近 7 天暂无审计数据" class="border-0 py-12" />}
+                  >
+                    <div class="dashboard-chart">
+                      <EChart option={trendChart()} />
+                    </div>
+                  </Show>
+                </Card>
+                <Card title="系统信息" class="soft-card dashboard-panel-card">
+                  <div class="runtime-grid">
+                    <div class="runtime-metric">
+                      <div class="runtime-icon">
+                        <CodeOutlined class="h-4 w-4" />
+                      </div>
+                      <div class="runtime-label">Go 版本</div>
+                      <div class="runtime-value mono">{system()?.go_version ?? '—'}</div>
+                    </div>
+                    <div class="runtime-metric">
+                      <div class="runtime-icon">
+                        <ClockCircleOutlined class="h-4 w-4" />
+                      </div>
+                      <div class="runtime-label">运行时长</div>
+                      <div class="runtime-value">{fmtUptime(system()?.uptime_seconds)}</div>
+                    </div>
+                    <div class="runtime-metric">
+                      <div class="runtime-icon">
+                        <BranchesOutlined class="h-4 w-4" />
+                      </div>
+                      <div class="runtime-label">Goroutines</div>
+                      <div class="runtime-value">{system()?.goroutines ?? '—'}</div>
+                    </div>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">堆内存</span>
+                    <span class="info-value">{fmtBytes(system()?.heap_alloc_bytes)}</span>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">DB 连接</span>
+                    <span class="info-value">
+                      {system()
+                        ? `${system()!.db_in_use} / ${system()!.db_open_connections}`
+                        : '—'}
+                    </span>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">审计样本</span>
+                    <span class="info-value">{analyticsEvents().length} 条</span>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">拦截率</span>
+                    <span class="info-value">{denyRate().toFixed(1)}%</span>
+                  </div>
+                </Card>
+              </div>
+
+              <div class="dashboard-row">
+                <Card
+                  title="最近 K8s 请求"
+                  class="soft-card"
+                  extra={
+                    <Button type="link" size="small" onClick={() => navigate('/audit')}>
+                      查看全部
+                    </Button>
+                  }
+                  contentClass="p-0"
+                >
+                  <Show
+                    when={recent().length > 0}
+                    fallback={<Empty description="最近 7 天暂无集群操作" class="m-4" />}
+                  >
+                    <Table<AuditEvent>
+                      rowKey="id"
+                      columns={recentColumns}
+                      dataSource={recent()}
+                      pagination={false}
+                      scroll={{ x: 1200 }}
+                    />
+                  </Show>
+                </Card>
+              </div>
             </>
-          ) : null}
+          </Show>
 
-          {tab === 'access' ? (
-            <Row gutter={[16, 16]} className="dashboard-row">
-              <Col xs={24} lg={8}>
-                              <Card
-                                title="K8s 动作分布"
-                                className="soft-card dashboard-chart-card"
-                                extra={<span className="chart-summary">共 {clusterEvents.length} 次</span>}
-                              >
-                                {verbSlices.length > 0 ? (
-                                  <>
-                                    <div className="dashboard-donut">
-                                      <ResponsiveContainer width="100%" height="100%">
-                                        <PieChart>
-                                          <Pie
-                                            data={verbSlices}
-                                            dataKey="value"
-                                            nameKey="name"
-                                            innerRadius={58}
-                                            outerRadius={88}
-                                            paddingAngle={2}
-                                            stroke="none"
-                                          >
-                                            {verbSlices.map((slice, index) => (
-                                              <Cell
-                                                key={slice.name}
-                                                fill={CHART_COLORS.palette[index % CHART_COLORS.palette.length]}
-                                              />
-                                            ))}
-                                          </Pie>
-                                          <ChartTooltip contentStyle={chartTooltipStyle} />
-                                        </PieChart>
-                                      </ResponsiveContainer>
-                                    </div>
-                                    <div className="donut-legend">
-                                      {verbSlices.map((slice, index) => (
-                                        <span key={slice.name}>
-                                          <i style={{ background: CHART_COLORS.palette[index % CHART_COLORS.palette.length] }} />
-                                          {slice.name}
-                                          <b>{slice.value}</b>
-                                        </span>
-                                      ))}
-                                    </div>
-                                  </>
-                                ) : (
-                                  <Empty description="暂无 K8s 动作数据" style={{ padding: '48px 0' }} />
-                                )}
-                              </Card>
-            
-              </Col>
-              <Col xs={24} lg={8}>
-                              <Card
-                                title="访问地理分布"
-                                className="soft-card dashboard-panel-card"
-                                extra={<span className="chart-summary">{countryCount} 个国家/地区</span>}
-                              >
-                                <RankList items={countrySlices} empty="暂无 GeoIP 数据" />
-                                {citySlices.length > 0 ? (
-                                  <>
-                                    <div className="mini-divider" />
-                                    <div className="mini-heading">热门城市</div>
-                                    <Space size={[6, 6]} wrap>
-                                      {citySlices.map((city) => (
-                                        <Tag key={city.name}>
-                                          {city.name} · {city.value}
-                                        </Tag>
-                                      ))}
-                                    </Space>
-                                  </>
-                                ) : null}
-                              </Card>
-            
-              </Col>
-              <Col xs={24} lg={8}>
-                              <Card
-                                title="资源访问热点"
-                                className="soft-card dashboard-panel-card"
-                                extra={<span className="chart-summary">Top {resourceSlices.length}</span>}
-                              >
-                                {resourceSlices.length > 0 ? (
-                                  <div className="dashboard-bar">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                      <BarChart
-                                        data={resourceSlices}
-                                        layout="vertical"
-                                        margin={{ top: 0, right: 12, bottom: 0, left: 8 }}
-                                        barCategoryGap={10}
-                                      >
-                                        <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} horizontal={false} />
-                                        <XAxis type="number" allowDecimals={false} tick={chartAxisTick} axisLine={false} tickLine={false} />
-                                        <YAxis
-                                          type="category"
-                                          dataKey="name"
-                                          width={104}
-                                          tick={{ fill: CHART_COLORS.axis, fontSize: 11 }}
-                                          axisLine={false}
-                                          tickLine={false}
-                                        />
-                                        <ChartTooltip contentStyle={chartTooltipStyle} cursor={{ fill: 'rgba(76,154,255,0.06)' }} />
-                                        <Legend wrapperStyle={{ color: '#8aa0b8', fontSize: 12 }} />
-                                        <Bar dataKey="allowed" name="放行" stackId="resource" fill={CHART_COLORS.ops} radius={[0, 4, 4, 0]} />
-                                        <Bar dataKey="denied" name="拦截" stackId="resource" fill={CHART_COLORS.blocked} radius={[0, 4, 4, 0]} />
-                                      </BarChart>
-                                    </ResponsiveContainer>
-                                  </div>
-                                ) : (
-                                  <Empty description="暂无资源访问数据" style={{ padding: '48px 0' }} />
-                                )}
-                              </Card>
-            
-              </Col>
-            </Row>
-          ) : null}
+          <Show when={tab() === 'access'}>
+            <div class="dashboard-row cols-3">
+              <Card
+                title="K8s 动作分布"
+                class="soft-card dashboard-chart-card"
+                extra={<span class="chart-summary">共 {clusterEvents().length} 次</span>}
+              >
+                <Show
+                  when={verbSlices().length > 0}
+                  fallback={<Empty description="暂无 K8s 动作数据" class="border-0 py-12" />}
+                >
+                  <div class="dashboard-donut">
+                    <EChart option={donutChart()} />
+                  </div>
+                  <div class="donut-legend">
+                    <For each={verbSlices()}>
+                      {(slice, index) => (
+                        <span>
+                          <i
+                            style={{
+                              background:
+                                palette().palette[index() % palette().palette.length],
+                            }}
+                          />
+                          {slice.name}
+                          <b>{slice.value}</b>
+                        </span>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </Card>
+              <Card
+                title="访问地理分布"
+                class="soft-card dashboard-panel-card"
+                extra={<span class="chart-summary">{countryCount()} 个国家/地区</span>}
+              >
+                <RankList items={countrySlices()} empty="暂无 GeoIP 数据" />
+                <Show when={citySlices().length > 0}>
+                  <div class="mini-divider" />
+                  <div class="mini-heading">热门城市</div>
+                  <div class="flex flex-wrap gap-1.5">
+                    <For each={citySlices()}>
+                      {(city) => (
+                        <Tag>
+                          {city.name} · {city.value}
+                        </Tag>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </Card>
+              <Card
+                title="资源访问热点"
+                class="soft-card dashboard-panel-card"
+                extra={<span class="chart-summary">Top {resourceSlices().length}</span>}
+              >
+                <Show
+                  when={resourceSlices().length > 0}
+                  fallback={<Empty description="暂无资源访问数据" class="border-0 py-12" />}
+                >
+                  <div class="dashboard-bar">
+                    <EChart option={barChart()} />
+                  </div>
+                </Show>
+              </Card>
+            </div>
+          </Show>
 
-          {tab === 'identity' ? (
-            <Row gutter={[16, 16]} className="dashboard-row">
-              <Col xs={24} lg={8}>
-                              <Card
-                                title="用户与组活跃度"
-                                className="soft-card dashboard-panel-card"
-                                extra={<span className="chart-summary">K8s 操作</span>}
-                              >
-                                <div className="dashboard-split">
-                                  <div>
-                                    <div className="mini-heading">操作用户 Top 5</div>
-                                    <RankList items={userSlices} empty="暂无操作用户" compact />
-                                  </div>
-                                  <div>
-                                    <div className="mini-heading">活跃组 Top 5</div>
-                                    <RankList items={groupSlices} empty="暂无组信息" compact />
-                                  </div>
-                                </div>
-                              </Card>
-            
-              </Col>
-              <Col xs={24} lg={8}>
-                              <Card
-                                title="客户端 / UA"
-                                className="soft-card dashboard-panel-card"
-                                extra={<span className="chart-summary">{analyticsEvents.length} 次请求</span>}
-                              >
-                                <RankList items={uaSlices} empty="暂无 UA 数据" />
-                              </Card>
-            
-              </Col>
-              <Col xs={24} lg={8}>
-                              <Card title="请求 / 响应体量" className="soft-card dashboard-panel-card">
-                                <div className="payload-grid">
-                                  <div className="payload-metric">
-                                    <span>请求体量</span>
-                                    <strong>{payload.requestChars ? `${fmtChars(payload.requestChars)} 字符` : '—'}</strong>
-                                  </div>
-                                  <div className="payload-metric">
-                                    <span>响应体量</span>
-                                    <strong>{payload.responseChars ? `${fmtChars(payload.responseChars)} 字符` : '—'}</strong>
-                                  </div>
-                                  <div className="payload-metric">
-                                    <span>平均耗时</span>
-                                    <strong>{payload.avgLatency ? `${payload.avgLatency} ms` : '—'}</strong>
-                                  </div>
-                                  <div className="payload-metric">
-                                    <span>最大响应</span>
-                                    <strong>{fmtChars(payload.top[0] ? responseSize(payload.top[0]) : undefined)}</strong>
-                                  </div>
-                                </div>
-                                <div className="mini-heading">响应体最大 Top 3</div>
-                                {payload.top.length > 0 ? (
-                                  <div className="payload-top">
-                                    {payload.top.map((event) => (
-                                      <div className="payload-row" key={event.id}>
-                                        <Tooltip title={event.path || resourceName(event)}>
-                                          <span className="mini-name">
-                                            {resourceName(event)} · {event.verb || event.method}
-                                          </span>
-                                        </Tooltip>
-                                        <span className="mini-count">{fmtChars(responseSize(event))}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无报文数据" style={{ padding: '10px 0' }} />
-                                )}
-                              </Card>
-            
-              </Col>
-            </Row>
-          ) : null}
+          <Show when={tab() === 'identity'}>
+            <div class="dashboard-row cols-3">
+              <Card
+                title="用户与组活跃度"
+                class="soft-card dashboard-panel-card"
+                extra={<span class="chart-summary">K8s 操作</span>}
+              >
+                <div class="dashboard-split">
+                  <div>
+                    <div class="mini-heading">操作用户 Top 5</div>
+                    <RankList items={userSlices()} empty="暂无操作用户" compact />
+                  </div>
+                  <div>
+                    <div class="mini-heading">活跃组 Top 5</div>
+                    <RankList items={groupSlices()} empty="暂无组信息" compact />
+                  </div>
+                </div>
+              </Card>
+              <Card
+                title="客户端 / UA"
+                class="soft-card dashboard-panel-card"
+                extra={
+                  <span class="chart-summary">{analyticsEvents().length} 次请求</span>
+                }
+              >
+                <RankList items={uaSlices()} empty="暂无 UA 数据" />
+              </Card>
+              <Card title="请求 / 响应体量" class="soft-card dashboard-panel-card">
+                <div class="payload-grid">
+                  <div class="payload-metric">
+                    <span>请求体量</span>
+                    <strong>
+                      {payload().requestChars
+                        ? `${fmtChars(payload().requestChars)} 字符`
+                        : '—'}
+                    </strong>
+                  </div>
+                  <div class="payload-metric">
+                    <span>响应体量</span>
+                    <strong>
+                      {payload().responseChars
+                        ? `${fmtChars(payload().responseChars)} 字符`
+                        : '—'}
+                    </strong>
+                  </div>
+                  <div class="payload-metric">
+                    <span>平均耗时</span>
+                    <strong>
+                      {payload().avgLatency ? `${payload().avgLatency} ms` : '—'}
+                    </strong>
+                  </div>
+                  <div class="payload-metric">
+                    <span>最大响应</span>
+                    <strong>
+                      {fmtChars(
+                        payload().top[0] ? responseSize(payload().top[0]) : undefined,
+                      )}
+                    </strong>
+                  </div>
+                </div>
+                <div class="mini-heading">响应体最大 Top 3</div>
+                <Show
+                  when={payload().top.length > 0}
+                  fallback={<Empty description="暂无报文数据" class="border-0 py-3" />}
+                >
+                  <div class="payload-top">
+                    <For each={payload().top}>
+                      {(event) => (
+                        <div class="payload-row">
+                          <Tooltip title={event.path || resourceName(event)}>
+                            <span class="mini-name">
+                              {resourceName(event)} · {event.verb || event.method}
+                            </span>
+                          </Tooltip>
+                          <span class="mini-count">{fmtChars(responseSize(event))}</span>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </Card>
+            </div>
+          </Show>
+        </Show>
 
-        </>
-      )}
-
-      <AuditDetailDrawer event={detail} onClose={() => setDetail(null)} />
-    </div>
+        <AuditDetailDrawer event={detail()} onClose={() => setDetail(null)} />
+      </div>
+    </Show>
   );
 }

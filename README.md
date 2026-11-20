@@ -39,12 +39,12 @@ make image-agent    VERSION=v1.0.0   # kamc-agent:v1.0.0
 
 ## 前端
 
-管理前端在 [web/](web/README.md)，技术栈 React 18 + Ant Design 5 + TypeScript + Vite：
+管理前端在 [web/](web/README.md)，技术栈 SolidJS 1.9 + Tailwind CSS 4 + TypeScript + Vite：
 
 ```bash
 cd web
 npm install
-KAMC_API=http://127.0.0.1:8080 npm run dev   # http://localhost:5173
+KAMC_API=http://127.0.0.1:8080 npm run dev   # http://localhost:5174
 npm run build                                # 产出 data/web/
 ```
 

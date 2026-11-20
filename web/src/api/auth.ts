@@ -31,3 +31,11 @@ export function fetchMe(): Promise<Claims> {
 export function logout(): Promise<{ logout: boolean }> {
   return apiPost<{ logout: boolean }>('/auth/logout');
 }
+
+/** 自服务修改本地密码（成功后该用户全部 JWT 已吊销，需重新登录）。 */
+export function changePassword(oldPassword: string, newPassword: string): Promise<{ changed: boolean }> {
+  return apiPost<{ changed: boolean }>('/api/v1/profile/password', {
+    old_password: oldPassword,
+    new_password: newPassword,
+  });
+}

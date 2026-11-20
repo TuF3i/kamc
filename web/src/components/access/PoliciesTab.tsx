@@ -1,33 +1,48 @@
-import { useEffect, useMemo, useState } from 'react';
+import {
+  For,
+  Show,
+  createEffect,
+  createMemo,
+  createSignal,
+  onMount,
+} from 'solid-js';
+import { createPolicies, deletePolicy, listPolicies } from '@/api/access';
+import { listClusterResources } from '@/api/resources';
+import type { ClusterResource, PolicyDTO } from '@/api/types';
+import { toast } from '@/lib/storage/toast';
 import {
   Alert,
-  App,
   Button,
   Card,
   Descriptions,
-  Form,
+  Field,
   Input,
   Modal,
   Popconfirm,
   Select,
-  Space,
   Table,
   Tag,
-  Typography,
+  confirm,
+  type DescriptionItem,
   type TableColumnsType,
-  type TableProps,
-} from 'antd';
-import { DeleteOutlined, EditOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons';
-import { createPolicies, deletePolicy, listPolicies } from '@/api/access';
-import { listClusterResources } from '@/api/resources';
-import type { ClusterResource, PolicyDTO } from '@/api/types';
+  type TableRowSelection,
+} from '@/lib/widgets';
+import { createForm } from '@/lib/widgets/form';
 import { summarizeBatch } from '@/utils/batch';
+import { DeleteOutlined, EditOutlined, PlusOutlined, SearchOutlined } from '@/lib/icons';
 
 function subjectLabel(record: PolicyDTO): string {
   if (record.subject_type === 'org') return '组';
   if (record.subject_type === 'user') return '用户';
   if (record.subject_type === 'robot') return '机器人';
   return '遗留';
+}
+
+function subjectLevel(record: PolicyDTO): 'primary' | 'info' | 'gold' | 'neutral' {
+  if (record.subject_type === 'org') return 'info';
+  if (record.subject_type === 'robot') return 'gold';
+  if (record.subject_type === 'user') return 'primary';
+  return 'neutral';
 }
 
 /** 策略是否命名空间资源：obj 以 cluster/ 开头、资源为 * 或非资源路径视为集群级 */
@@ -49,40 +64,23 @@ interface PoliciesTabProps {
   clusterFilter?: string;
   /** 显示「创建策略」按钮 */
   onCreate?: () => void;
+  /** 策略创建后递增，触发列表刷新（替代 React 的 key 重挂载） */
+  refreshKey?: number;
 }
 
 /** 策略列表（权限 Tab 与机器人权限 Tab 共用）。 */
-export function PoliciesTab({ subjectScope, clusterFilter, onCreate }: PoliciesTabProps) {
-  const { message, modal } = App.useApp();
-  const [policies, setPolicies] = useState<PolicyDTO[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
-  const [editing, setEditing] = useState<PolicyDTO | null>(null);
-  const [editSaving, setEditSaving] = useState(false);
-  const [resources, setResources] = useState<ClusterResource[]>([]);
-  const [namespaces, setNamespaces] = useState<string[]>([]);
-  const [editForm] = Form.useForm<{ namespace: string; verbs: string[] }>();
+export function PoliciesTab(props: PoliciesTabProps) {
+  const [policies, setPolicies] = createSignal<PolicyDTO[]>([]);
+  const [loading, setLoading] = createSignal(true);
+  const [error, setError] = createSignal<string | null>(null);
+  const [search, setSearch] = createSignal('');
+  const [selectedKeys, setSelectedKeys] = createSignal<(string | number)[]>([]);
+  const [editing, setEditing] = createSignal<PolicyDTO | null>(null);
+  const [editSaving, setEditSaving] = createSignal(false);
+  const [resources, setResources] = createSignal<ClusterResource[]>([]);
+  const [namespaces, setNamespaces] = createSignal<string[]>([]);
 
-  // 编辑弹窗打开时拉取目标集群资源（动作候选；集群离线则退回常用动作）
-  useEffect(() => {
-    if (!editing) return;
-    void listClusterResources(editing.cluster)
-      .then((res) => {
-        setResources(res.resources);
-        setNamespaces(res.namespaces);
-      })
-      .catch(() => {
-        setResources([]);
-        setNamespaces([]);
-      });
-    const namespaced = isNamespaced(editing);
-    editForm.setFieldsValue({
-      namespace: namespaced ? editing.namespace : '*',
-      verbs: editing.verbs,
-    });
-  }, [editing, editForm]);
+  const editForm = createForm({ namespace: '*', verbs: [] as string[] });
 
   const load = async () => {
     setLoading(true);
@@ -96,22 +94,42 @@ export function PoliciesTab({ subjectScope, clusterFilter, onCreate }: PoliciesT
     }
   };
 
-  useEffect(() => {
-    void load();
-  }, []);
+  onMount(() => void load());
 
-  const filtered = useMemo(() => {
-    let list = policies;
-    if (subjectScope === 'robot') {
-      list = list.filter((p) => p.subject_type === 'robot');
+  createEffect(() => {
+    if (props.refreshKey) void load();
+  });
+
+  const openEdit = (record: PolicyDTO) => {
+    setEditing(record);
+    const namespaced = isNamespaced(record);
+    editForm.reset({
+      namespace: namespaced ? record.namespace : '*',
+      verbs: record.verbs,
+    });
+    void listClusterResources(record.cluster)
+      .then((res) => {
+        setResources(res.resources);
+        setNamespaces(res.namespaces);
+      })
+      .catch(() => {
+        setResources([]);
+        setNamespaces([]);
+      });
+  };
+
+  const filtered = createMemo(() => {
+    let list = policies();
+    if (props.subjectScope === 'robot') {
+      list = list.filter((policy) => policy.subject_type === 'robot');
     } else {
       // 机器人策略只在机器人页签维护
-      list = list.filter((p) => p.subject_type !== 'robot');
+      list = list.filter((policy) => policy.subject_type !== 'robot');
     }
-    if (clusterFilter) {
-      list = list.filter((p) => p.dom === clusterFilter);
+    if (props.clusterFilter) {
+      list = list.filter((policy) => policy.dom === props.clusterFilter);
     }
-    const keyword = search.trim().toLowerCase();
+    const keyword = search().trim().toLowerCase();
     if (!keyword) return list;
     return list.filter((record) =>
       [
@@ -123,68 +141,82 @@ export function PoliciesTab({ subjectScope, clusterFilter, onCreate }: PoliciesT
         record.verbs.join(' '),
       ].some((value) => value.toLowerCase().includes(keyword)),
     );
-  }, [policies, search, subjectScope, clusterFilter]);
+  });
 
-  const policyKey = (record: PolicyDTO) => `${record.sub}|${record.dom}|${record.obj}|${record.act}`;
+  const policyKey = (record: PolicyDTO) =>
+    `${record.sub}|${record.dom}|${record.obj}|${record.act}`;
 
-  const policyByKey = useMemo(() => {
+  const policyByKey = createMemo(() => {
     const map = new Map<string, PolicyDTO>();
-    for (const record of filtered) map.set(policyKey(record), record);
+    for (const record of filtered()) map.set(policyKey(record), record);
     return map;
-  }, [filtered]);
+  });
 
-  const selectedPolicies = useMemo(
-    () =>
-      selectedKeys
-        .map((key) => policyByKey.get(String(key)))
-        .filter((record): record is PolicyDTO => Boolean(record)),
-    [selectedKeys, policyByKey],
+  const selectedPolicies = createMemo(() =>
+    selectedKeys()
+      .map((key) => policyByKey().get(String(key)))
+      .filter((record): record is PolicyDTO => Boolean(record)),
   );
 
   const remove = async (record: PolicyDTO) => {
     try {
-      await deletePolicy({ sub: record.sub, dom: record.dom, obj: record.obj, act: record.act });
-      message.success('策略已删除');
+      await deletePolicy({
+        sub: record.sub,
+        dom: record.dom,
+        obj: record.obj,
+        act: record.act,
+      });
+      toast.success('策略已删除');
       setSelectedKeys((keys) => keys.filter((key) => key !== policyKey(record)));
       await load();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '删除策略失败');
+      toast.error(err instanceof Error ? err.message : '删除策略失败');
     }
   };
 
   const submitEdit = async () => {
-    if (!editing) return;
-    const values = await editForm.validateFields();
-    const namespaced = isNamespaced(editing);
+    const current = editing();
+    if (!current) return;
+    if (!editForm.validate({ verbs: [{ required: true, message: '至少选择一个动作' }] })) {
+      return;
+    }
+    const namespaced = isNamespaced(current);
     const subjectType =
-      editing.subject_type === 'org'
+      current.subject_type === 'org'
         ? 'org'
-        : editing.subject_type === 'robot'
+        : current.subject_type === 'robot'
           ? 'robot'
           : 'user';
     setEditSaving(true);
     try {
       // 编辑语义：删除旧四元组 + 按新规则重建（保持主体/集群不变）
-      await deletePolicy({ sub: editing.sub, dom: editing.dom, obj: editing.obj, act: editing.act });
+      await deletePolicy({
+        sub: current.sub,
+        dom: current.dom,
+        obj: current.obj,
+        act: current.act,
+      });
       await createPolicies({
         subject_type: subjectType,
-        subject: editing.subject,
-        cluster: editing.cluster,
+        subject: current.subject,
+        cluster: current.cluster,
         rules: [
           {
-            namespace: namespaced ? values.namespace : '*',
-            resource: editing.resource,
-            subresource: editing.subresource,
+            namespace: namespaced ? String(editForm.values.namespace) : '*',
+            resource: current.resource,
+            subresource: current.subresource,
             namespaced,
-            verbs: editing.resource === '*' ? ['*'] : values.verbs,
+            verbs: current.resource === '*' ? ['*'] : (editForm.values.verbs as string[]),
           },
         ],
       });
-      message.success('策略已更新');
+      toast.success('策略已更新');
       setEditing(null);
       await load();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '更新策略失败（旧策略可能已删除，请刷新核对）');
+      toast.error(
+        err instanceof Error ? err.message : '更新策略失败（旧策略可能已删除，请刷新核对）',
+      );
       await load();
     } finally {
       setEditSaving(false);
@@ -192,26 +224,31 @@ export function PoliciesTab({ subjectScope, clusterFilter, onCreate }: PoliciesT
   };
 
   const batchRemove = () => {
-    const targets = selectedPolicies;
+    const targets = selectedPolicies();
     if (targets.length === 0) return;
-    modal.confirm({
+    confirm({
       title: `批量删除 ${targets.length} 条策略？`,
       content: '删除立即生效，对应主体马上失去这些资源的访问权限。',
       okText: '批量删除',
-      okButtonProps: { danger: true },
+      danger: true,
       cancelText: '取消',
       onOk: async () => {
         const outcome = summarizeBatch(
           await Promise.allSettled(
             targets.map((record) =>
-              deletePolicy({ sub: record.sub, dom: record.dom, obj: record.obj, act: record.act }),
+              deletePolicy({
+                sub: record.sub,
+                dom: record.dom,
+                obj: record.obj,
+                act: record.act,
+              }),
             ),
           ),
         );
         if (outcome.failed === 0) {
-          message.success(`已删除 ${outcome.succeeded} 条策略`);
+          toast.success(`已删除 ${outcome.succeeded} 条策略`);
         } else {
-          message.error(
+          toast.error(
             `已删除 ${outcome.succeeded} 条策略，${outcome.failed} 条失败：${outcome.firstError}`,
           );
         }
@@ -221,33 +258,23 @@ export function PoliciesTab({ subjectScope, clusterFilter, onCreate }: PoliciesT
     });
   };
 
-  const rowSelection: TableProps<PolicyDTO>['rowSelection'] = {
-    selectedRowKeys: selectedKeys,
+  const rowSelection = (): TableRowSelection<PolicyDTO> => ({
+    selectedRowKeys: selectedKeys(),
     onChange: (keys) => setSelectedKeys([...keys]),
     selections: [Table.SELECTION_ALL, Table.SELECTION_INVERT, Table.SELECTION_NONE],
     preserveSelectedRowKeys: true,
-  };
+  });
 
   const columns: TableColumnsType<PolicyDTO> = [
     {
       title: '主体',
       key: 'subject',
       width: 260,
-      render: (_, record) => (
-        <Space size={6}>
-          <Tag
-            color={
-              record.subject_type === 'org'
-                ? 'purple'
-                : record.subject_type === 'robot'
-                  ? 'geekblue'
-                  : 'blue'
-            }
-          >
-            {subjectLabel(record)}
-          </Tag>
-          <code className="mono strong">{record.subject}</code>
-        </Space>
+      render: (_value, record) => (
+        <span class="inline-flex items-center gap-1.5">
+          <Tag level={subjectLevel(record)}>{subjectLabel(record)}</Tag>
+          <code class="mono strong">{record.subject}</code>
+        </span>
       ),
     },
     {
@@ -255,58 +282,58 @@ export function PoliciesTab({ subjectScope, clusterFilter, onCreate }: PoliciesT
       dataIndex: 'cluster',
       key: 'cluster',
       width: 180,
-      render: (value: string) => <code className="mono">{value}</code>,
+      render: (value) => <code class="mono">{String(value)}</code>,
     },
     {
       title: '命名空间',
       dataIndex: 'namespace',
       key: 'namespace',
       width: 140,
-      render: (value: string) =>
-        value === '*' ? (
+      render: (value) => {
+        const text = String(value ?? '');
+        return text === '*' ? (
           <Tag>全部</Tag>
-        ) : value ? (
-          <code className="mono">{value}</code>
+        ) : text ? (
+          <code class="mono">{text}</code>
         ) : (
-          <Typography.Text type="secondary">—</Typography.Text>
-        ),
+          <span class="muted">—</span>
+        );
+      },
     },
     {
       title: '资源',
       key: 'resource',
       width: 220,
-      render: (_, record) =>
+      render: (_value, record) =>
         record.resource === '*' ? (
-          <Tag color="gold">全部资源</Tag>
+          <Tag level="gold">全部资源</Tag>
         ) : (
-          <code className="mono">{resourceLabel(record)}</code>
+          <code class="mono">{resourceLabel(record)}</code>
         ),
     },
     {
       title: '动作',
       key: 'verbs',
-      render: (_, record) =>
+      render: (_value, record) =>
         record.verbs.includes('*') ? (
-          <Tag color="gold">全部动作</Tag>
+          <Tag level="gold">全部动作</Tag>
         ) : (
-          <Space size={[4, 4]} wrap>
-            {record.verbs.map((verb) => (
-              <Tag key={verb}>{verb}</Tag>
-            ))}
-          </Space>
+          <span class="flex flex-wrap gap-1">
+            <For each={record.verbs}>{(verb) => <Tag>{verb}</Tag>}</For>
+          </span>
         ),
     },
     {
       title: '操作',
       key: 'actions',
       width: 160,
-      render: (_, record) => (
-        <Space size={0}>
+      render: (_value, record) => (
+        <div class="table-actions">
           <Button
             type="link"
             size="small"
-            icon={<EditOutlined />}
-            onClick={() => setEditing(record)}
+            icon={<EditOutlined class="h-3.5 w-3.5" />}
+            onClick={() => openEdit(record)}
           >
             编辑
           </Button>
@@ -316,79 +343,130 @@ export function PoliciesTab({ subjectScope, clusterFilter, onCreate }: PoliciesT
             okText="删除"
             cancelText="取消"
             okButtonProps={{ danger: true }}
-            onConfirm={() => void remove(record)}
+            onConfirm={() => remove(record)}
           >
-            <Button type="link" size="small" danger icon={<DeleteOutlined />}>
+            <Button
+              type="link"
+              size="small"
+              danger
+              icon={<DeleteOutlined class="h-3.5 w-3.5" />}
+            >
               删除
             </Button>
           </Popconfirm>
-        </Space>
+        </div>
       ),
     },
   ];
 
+  const editingItems = (): DescriptionItem[] => {
+    const record = editing();
+    if (!record) return [];
+    return [
+      { label: '主体', value: <code class="mono">{record.sub}</code> },
+      { label: '集群', value: <code class="mono">{record.cluster}</code> },
+      { label: '资源', value: <code class="mono">{resourceLabel(record)}</code> },
+    ];
+  };
+
+  const verbOptions = () => {
+    const record = editing();
+    if (!record) return [];
+    const found = resources().find(
+      (resource) =>
+        resource.resource === record.resource &&
+        (resource.subresource ?? '') === (record.subresource ?? ''),
+    );
+    const verbs = found?.verbs ?? [
+      'get',
+      'list',
+      'watch',
+      'create',
+      'update',
+      'patch',
+      'delete',
+    ];
+    return verbs.map((verb) => ({ value: verb, label: verb }));
+  };
+
+  const namespaceOptions = () => {
+    const record = editing();
+    if (!record) return [{ value: '*', label: '*（全部命名空间）' }];
+    return [
+      { value: '*', label: '*（全部命名空间）' },
+      ...Array.from(new Set([record.namespace, ...namespaces()]))
+        .filter((namespace) => namespace && namespace !== '*')
+        .sort()
+        .map((namespace) => ({ value: namespace, label: namespace })),
+    ];
+  };
+
   return (
     <div>
-      {error ? (
+      <Show when={error()}>
         <Alert
           type="error"
-          showIcon
           message="策略加载失败"
-          description={error}
-          style={{ marginBottom: 16 }}
+          description={error() ?? undefined}
+          class="mb-4"
           action={
             <Button size="small" onClick={() => void load()}>
               重试
             </Button>
           }
         />
-      ) : null}
-      <Space style={{ marginBottom: 12 }}>
-        {onCreate ? (
-          <Button type="primary" icon={<PlusOutlined />} onClick={onCreate}>
+      </Show>
+      <div class="mb-3 flex flex-wrap items-center gap-2">
+        <Show when={props.onCreate}>
+          <Button
+            type="primary"
+            icon={<PlusOutlined class="h-4 w-4" />}
+            onClick={props.onCreate}
+          >
             创建策略
           </Button>
-        ) : null}
+        </Show>
         <Input
-          allowClear
-          prefix={<SearchOutlined />}
+          prefix={<SearchOutlined class="h-4 w-4" />}
           placeholder="搜索主体 / 集群 / 资源 / 动作"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ width: 260 }}
+          value={search()}
+          onValueChange={setSearch}
+          class="w-[260px]"
         />
-      </Space>
-      <Card className="soft-card" styles={{ body: { padding: 0 } }}>
-        {selectedKeys.length > 0 ? (
-          <div className="batch-bar">
-            <Space size={12}>
-              <Typography.Text>
-                已选择 <span className="batch-count">{selectedKeys.length}</span> 条策略
-              </Typography.Text>
+      </div>
+      <Card class="soft-card" contentClass="p-0">
+        <Show when={selectedKeys().length > 0}>
+          <div class="batch-bar">
+            <div class="flex items-center gap-3">
+              <div>
+                已选择 <span class="batch-count">{selectedKeys().length}</span> 条策略
+              </div>
               <Button type="link" size="small" onClick={() => setSelectedKeys([])}>
                 清空
               </Button>
-            </Space>
-            <Button danger size="small" icon={<DeleteOutlined />} onClick={batchRemove}>
+            </div>
+            <Button
+              danger
+              size="small"
+              icon={<DeleteOutlined class="h-3.5 w-3.5" />}
+              onClick={batchRemove}
+            >
               批量删除
             </Button>
           </div>
-        ) : null}
+        </Show>
         <Table<PolicyDTO>
-          rowKey={policyKey}
+          rowKey={(record) => policyKey(record)}
           columns={columns}
-          dataSource={filtered}
-          loading={loading}
-          rowSelection={rowSelection}
-          size="middle"
+          dataSource={filtered()}
+          loading={loading()}
+          rowSelection={rowSelection()}
           pagination={{ pageSize: 10, showTotal: (total) => `共 ${total} 条策略` }}
           scroll={{ x: 1100 }}
           locale={{
             emptyText: (
-              <div style={{ padding: '32px 0' }}>
-                <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-                  尚未配置策略。创建策略后，组织或用户才能访问目标集群资源。
-                </Typography.Paragraph>
+              <div class="px-4 py-8 text-center text-sm text-layer-content/50">
+                尚未配置策略。创建策略后，组织或用户才能访问目标集群资源。
               </div>
             ),
           }}
@@ -396,78 +474,80 @@ export function PoliciesTab({ subjectScope, clusterFilter, onCreate }: PoliciesT
       </Card>
 
       <Modal
+        open={editing() !== null}
         title="编辑策略"
-        open={editing !== null}
-        onCancel={() => setEditing(null)}
-        onOk={() => void submitEdit()}
-        okText="保存"
-        cancelText="取消"
-        confirmLoading={editSaving}
-        destroyOnHidden
+        onClose={() => setEditing(null)}
         width={560}
-      >
-        {editing ? (
+        footer={
           <>
-            <Alert
-              type="info"
-              showIcon
-              style={{ marginBottom: 16 }}
-              message="主体、集群与资源不可修改；保存时会删除旧策略并按新命名空间/动作重建"
-            />
-            <Descriptions column={1} size="small" bordered style={{ marginBottom: 16 }}>
-              <Descriptions.Item label="主体">
-                <code className="mono">{editing.sub}</code>
-              </Descriptions.Item>
-              <Descriptions.Item label="集群">
-                <code className="mono">{editing.cluster}</code>
-              </Descriptions.Item>
-              <Descriptions.Item label="资源">
-                <code className="mono">{resourceLabel(editing)}</code>
-              </Descriptions.Item>
-            </Descriptions>
-            <Form form={editForm} layout="vertical">
-              <Form.Item
-                name="namespace"
-                label="命名空间"
-                extra={isNamespaced(editing) ? '切换命名空间会重建为对应作用域的规则' : '集群级资源无需命名空间'}
-              >
-                <Select
-                  disabled={!isNamespaced(editing) || editing.resource === '*'}
-                  options={[
-                    { value: '*', label: '*（全部命名空间）' },
-                    ...Array.from(new Set([editing.namespace, ...namespaces]))
-                      .filter((ns) => ns && ns !== '*')
-                      .sort()
-                      .map((ns) => ({ value: ns, label: ns })),
-                  ]}
-                />
-              </Form.Item>
-              <Form.Item
-                name="verbs"
-                label="动作"
-                extra={editing.resource === '*' ? '资源为 * 时动作固定为全部权限' : '可自定义（回车添加）'}
-                rules={[{ required: true, message: '至少选择一个动作' }]}
-              >
-                <Select
-                  mode="tags"
-                  disabled={editing.resource === '*'}
-                  placeholder="选择或输入动作"
-                  options={(() => {
-                    const found = resources.find(
-                      (r) =>
-                        r.resource === editing.resource &&
-                        (r.subresource ?? '') === (editing.subresource ?? ''),
-                    );
-                    const verbs = found?.verbs ?? [
-                      'get', 'list', 'watch', 'create', 'update', 'patch', 'delete',
-                    ];
-                    return verbs.map((v) => ({ value: v, label: v }));
-                  })()}
-                />
-              </Form.Item>
-            </Form>
+            <Button type="ghost" size="small" onClick={() => setEditing(null)}>
+              取消
+            </Button>
+            <Button
+              type="primary"
+              size="small"
+              loading={editSaving()}
+              onClick={() => void submitEdit()}
+            >
+              保存
+            </Button>
           </>
-        ) : null}
+        }
+      >
+        <Show when={editing()}>
+          {(record) => (
+            <>
+              <Alert
+                type="info"
+                message="主体、集群与资源不可修改；保存时会删除旧策略并按新命名空间/动作重建"
+                class="mb-4"
+              />
+              <Descriptions items={editingItems()} column={1} class="mb-4" />
+              <div class="flex flex-col gap-4">
+                <Field
+                  label="命名空间"
+                  extra={
+                    isNamespaced(record())
+                      ? '切换命名空间会重建为对应作用域的规则'
+                      : '集群级资源无需命名空间'
+                  }
+                >
+                  <Select
+                    value={String(editForm.values.namespace)}
+                    disabled={!isNamespaced(record()) || record().resource === '*'}
+                    options={namespaceOptions()}
+                    onChange={(value) =>
+                      editForm.setValue('namespace', String(value ?? '*'))
+                    }
+                  />
+                </Field>
+                <Field
+                  label="动作"
+                  extra={
+                    record().resource === '*'
+                      ? '资源为 * 时动作固定为全部权限'
+                      : '可自定义（回车添加）'
+                  }
+                  error={editForm.errors.verbs}
+                >
+                  <Select
+                    mode="tags"
+                    value={editForm.values.verbs as string[]}
+                    disabled={record().resource === '*'}
+                    placeholder="选择或输入动作"
+                    options={verbOptions()}
+                    onChange={(values) =>
+                      editForm.setValue(
+                        'verbs',
+                        Array.isArray(values) ? values.map(String) : [],
+                      )
+                    }
+                  />
+                </Field>
+              </div>
+            </>
+          )}
+        </Show>
       </Modal>
     </div>
   );

@@ -1,7 +1,7 @@
-import { Button, Result } from 'antd';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from '@solidjs/router';
+import { Button, Result } from '@/lib/widgets';
 
-export function NotFound() {
+export default function NotFound() {
   const navigate = useNavigate();
   return (
     <Result

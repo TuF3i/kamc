@@ -1,40 +1,41 @@
-import { useMemo, type ReactNode } from 'react';
-import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Avatar, Dropdown, Tag, type MenuProps } from 'antd';
+import { For, Show, createMemo, type Component, type JSX } from 'solid-js';
+import { useLocation, useNavigate } from '@solidjs/router';
 import {
   ClusterOutlined,
   CloudDownloadOutlined,
   DashboardOutlined,
-  DownOutlined,
   FileSearchOutlined,
   InfoCircleOutlined,
   LogoutOutlined,
   RobotOutlined,
   SafetyCertificateOutlined,
   UserOutlined,
-} from '@ant-design/icons';
-import { useAuthStore } from '@/stores/auth';
+  type IconProps,
+} from '@/lib/icons';
+import { Avatar, Popover, Tag } from '@/lib/widgets';
+import { ThemeToggle } from '@/lib/blocks/theme-toggle';
+import { auth } from '@/stores/auth';
 
 interface NavItem {
   key: string;
   label: string;
-  icon: ReactNode;
+  icon: Component<IconProps>;
 }
 
 const ADMIN_NAV: NavItem[] = [
-  { key: '/', label: '概览', icon: <DashboardOutlined /> },
-  { key: '/clusters', label: '集群', icon: <ClusterOutlined /> },
-  { key: '/access', label: '权限', icon: <SafetyCertificateOutlined /> },
-  { key: '/robots', label: '机器人', icon: <RobotOutlined /> },
-  { key: '/audit', label: '审计日志', icon: <FileSearchOutlined /> },
-  { key: '/kubeconfig', label: 'Kubeconfig', icon: <CloudDownloadOutlined /> },
-  { key: '/platform', label: '平台信息', icon: <InfoCircleOutlined /> },
-  { key: '/account', label: '个人中心', icon: <UserOutlined /> },
+  { key: '/', label: '概览', icon: DashboardOutlined },
+  { key: '/clusters', label: '集群', icon: ClusterOutlined },
+  { key: '/access', label: '权限', icon: SafetyCertificateOutlined },
+  { key: '/robots', label: '机器人', icon: RobotOutlined },
+  { key: '/audit', label: '审计日志', icon: FileSearchOutlined },
+  { key: '/kubeconfig', label: 'Kubeconfig', icon: CloudDownloadOutlined },
+  { key: '/platform', label: '平台信息', icon: InfoCircleOutlined },
+  { key: '/account', label: '个人中心', icon: UserOutlined },
 ];
 
 const USER_NAV: NavItem[] = [
-  { key: '/kubeconfig', label: 'Kubeconfig', icon: <CloudDownloadOutlined /> },
-  { key: '/account', label: '个人中心', icon: <UserOutlined /> },
+  { key: '/kubeconfig', label: 'Kubeconfig', icon: CloudDownloadOutlined },
+  { key: '/account', label: '个人中心', icon: UserOutlined },
 ];
 
 function activeKey(pathname: string): string {
@@ -48,77 +49,99 @@ function activeKey(pathname: string): string {
   return '/';
 }
 
-export function AppLayout() {
+export function AppLayout(props: { children?: JSX.Element }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const claims = useAuthStore((s) => s.claims);
-  const profile = useAuthStore((s) => s.profile);
-  const isAdmin = useAuthStore((s) => s.isAdmin);
-  const signOut = useAuthStore((s) => s.signOut);
 
-  const navItems = useMemo(() => (isAdmin ? ADMIN_NAV : USER_NAV), [isAdmin]);
-  const current = activeKey(location.pathname);
-
-  const userMenu: MenuProps = {
-    items: [
-      { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', danger: true },
-    ],
-    onClick: ({ key }) => {
-      if (key === 'logout') {
-        void signOut();
-      }
-    },
-  };
-
-  const displayName = profile?.nickname || claims?.sub || '未登录';
-  const avatarChar = displayName.slice(0, 1).toUpperCase();
-  const home = isAdmin ? '/' : '/kubeconfig';
+  const navItems = createMemo(() => (auth.isAdmin() ? ADMIN_NAV : USER_NAV));
+  const current = createMemo(() => activeKey(location.pathname));
+  const displayName = createMemo(
+    () => auth.profile()?.nickname || auth.claims()?.sub || '未登录',
+  );
+  const avatarChar = createMemo(() => displayName().slice(0, 1).toUpperCase());
+  const home = createMemo(() => (auth.isAdmin() ? '/' : '/kubeconfig'));
 
   return (
-    <div className="app-shell">
-      <header className="floating-nav">
+    <div class="app-shell">
+      <header class="floating-nav">
         <button
           type="button"
-          className="nav-panel nav-logo"
-          onClick={() => navigate(home)}
+          class="nav-panel nav-logo"
+          onClick={() => navigate(home())}
           aria-label="kamc 首页"
           title="kamc"
         >
-          <img src="/icon-mark.png" alt="kamc" className="brand-logo" />
+          <img src="/icon-mark.png" alt="kamc" class="brand-logo" />
         </button>
 
-        <nav className="nav-panel nav-tabs" aria-label="主导航">
-          {navItems.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              className={`nav-tab${current === item.key ? ' active' : ''}`}
-              onClick={() => navigate(item.key)}
-              aria-current={current === item.key ? 'page' : undefined}
-            >
-              {item.icon}
-              <span>{item.label}</span>
-            </button>
-          ))}
+        <nav class="nav-panel nav-tabs" aria-label="主导航">
+          <For each={navItems()}>
+            {(item) => (
+              <button
+                type="button"
+                class={`nav-tab${current() === item.key ? ' active' : ''}`}
+                onClick={() => navigate(item.key)}
+                aria-current={current() === item.key ? 'page' : undefined}
+              >
+                {item.icon({ class: 'h-[15px] w-[15px]' })}
+                <span>{item.label}</span>
+              </button>
+            )}
+          </For>
         </nav>
 
-        <Dropdown menu={userMenu} trigger={['click']} placement="bottomRight">
-          <button type="button" className="nav-panel nav-user">
-            <Avatar size={30} className="user-avatar" src={profile?.avatar_url || undefined}>
-              {avatarChar}
+        <Popover
+          class="justify-self-end ml-auto"
+          placement="bottom-end"
+          minWidth={248}
+          panelClass="w-64 p-2"
+          trigger={
+            <button type="button" class="nav-panel nav-user">
+              <Avatar size={30} src={auth.profile()?.avatar_url || undefined}>
+                {avatarChar()}
+              </Avatar>
+              <span class="user-name">{displayName()}</span>
+              <Show when={auth.isAdmin()}>
+                <Tag level="primary" class="admin-tag">
+                  管理员
+                </Tag>
+              </Show>
+              <span class="user-chevron">▾</span>
+            </button>
+          }
+        >
+          <div class="flex items-center gap-2.5 px-2 py-2">
+            <Avatar size={36} src={auth.profile()?.avatar_url || undefined}>
+              {avatarChar()}
             </Avatar>
-            <span className="user-name">{displayName}</span>
-            {isAdmin ? <Tag color="blue" className="admin-tag">管理员</Tag> : null}
-            <DownOutlined className="user-chevron" />
+            <div class="min-w-0 flex-1">
+              <div class="truncate text-[13px] font-bold">{displayName()}</div>
+              <div class="truncate text-[11px] text-layer-content/50">
+                {auth.profile()?.email || auth.claims()?.email || '未设置邮箱'}
+              </div>
+            </div>
+          </div>
+          <div class="menu-sep" />
+          <div class="px-2 py-2">
+            <ThemeToggle />
+          </div>
+          <div class="menu-sep" />
+          <button
+            type="button"
+            class="menu-item menu-item-danger"
+            onClick={() => void auth.signOut()}
+          >
+            {LogoutOutlined({ class: 'h-4 w-4' })}
+            <span>退出登录</span>
           </button>
-        </Dropdown>
+        </Popover>
       </header>
 
-      <main className="app-content">
-        <div className="app-content-inner" key={location.pathname}>
-          <Outlet />
+      <main class="app-content">
+        <div class="app-content-inner">
+          {props.children}
         </div>
-        <div className="app-footer-text">Kubernetes Access Manager Center</div>
+        <div class="app-footer-text">Kubernetes Access Manager Center</div>
       </main>
     </div>
   );

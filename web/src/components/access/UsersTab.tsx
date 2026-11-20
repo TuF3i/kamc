@@ -1,58 +1,79 @@
-import { useCallback, useEffect, useState } from 'react';
 import {
-  App,
+  For,
+  Show,
+  createMemo,
+  createSignal,
+  onMount,
+} from 'solid-js';
+import {
+  createUser,
+  deleteUser,
+  listUsers,
+  updateUser,
+  uploadAvatar,
+} from '@/api/users';
+import { auth } from '@/stores/auth';
+import type { PlatformUserDTO, UserSource } from '@/api/types';
+import { toast } from '@/lib/storage/toast';
+import {
   Avatar,
   Button,
   Card,
   Empty,
-  Form,
+  Field,
   Input,
   Modal,
   Popconfirm,
-  Space,
   Table,
   Tag,
-  Typography,
   Upload,
+  confirm,
   type TableColumnsType,
-} from 'antd';
-import { DeleteOutlined, EditOutlined, PlusOutlined, SearchOutlined, UploadOutlined } from '@ant-design/icons';
-import { createUser, deleteUser, listUsers, updateUser, uploadAvatar } from '@/api/users';
-import { useAuthStore } from '@/stores/auth';
-import type { PlatformUserDTO, UserSource } from '@/api/types';
+} from '@/lib/widgets';
+import { createForm } from '@/lib/widgets/form';
+import {
+  DeleteOutlined,
+  EditOutlined,
+  PlusOutlined,
+  SearchOutlined,
+  UploadOutlined,
+} from '@/lib/icons';
 
-const SOURCE_META: Record<UserSource, { label: string; color: string }> = {
-  sso: { label: 'SSO', color: 'purple' },
-  ldap: { label: 'LDAP', color: 'geekblue' },
-  local: { label: '内置', color: 'default' },
+const SOURCE_META: Record<UserSource, { label: string; level: 'info' | 'primary' | 'neutral' }> = {
+  sso: { label: 'SSO', level: 'info' },
+  ldap: { label: 'LDAP', level: 'primary' },
+  local: { label: '内置', level: 'neutral' },
 };
 
-function SourceTag({ source }: { source: UserSource }) {
-  const meta = SOURCE_META[source] ?? SOURCE_META.local;
-  return <Tag color={meta.color}>{meta.label}</Tag>;
-}
-
-interface EditState {
-  user: PlatformUserDTO;
+function SourceTag(props: { source: UserSource }) {
+  const meta = SOURCE_META[props.source] ?? SOURCE_META.local;
+  return <Tag level={meta.level}>{meta.label}</Tag>;
 }
 
 /** 用户 Tab：平台用户目录（SSO/LDAP 登录自动同步，可编辑昵称/邮箱/组）。 */
 export function UsersTab() {
-  const { message, modal } = App.useApp();
-  const selfName = useAuthStore((s) => s.claims?.sub);
-  const refreshProfile = useAuthStore((s) => s.refreshProfile);
-  const [users, setUsers] = useState<PlatformUserDTO[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  const [editing, setEditing] = useState<EditState | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [createForm] = Form.useForm<{ username: string; nickname: string; email: string; avatar_url: string }>();
-  const [form] = Form.useForm<{ nickname: string; email: string; avatar_url: string }>();
-  const [uploading, setUploading] = useState(false);
+  const [users, setUsers] = createSignal<PlatformUserDTO[]>([]);
+  const [loading, setLoading] = createSignal(true);
+  const [error, setError] = createSignal<string | null>(null);
+  const [search, setSearch] = createSignal('');
+  const [editing, setEditing] = createSignal<PlatformUserDTO | null>(null);
+  const [saving, setSaving] = createSignal(false);
+  const [createOpen, setCreateOpen] = createSignal(false);
+  const [uploading, setUploading] = createSignal(false);
 
-  const load = useCallback(async () => {
+  const createUserForm = createForm({
+    username: '',
+    nickname: '',
+    email: '',
+    avatar_url: '',
+  });
+  const editForm = createForm({
+    nickname: '',
+    email: '',
+    avatar_url: '',
+  });
+
+  const load = async () => {
     setLoading(true);
     setError(null);
     try {
@@ -62,36 +83,44 @@ export function UsersTab() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  };
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  onMount(() => void load());
 
   const submitCreate = async () => {
-    const values = await createForm.validateFields();
+    if (
+      !createUserForm.validate({
+        username: [
+          { required: true, message: '请输入用户名' },
+          { max: 128, message: '用户名最长 128 字符' },
+        ],
+      })
+    ) {
+      return;
+    }
     setSaving(true);
     try {
+      const username = String(createUserForm.values.username).trim();
       await createUser({
-        username: values.username.trim(),
-        nickname: values.nickname?.trim() || undefined,
-        email: values.email?.trim() || undefined,
-        avatar_url: values.avatar_url?.trim() || undefined,
+        username,
+        nickname: String(createUserForm.values.nickname).trim() || undefined,
+        email: String(createUserForm.values.email).trim() || undefined,
+        avatar_url: String(createUserForm.values.avatar_url).trim() || undefined,
       });
-      message.success(`用户 ${values.username.trim()} 已创建`);
+      toast.success(`用户 ${username} 已创建`);
       setCreateOpen(false);
-      createForm.resetFields();
+      createUserForm.reset();
       await load();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '创建用户失败');
+      toast.error(err instanceof Error ? err.message : '创建用户失败');
     } finally {
       setSaving(false);
     }
   };
 
   const openEdit = (user: PlatformUserDTO) => {
-    setEditing({ user });
-    form.setFieldsValue({
+    setEditing(user);
+    editForm.reset({
       nickname: user.nickname,
       email: user.email,
       avatar_url: user.avatar_url,
@@ -99,50 +128,53 @@ export function UsersTab() {
   };
 
   const submitEdit = async () => {
-    if (!editing) return;
-    const values = await form.validateFields();
+    const current = editing();
+    if (!current) return;
     setSaving(true);
     try {
-      await updateUser(editing.user.username, {
-        nickname: values.nickname?.trim() || undefined,
-        email: values.email?.trim() || undefined,
-        avatar_url: values.avatar_url?.trim() || '',
+      await updateUser(current.username, {
+        nickname: String(editForm.values.nickname).trim() || undefined,
+        email: String(editForm.values.email).trim() || undefined,
+        avatar_url: String(editForm.values.avatar_url).trim() || '',
       });
-      message.success(`用户 ${editing.user.username} 已更新`);
-      if (editing.user.username === selfName) void refreshProfile();
+      toast.success(`用户 ${current.username} 已更新`);
+      if (current.username === auth.claims()?.sub) void auth.refreshProfile();
       setEditing(null);
       await load();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '更新用户失败');
+      toast.error(err instanceof Error ? err.message : '更新用户失败');
     } finally {
       setSaving(false);
     }
   };
 
   const remove = (user: PlatformUserDTO) => {
-    modal.confirm({
+    confirm({
       title: `删除用户「${user.username}」？`,
-      content: '仅删除平台用户记录；该用户已签发的 Token 不会失效，可经踢出功能吊销。SSO/LDAP 用户下次登录会自动重建。',
+      content:
+        '仅删除平台用户记录；该用户已签发的 Token 不会失效，可经踢出功能吊销。SSO/LDAP 用户下次登录会自动重建。',
       okText: '删除',
-      okButtonProps: { danger: true },
+      danger: true,
       cancelText: '取消',
       onOk: async () => {
         try {
           await deleteUser(user.username);
-          message.success(`用户 ${user.username} 已删除`);
+          toast.success(`用户 ${user.username} 已删除`);
           await load();
         } catch (err) {
-          message.error(err instanceof Error ? err.message : '删除用户失败');
+          toast.error(err instanceof Error ? err.message : '删除用户失败');
         }
       },
     });
   };
 
-  const filtered = users.filter((u) => {
-    const keyword = search.trim().toLowerCase();
-    if (!keyword) return true;
-    return [u.username, u.nickname, u.email, u.groups.join(' ')].some((v) =>
-      v.toLowerCase().includes(keyword),
+  const filtered = createMemo(() => {
+    const keyword = search().trim().toLowerCase();
+    if (!keyword) return users();
+    return users().filter((user) =>
+      [user.username, user.nickname, user.email, user.groups.join(' ')].some((value) =>
+        value.toLowerCase().includes(keyword),
+      ),
     );
   });
 
@@ -150,18 +182,16 @@ export function UsersTab() {
     {
       title: '用户',
       key: 'username',
-      render: (_, u) => (
-        <Space size={10}>
-          {u.avatar_url ? (
-            <Avatar size={30} src={u.avatar_url} />
-          ) : (
-            <Avatar size={30} className="user-avatar">{(u.nickname || u.username).slice(0, 1).toUpperCase()}</Avatar>
-          )}
-          <div>
-            <div className="strong">{u.nickname || u.username}</div>
-            <code className="mono" style={{ fontSize: 12, color: 'var(--kamc-muted)' }}>{u.username}</code>
-          </div>
-        </Space>
+      render: (_value, user) => (
+        <span class="inline-flex items-center gap-2.5">
+          <Avatar src={user.avatar_url || undefined}>
+            {(user.nickname || user.username).slice(0, 1).toUpperCase()}
+          </Avatar>
+          <span class="min-w-0">
+            <span class="block font-bold">{user.nickname || user.username}</span>
+            <code class="mono text-[12px] text-layer-content/50">{user.username}</code>
+          </span>
+        </span>
       ),
     },
     {
@@ -173,42 +203,46 @@ export function UsersTab() {
         { text: 'LDAP', value: 'ldap' },
         { text: '内置', value: 'local' },
       ],
-      onFilter: (value, u) => u.source === value,
-      render: (source: UserSource) => <SourceTag source={source} />,
+      onFilter: (value, user) => user.source === String(value),
+      render: (_value, user) => <SourceTag source={user.source} />,
     },
     {
       title: '邮箱',
       dataIndex: 'email',
       ellipsis: true,
-      render: (email: string) => email || <Typography.Text type="secondary">—</Typography.Text>,
+      render: (value) => String(value ?? '') || <span class="muted">—</span>,
     },
     {
       title: '组',
       key: 'groups',
-      render: (_, u) =>
-        u.groups.length ? (
-          <Space size={[4, 4]} wrap>
-            {u.groups.map((g) => (
-              <Tag key={g} color="blue">{g}</Tag>
-            ))}
-          </Space>
+      render: (_value, user) =>
+        user.groups.length ? (
+          <span class="flex flex-wrap gap-1">
+            <For each={user.groups}>{(group) => <Tag level="primary">{group}</Tag>}</For>
+          </span>
         ) : (
-          <Typography.Text type="secondary">—</Typography.Text>
+          <span class="muted">—</span>
         ),
     },
     {
       title: '最近登录',
       dataIndex: 'last_login',
       width: 170,
-      render: (v?: string | null) => (v ? new Date(v).toLocaleString() : <Typography.Text type="secondary">从未</Typography.Text>),
+      render: (value) =>
+        value ? new Date(String(value)).toLocaleString() : <span class="muted">从未</span>,
     },
     {
       title: '操作',
       key: 'actions',
       width: 140,
-      render: (_, u) => (
-        <Space size={0}>
-          <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(u)}>
+      render: (_value, user) => (
+        <div class="table-actions">
+          <Button
+            type="link"
+            size="small"
+            icon={<EditOutlined class="h-3.5 w-3.5" />}
+            onClick={() => openEdit(user)}
+          >
             编辑
           </Button>
           <Popconfirm
@@ -216,157 +250,219 @@ export function UsersTab() {
             okText="删除"
             cancelText="取消"
             okButtonProps={{ danger: true }}
-            onConfirm={() => remove(u)}
+            onConfirm={() => remove(user)}
           >
-            <Button type="link" size="small" danger icon={<DeleteOutlined />}>删除</Button>
+            <Button
+              type="link"
+              size="small"
+              danger
+              icon={<DeleteOutlined class="h-3.5 w-3.5" />}
+            >
+              删除
+            </Button>
           </Popconfirm>
-        </Space>
+        </div>
       ),
     },
   ];
 
+  const uploadEditAvatar = (file: File) => {
+    const current = editing();
+    if (!current) return false;
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error('头像文件过大（上限 2MB）');
+      return false;
+    }
+    setUploading(true);
+    void uploadAvatar(current.username, file)
+      .then((url) => {
+        editForm.setValue('avatar_url', url);
+        setEditing((prev) => (prev ? { ...prev, avatar_url: url } : prev));
+        if (current.username === auth.claims()?.sub) void auth.refreshProfile();
+        toast.success('头像已上传');
+      })
+      .catch((err) => toast.error(err instanceof Error ? err.message : '头像上传失败'))
+      .finally(() => setUploading(false));
+    return false;
+  };
+
   return (
     <div>
-      {error ? (
-        <Typography.Paragraph type="danger">{error}</Typography.Paragraph>
-      ) : null}
-      <Space style={{ marginBottom: 12 }}>
+      <Show when={error()}>
+        <p class="mb-3 text-sm text-error">{error()}</p>
+      </Show>
+      <div class="mb-3 flex flex-wrap items-center gap-2">
         <Button
           type="primary"
-          icon={<PlusOutlined />}
+          icon={<PlusOutlined class="h-4 w-4" />}
           onClick={() => {
-            createForm.resetFields();
+            createUserForm.reset();
             setCreateOpen(true);
           }}
         >
           新建用户
         </Button>
         <Input
-          allowClear
-          prefix={<SearchOutlined />}
+          prefix={<SearchOutlined class="h-4 w-4" />}
           placeholder="搜索用户 / 邮箱 / 组"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ width: 260 }}
+          value={search()}
+          onValueChange={setSearch}
+          class="w-[260px]"
         />
-      </Space>
-      <Card className="soft-card" styles={{ body: { padding: 0 } }}>
-      <Table<PlatformUserDTO>
-        rowKey="uid"
-        columns={columns}
-        dataSource={filtered}
-        loading={loading}
-        size="middle"
-        pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 个用户` }}
-        locale={{ emptyText: <Empty description="暂无用户；用户在 SSO/LDAP 登录后自动创建" /> }}
-      />
+      </div>
+      <Card class="soft-card" contentClass="p-0">
+        <Table<PlatformUserDTO>
+          rowKey="uid"
+          columns={columns}
+          dataSource={filtered()}
+          loading={loading()}
+          pagination={{ pageSize: 10, showTotal: (total) => `共 ${total} 个用户` }}
+          locale={{
+            emptyText: <Empty description="暂无用户；用户在 SSO/LDAP 登录后自动创建" class="border-0" />,
+          }}
+        />
       </Card>
 
       <Modal
+        open={createOpen()}
         title="新建本地用户"
-        open={createOpen}
-        onCancel={() => setCreateOpen(false)}
-        onOk={() => void submitCreate()}
-        okText="创建"
-        cancelText="取消"
-        confirmLoading={saving}
-        destroyOnHidden
+        onClose={() => setCreateOpen(false)}
+        footer={
+          <>
+            <Button type="ghost" size="small" onClick={() => setCreateOpen(false)}>
+              取消
+            </Button>
+            <Button
+              type="primary"
+              size="small"
+              loading={saving()}
+              onClick={() => void submitCreate()}
+            >
+              创建
+            </Button>
+          </>
+        }
       >
-        <Form form={createForm} layout="vertical" style={{ marginTop: 12 }} preserve={false}>
-          <Form.Item
-            name="username"
+        <div class="form-stack mt-3">
+          <Field
             label="用户名"
-            rules={[
-              { required: true, message: '请输入用户名' },
-              { max: 128, message: '用户名最长 128 字符' },
-            ]}
+            required
+            error={createUserForm.errors.username}
             extra="平台内唯一；SSO/LDAP 同名用户后续登录时会接管该账号来源。"
           >
-            <Input placeholder="alice" autoComplete="off" className="mono" />
-          </Form.Item>
-          <Form.Item name="nickname" label="昵称">
-            <Input placeholder="张三" autoComplete="off" />
-          </Form.Item>
-          <Form.Item name="email" label="邮箱">
-            <Input placeholder="alice@example.com" autoComplete="off" />
-          </Form.Item>
-          <Form.Item name="avatar_url" label="头像 URL">
-            <Input placeholder="https://…/avatar.png" autoComplete="off" />
-          </Form.Item>
-        </Form>
-        <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+            <Input
+              value={String(createUserForm.values.username)}
+              onValueChange={(value) => createUserForm.setValue('username', value)}
+              placeholder="alice"
+              autocomplete="off"
+              class="mono"
+              status={createUserForm.errors.username ? 'error' : undefined}
+            />
+          </Field>
+          <Field label="昵称">
+            <Input
+              value={String(createUserForm.values.nickname)}
+              onValueChange={(value) => createUserForm.setValue('nickname', value)}
+              placeholder="张三"
+              autocomplete="off"
+            />
+          </Field>
+          <Field label="邮箱">
+            <Input
+              value={String(createUserForm.values.email)}
+              onValueChange={(value) => createUserForm.setValue('email', value)}
+              placeholder="alice@example.com"
+              autocomplete="off"
+            />
+          </Field>
+          <Field label="头像 URL">
+            <Input
+              value={String(createUserForm.values.avatar_url)}
+              onValueChange={(value) => createUserForm.setValue('avatar_url', value)}
+              placeholder="https://…/avatar.png"
+              autocomplete="off"
+            />
+          </Field>
+        </div>
+        <p class="mt-3 text-[13px] text-layer-content/50">
           组归属在「组」页签的编辑弹窗中管理。
-        </Typography.Paragraph>
+        </p>
       </Modal>
 
       <Modal
-        title={`编辑用户 · ${editing?.user.username ?? ''}`}
-        open={editing !== null}
-        onCancel={() => setEditing(null)}
-        onOk={() => void submitEdit()}
-        okText="保存"
-        cancelText="取消"
-        confirmLoading={saving}
-        destroyOnHidden
+        open={editing() !== null}
+        title={`编辑用户 · ${editing()?.username ?? ''}`}
+        onClose={() => setEditing(null)}
+        footer={
+          <>
+            <Button type="ghost" size="small" onClick={() => setEditing(null)}>
+              取消
+            </Button>
+            <Button
+              type="primary"
+              size="small"
+              loading={saving()}
+              onClick={() => void submitEdit()}
+            >
+              保存
+            </Button>
+          </>
+        }
       >
-        <Form form={form} layout="vertical" style={{ marginTop: 12 }}>
-          <Form.Item label="头像">
-            <Space align="center" size={12}>
-              {editing?.user.avatar_url ? (
-                <Avatar size={56} src={editing.user.avatar_url} />
-              ) : (
-                <Avatar size={56} className="user-avatar">
-                  {(editing?.user.nickname || editing?.user.username || '?').slice(0, 1).toUpperCase()}
-                </Avatar>
-              )}
-              <Upload
-                accept="image/png,image/jpeg,image/webp,image/gif"
-                showUploadList={false}
-                beforeUpload={(file) => {
-                  if (file.size > 2 * 1024 * 1024) {
-                    message.error('头像文件过大（上限 2MB）');
-                    return Upload.LIST_IGNORE;
-                  }
-                  setUploading(true);
-                  void uploadAvatar(editing!.user.username, file)
-                    .then((url) => {
-                      form.setFieldValue('avatar_url', url);
-                      setEditing((prev) =>
-                        prev ? { user: { ...prev.user, avatar_url: url } } : prev,
-                      );
-                      if (editing?.user.username === selfName) void refreshProfile();
-                      message.success('头像已上传');
-                    })
-                    .catch((err) =>
-                      message.error(err instanceof Error ? err.message : '头像上传失败'),
-                    )
-                    .finally(() => setUploading(false));
-                  return false; // 阻止 antd 内置上传
-                }}
+        <Show when={editing()}>
+          {(user) => (
+            <div class="form-stack mt-3">
+              <Field label="头像">
+                <div class="flex items-center gap-3">
+                  <Avatar size={56} src={user().avatar_url || undefined}>
+                    {(user().nickname || user().username || '?').slice(0, 1).toUpperCase()}
+                  </Avatar>
+                  <Upload
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    beforeUpload={uploadEditAvatar}
+                    disabled={uploading()}
+                  >
+                    <Button
+                      icon={<UploadOutlined class="h-4 w-4" />}
+                      loading={uploading()}
+                      size="small"
+                    >
+                      上传头像
+                    </Button>
+                  </Upload>
+                </div>
+              </Field>
+              <Field
+                label="头像 URL"
+                extra="可直接编辑；留空则使用默认字母头像"
               >
-                <Button icon={<UploadOutlined />} loading={uploading} size="small">
-                  上传头像
-                </Button>
-              </Upload>
-            </Space>
-          </Form.Item>
-          <Form.Item
-            name="avatar_url"
-            label="头像 URL"
-            extra="可直接编辑；留空则使用默认字母头像"
-          >
-            <Input placeholder="/avatars/…?token=… 或 https://…" autoComplete="off" />
-          </Form.Item>
-          <Form.Item name="nickname" label="昵称">
-            <Input placeholder="显示名" autoComplete="off" />
-          </Form.Item>
-          <Form.Item name="email" label="邮箱">
-            <Input placeholder="user@example.com" autoComplete="off" />
-          </Form.Item>
-          <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-            组归属请到「组」页签编辑。
-          </Typography.Paragraph>
-        </Form>
+                <Input
+                  value={String(editForm.values.avatar_url)}
+                  onValueChange={(value) => editForm.setValue('avatar_url', value)}
+                  placeholder="/avatars/…?token=… 或 https://…"
+                  autocomplete="off"
+                />
+              </Field>
+              <Field label="昵称">
+                <Input
+                  value={String(editForm.values.nickname)}
+                  onValueChange={(value) => editForm.setValue('nickname', value)}
+                  placeholder="显示名"
+                  autocomplete="off"
+                />
+              </Field>
+              <Field label="邮箱">
+                <Input
+                  value={String(editForm.values.email)}
+                  onValueChange={(value) => editForm.setValue('email', value)}
+                  placeholder="user@example.com"
+                  autocomplete="off"
+                />
+              </Field>
+            </div>
+          )}
+        </Show>
+        <p class="mt-3 text-[13px] text-layer-content/50">组归属请到「组」页签编辑。</p>
       </Modal>
     </div>
   );

@@ -1,48 +1,56 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import {
-  Alert,
-  App,
-  Button,
-  Card,
-  Form,
-  Input,
-  Modal,
-  Space,
-  Table,
-  Tooltip,
-  Typography,
-  type TableColumnsType,
-  type TableProps,
-} from 'antd';
-import { DeleteOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons';
+import { Show, createMemo, createSignal, onMount } from 'solid-js';
+import { useNavigate } from '@solidjs/router';
 import { createCluster, deleteCluster, listClusters } from '@/api/clusters';
 import type { Cluster } from '@/api/types';
+import { toast } from '@/lib/storage/toast';
+import {
+  Alert,
+  Button,
+  Card,
+  Field,
+  Input,
+  Modal,
+  Table,
+  TextArea,
+  Tooltip,
+  confirm,
+  type TableColumnsType,
+  type TableRowSelection,
+} from '@/lib/widgets';
+import { createForm } from '@/lib/widgets/form';
 import { PageHeader } from '@/components/PageHeader';
 import { ClusterStatusTag } from '@/components/StatusTag';
 import { fmtTime } from '@/utils/format';
 import { summarizeBatch } from '@/utils/batch';
+import { DeleteOutlined, PlusOutlined, SearchOutlined } from '@/lib/icons';
 
-interface CreateFormValues {
+interface CreateFormValues extends Record<string, unknown> {
   id: string;
   name: string;
-  desc?: string;
+  desc: string;
 }
 
-export function Clusters() {
-  const { message, modal } = App.useApp();
+export default function Clusters() {
   const navigate = useNavigate();
-  const [clusters, setClusters] = useState<Cluster[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<Cluster | null>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState('');
-  const [deleting, setDeleting] = useState(false);
-  const [form] = Form.useForm<CreateFormValues>();
+  const [clusters, setClusters] = createSignal<Cluster[]>([]);
+  const [loading, setLoading] = createSignal(true);
+  const [error, setError] = createSignal<string | null>(null);
+  const [search, setSearch] = createSignal('');
+  const [selectedKeys, setSelectedKeys] = createSignal<(string | number)[]>([]);
+  const [createOpen, setCreateOpen] = createSignal(false);
+  const [creating, setCreating] = createSignal(false);
+  const [deleteTarget, setDeleteTarget] = createSignal<Cluster | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = createSignal('');
+  const [deleting, setDeleting] = createSignal(false);
+
+  const form = createForm<CreateFormValues>({ id: '', name: '', desc: '' });
+  const rules = {
+    id: [
+      { required: true, message: '请输入集群 ID' },
+      { max: 64, message: '集群 ID 最长 64 个字符' },
+    ],
+    name: [{ required: true, message: '请输入集群名称' }],
+  };
 
   const load = async () => {
     setLoading(true);
@@ -56,36 +64,37 @@ export function Clusters() {
     }
   };
 
-  useEffect(() => {
-    void load();
-  }, []);
+  onMount(() => void load());
 
-  const filtered = useMemo(() => {
-    const keyword = search.trim().toLowerCase();
-    if (!keyword) return clusters;
-    return clusters.filter((c) =>
-      [c.id, c.name, c.desc].some((v) => v.toLowerCase().includes(keyword)),
+  const filtered = createMemo(() => {
+    const keyword = search().trim().toLowerCase();
+    if (!keyword) return clusters();
+    return clusters().filter((cluster) =>
+      [cluster.id, cluster.name, cluster.desc].some((value) =>
+        value.toLowerCase().includes(keyword),
+      ),
     );
-  }, [clusters, search]);
+  });
 
   const openCreate = () => {
-    form.resetFields();
+    form.reset();
     setCreateOpen(true);
   };
 
-  const submitCreate = async (values: CreateFormValues) => {
+  const submitCreate = async () => {
+    if (!form.validate(rules)) return;
     setCreating(true);
     try {
       await createCluster({
-        id: values.id.trim(),
-        name: values.name.trim(),
-        desc: values.desc?.trim() || undefined,
+        id: String(form.values.id).trim(),
+        name: String(form.values.name).trim(),
+        desc: String(form.values.desc).trim() || undefined,
       });
-      message.success(`集群 ${values.id.trim()} 已注册`);
+      toast.success(`集群 ${String(form.values.id).trim()} 已注册`);
       setCreateOpen(false);
       await load();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '注册集群失败');
+      toast.error(err instanceof Error ? err.message : '注册集群失败');
     } finally {
       setCreating(false);
     }
@@ -97,43 +106,44 @@ export function Clusters() {
   };
 
   const submitDelete = async () => {
-    if (!deleteTarget) return;
+    const target = deleteTarget();
+    if (!target) return;
     setDeleting(true);
     try {
-      await deleteCluster(deleteTarget.id);
-      message.success(`集群 ${deleteTarget.id} 已注销`);
-      setSelectedKeys((keys) => keys.filter((k) => k !== deleteTarget.id));
+      await deleteCluster(target.id);
+      toast.success(`集群 ${target.id} 已注销`);
+      setSelectedKeys((keys) => keys.filter((key) => key !== target.id));
       setDeleteTarget(null);
       await load();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '注销集群失败');
+      toast.error(err instanceof Error ? err.message : '注销集群失败');
     } finally {
       setDeleting(false);
     }
   };
 
-  const selectedClusters = useMemo(
-    () => clusters.filter((c) => selectedKeys.includes(c.id)),
-    [clusters, selectedKeys],
+  const selectedClusters = createMemo(() =>
+    clusters().filter((cluster) => selectedKeys().includes(cluster.id)),
   );
 
   const batchDelete = () => {
-    const targets = selectedClusters;
+    const targets = selectedClusters();
     if (targets.length === 0) return;
-    modal.confirm({
+    confirm({
       title: `批量注销 ${targets.length} 个集群？`,
-      content: '仅删除集群记录，该操作不可撤销；已签发的 Agent Token、Casbin 策略不会自动清理，需要另行处理。',
+      content:
+        '仅删除集群记录，该操作不可撤销；已签发的 Agent Token、Casbin 策略不会自动清理，需要另行处理。',
       okText: '批量注销',
-      okButtonProps: { danger: true },
+      danger: true,
       cancelText: '取消',
       onOk: async () => {
         const outcome = summarizeBatch(
-          await Promise.allSettled(targets.map((c) => deleteCluster(c.id))),
+          await Promise.allSettled(targets.map((cluster) => deleteCluster(cluster.id))),
         );
         if (outcome.failed === 0) {
-          message.success(`已注销 ${outcome.succeeded} 个集群`);
+          toast.success(`已注销 ${outcome.succeeded} 个集群`);
         } else {
-          message.error(
+          toast.error(
             `已注销 ${outcome.succeeded} 个集群，${outcome.failed} 个失败：${outcome.firstError}`,
           );
         }
@@ -143,12 +153,12 @@ export function Clusters() {
     });
   };
 
-  const rowSelection: TableProps<Cluster>['rowSelection'] = {
-    selectedRowKeys: selectedKeys,
+  const rowSelection = (): TableRowSelection<Cluster> => ({
+    selectedRowKeys: selectedKeys(),
     onChange: (keys) => setSelectedKeys([...keys]),
     selections: [Table.SELECTION_ALL, Table.SELECTION_INVERT, Table.SELECTION_NONE],
     preserveSelectedRowKeys: true,
-  };
+  });
 
   const columns: TableColumnsType<Cluster> = [
     {
@@ -157,11 +167,16 @@ export function Clusters() {
       key: 'id',
       width: 150,
       sorter: (a, b) => a.id.localeCompare(b.id),
-      render: (id: string) => (
-        <Tooltip title={id}>
-          <code className="mono strong">{id.length > 18 ? `${id.slice(0, 15)}…` : id}</code>
-        </Tooltip>
-      ),
+      render: (value) => {
+        const id = String(value);
+        return (
+          <Tooltip title={id}>
+            <code class="mono strong">
+              {id.length > 18 ? `${id.slice(0, 15)}…` : id}
+            </code>
+          </Tooltip>
+        );
+      },
     },
     {
       title: '名称',
@@ -175,7 +190,10 @@ export function Clusters() {
       dataIndex: 'desc',
       key: 'desc',
       ellipsis: true,
-      render: (desc: string) => desc || <Typography.Text type="secondary">—</Typography.Text>,
+      render: (value) => {
+        const desc = String(value ?? '');
+        return desc || <span class="muted">—</span>;
+      },
     },
     {
       title: '接入状态',
@@ -187,8 +205,8 @@ export function Clusters() {
         { text: '待接入', value: 'pending' },
         { text: '离线', value: 'offline' },
       ],
-      onFilter: (value, record) => record.status === value,
-      render: (status: Cluster['status']) => <ClusterStatusTag status={status} />,
+      onFilter: (value, record) => record.status === String(value),
+      render: (_value, record) => <ClusterStatusTag status={record.status} />,
     },
     {
       title: '注册时间',
@@ -196,27 +214,31 @@ export function Clusters() {
       key: 'created_at',
       width: 180,
       sorter: (a, b) => a.created_at.localeCompare(b.created_at),
-      render: (value: string) => fmtTime(value),
+      render: (value) => fmtTime(String(value)),
     },
     {
       title: '操作',
       key: 'actions',
       width: 150,
-      render: (_, record) => (
-        <Space size={0} onClick={(e) => e.stopPropagation()}>
-          <Button type="link" size="small" onClick={() => navigate(`/clusters/${encodeURIComponent(record.id)}`)}>
+      render: (_value, record) => (
+        <div class="table-actions" onClick={(event) => event.stopPropagation()}>
+          <Button
+            type="link"
+            size="small"
+            onClick={() => navigate(`/clusters/${encodeURIComponent(record.id)}`)}
+          >
             详情
           </Button>
           <Button
             type="link"
             size="small"
             danger
-            icon={<DeleteOutlined />}
+            icon={<DeleteOutlined class="h-3.5 w-3.5" />}
             onClick={() => openDelete(record)}
           >
             注销
           </Button>
-        </Space>
+        </div>
       ),
     },
   ];
@@ -227,65 +249,68 @@ export function Clusters() {
         title="集群"
         subtitle="注册与管理目标 Kubernetes 集群"
         extra={
-          <Space>
+          <div class="flex flex-wrap items-center gap-2">
             <Input
-              allowClear
-              prefix={<SearchOutlined />}
+              prefix={<SearchOutlined class="h-4 w-4" />}
               placeholder="搜索 ID / 名称 / 描述"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              style={{ width: 240 }}
+              value={search()}
+              onValueChange={setSearch}
+              class="w-60"
             />
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+            <Button
+              type="primary"
+              icon={<PlusOutlined class="h-4 w-4" />}
+              onClick={openCreate}
+            >
               注册集群
             </Button>
-          </Space>
+          </div>
         }
       />
 
-      {error ? (
+      <Show when={error()}>
         <Alert
           type="error"
-          showIcon
           message="集群列表加载失败"
-          description={error}
-          style={{ marginBottom: 16 }}
+          description={error() ?? undefined}
+          class="mb-4"
           action={
             <Button size="small" onClick={() => void load()}>
               重试
             </Button>
           }
         />
-      ) : null}
+      </Show>
 
-      <Card className="soft-card" styles={{ body: { padding: 0 } }}>
-        {selectedKeys.length > 0 ? (
-          <div className="batch-bar">
-            <Space size={12}>
-              <Typography.Text>
-                已选择 <span className="batch-count">{selectedKeys.length}</span> 个集群
-              </Typography.Text>
+      <Card class="soft-card" contentClass="p-0">
+        <Show when={selectedKeys().length > 0}>
+          <div class="batch-bar">
+            <div class="flex items-center gap-3">
+              <div>
+                已选择 <span class="batch-count">{selectedKeys().length}</span> 个集群
+              </div>
               <Button type="link" size="small" onClick={() => setSelectedKeys([])}>
                 清空
               </Button>
-            </Space>
-            <Button danger size="small" icon={<DeleteOutlined />} onClick={batchDelete}>
+            </div>
+            <Button
+              danger
+              size="small"
+              icon={<DeleteOutlined class="h-3.5 w-3.5" />}
+              onClick={batchDelete}
+            >
               批量注销
             </Button>
           </div>
-        ) : null}
+        </Show>
         <Table<Cluster>
           rowKey="id"
-          className="clickable-table"
           columns={columns}
-          dataSource={filtered}
-          loading={loading}
-          rowSelection={rowSelection}
+          dataSource={filtered()}
+          loading={loading()}
+          rowSelection={rowSelection()}
           onRow={(record) => ({
-            onClick: (event) => {
-              if ((event.target as HTMLElement).closest('.ant-table-selection-column')) return;
-              navigate(`/clusters/${encodeURIComponent(record.id)}`);
-            },
+            onClick: () => navigate(`/clusters/${encodeURIComponent(record.id)}`),
           })}
           pagination={{
             pageSize: 10,
@@ -298,72 +323,100 @@ export function Clusters() {
       </Card>
 
       <Modal
+        open={createOpen()}
         title="注册集群"
-        open={createOpen}
-        onCancel={() => setCreateOpen(false)}
-        onOk={() => form.submit()}
-        okText="注册"
-        cancelText="取消"
-        confirmLoading={creating}
-        destroyOnHidden
+        onClose={() => setCreateOpen(false)}
+        footer={
+          <>
+            <Button type="ghost" size="small" onClick={() => setCreateOpen(false)}>
+              取消
+            </Button>
+            <Button
+              type="primary"
+              size="small"
+              loading={creating()}
+              onClick={() => void submitCreate()}
+            >
+              注册
+            </Button>
+          </>
+        }
       >
-        <Form<CreateFormValues>
-          form={form}
-          layout="vertical"
-          onFinish={submitCreate}
-          preserve={false}
-          style={{ marginTop: 16 }}
-        >
-          <Form.Item
-            name="id"
+        <div class="form-stack mt-4">
+          <Field
             label="集群 ID"
-            rules={[
-              { required: true, message: '请输入集群 ID' },
-              { max: 64, message: '集群 ID 最长 64 个字符' },
-            ]}
+            required
+            error={form.errors.id}
             extra="唯一标识，同时作为 Casbin dom（如 prod-bj）；注册后不可修改。"
           >
-            <Input placeholder="prod-bj" className="mono" autoComplete="off" />
-          </Form.Item>
-          <Form.Item
-            name="name"
-            label="名称"
-            rules={[{ required: true, message: '请输入集群名称' }]}
-          >
-            <Input placeholder="北京生产集群" autoComplete="off" />
-          </Form.Item>
-          <Form.Item name="desc" label="描述">
-            <Input.TextArea placeholder="可选，说明集群用途" rows={3} maxLength={500} showCount />
-          </Form.Item>
-        </Form>
+            <Input
+              value={String(form.values.id)}
+              onValueChange={(value) => form.setValue('id', value)}
+              placeholder="prod-bj"
+              class="mono"
+              autocomplete="off"
+              status={form.errors.id ? 'error' : undefined}
+            />
+          </Field>
+          <Field label="名称" required error={form.errors.name}>
+            <Input
+              value={String(form.values.name)}
+              onValueChange={(value) => form.setValue('name', value)}
+              placeholder="北京生产集群"
+              autocomplete="off"
+              status={form.errors.name ? 'error' : undefined}
+            />
+          </Field>
+          <Field label="描述">
+            <TextArea
+              value={String(form.values.desc)}
+              onValueChange={(value) => form.setValue('desc', value)}
+              placeholder="可选，说明集群用途"
+              rows={3}
+              maxLength={500}
+              showCount
+            />
+          </Field>
+        </div>
       </Modal>
 
       <Modal
+        open={deleteTarget() !== null}
         title="注销集群"
-        open={deleteTarget !== null}
-        onCancel={() => setDeleteTarget(null)}
-        onOk={() => void submitDelete()}
-        okText="确认注销"
-        cancelText="取消"
-        okButtonProps={{ danger: true, disabled: deleteConfirm !== deleteTarget?.id }}
-        confirmLoading={deleting}
+        onClose={() => setDeleteTarget(null)}
+        footer={
+          <>
+            <Button type="ghost" size="small" onClick={() => setDeleteTarget(null)}>
+              取消
+            </Button>
+            <Button
+              type="primary"
+              size="small"
+              danger
+              loading={deleting()}
+              disabled={deleteConfirm() !== deleteTarget()?.id}
+              onClick={() => void submitDelete()}
+            >
+              确认注销
+            </Button>
+          </>
+        }
       >
         <Alert
           type="warning"
-          showIcon
           message="该操作不可撤销"
           description="仅删除集群记录。已签发的 Agent Token、Casbin 策略与绑定不会自动清理，需要另行处理。"
-          style={{ marginBottom: 16 }}
+          class="mb-4"
         />
-        <Typography.Paragraph>
-          请输入集群 ID <code className="mono strong">{deleteTarget?.id}</code> 以确认：
-        </Typography.Paragraph>
+        <p class="text-[13px]">
+          请输入集群 ID <code class="mono strong">{deleteTarget()?.id}</code> 以确认：
+        </p>
         <Input
-          value={deleteConfirm}
-          onChange={(e) => setDeleteConfirm(e.target.value)}
-          placeholder={deleteTarget?.id}
-          className="mono"
-          autoComplete="off"
+          value={deleteConfirm()}
+          onValueChange={setDeleteConfirm}
+          placeholder={deleteTarget()?.id}
+          class="mono"
+          autocomplete="off"
         />
       </Modal>
     </div>

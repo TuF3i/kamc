@@ -1,30 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  App,
-  Avatar,
-  Button,
-  Card,
-  Empty,
-  Form,
-  Input,
-  Modal,
-  Popconfirm,
-  Select,
-  Space,
-  Switch,
-  Table,
-  Tag,
-  Typography,
-  type TableColumnsType,
-} from 'antd';
-import {
-  DeleteOutlined,
-  EditOutlined,
-  PlusOutlined,
-  TeamOutlined,
-  UserAddOutlined,
-  UserOutlined,
-} from '@ant-design/icons';
+  For,
+  Show,
+  createMemo,
+  createSignal,
+  onMount,
+} from 'solid-js';
 import {
   addGroupMember,
   createGroup,
@@ -35,25 +15,57 @@ import {
   updateGroup,
 } from '@/api/users';
 import type { GroupDTO, PlatformUserDTO } from '@/api/types';
+import { toast } from '@/lib/storage/toast';
+import {
+  Avatar,
+  Button,
+  Card,
+  Empty,
+  Field,
+  Input,
+  Modal,
+  Popconfirm,
+  Select,
+  Switch,
+  Table,
+  Tag,
+  TextArea,
+  type TableColumnsType,
+} from '@/lib/widgets';
+import { createForm } from '@/lib/widgets/form';
+import {
+  DeleteOutlined,
+  EditOutlined,
+  PlusOutlined,
+  TeamOutlined,
+  UserAddOutlined,
+  UserOutlined,
+} from '@/lib/icons';
 
 /** 组 Tab：组 CRUD + 成员管理（成员关系存于用户表 groups 字段）。 */
 export function GroupsTab() {
-  const { message } = App.useApp();
-  const [groups, setGroups] = useState<GroupDTO[]>([]);
-  const [users, setUsers] = useState<PlatformUserDTO[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [form] = Form.useForm<{ name: string; desc: string; is_admin: boolean }>();
+  const [groups, setGroups] = createSignal<GroupDTO[]>([]);
+  const [users, setUsers] = createSignal<PlatformUserDTO[]>([]);
+  const [loading, setLoading] = createSignal(true);
+  const [error, setError] = createSignal<string | null>(null);
+  const [createOpen, setCreateOpen] = createSignal(false);
+  const [creating, setCreating] = createSignal(false);
+  const [editing, setEditing] = createSignal<GroupDTO | null>(null);
+  const [editSaving, setEditSaving] = createSignal(false);
+  const [memberBusy, setMemberBusy] = createSignal(false);
+  const [memberToAdd, setMemberToAdd] = createSignal<string | undefined>(undefined);
 
-  const [editing, setEditing] = useState<GroupDTO | null>(null);
-  const [editSaving, setEditSaving] = useState(false);
-  const [memberBusy, setMemberBusy] = useState(false);
-  const [memberToAdd, setMemberToAdd] = useState<string>();
-  const [editForm] = Form.useForm<{ name: string; desc: string; is_admin: boolean }>();
+  const createGroupForm = createForm({ name: '', desc: '', is_admin: false });
+  const editForm = createForm({ name: '', desc: '', is_admin: false });
 
-  const load = useCallback(async () => {
+  const rules = {
+    name: [
+      { required: true, message: '请输入组名' },
+      { max: 128, message: '组名最长 128 字符' },
+    ],
+  };
+
+  const load = async () => {
     setLoading(true);
     setError(null);
     try {
@@ -61,105 +73,119 @@ export function GroupsTab() {
       setGroups(groupList);
       setUsers(userList);
       // 编辑弹窗打开时同步刷新其数据（成员变更后保持最新）
-      setEditing((prev) => (prev ? groupList.find((g) => g.name === prev.name) ?? null : prev));
+      setEditing((prev) =>
+        prev ? (groupList.find((group) => group.name === prev.name) ?? null) : prev,
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载组列表失败');
     } finally {
       setLoading(false);
     }
-  }, []);
+  };
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  onMount(() => void load());
 
   const submitCreate = async () => {
-    const values = await form.validateFields();
+    if (!createGroupForm.validate(rules)) return;
     setCreating(true);
     try {
-      await createGroup(values.name.trim(), values.desc?.trim() || '', values.is_admin === true);
-      message.success(`组 ${values.name.trim()} 已创建`);
+      const name = String(createGroupForm.values.name).trim();
+      await createGroup(
+        name,
+        String(createGroupForm.values.desc).trim() || '',
+        createGroupForm.values.is_admin === true,
+      );
+      toast.success(`组 ${name} 已创建`);
       setCreateOpen(false);
-      form.resetFields();
+      createGroupForm.reset();
       await load();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '创建组失败');
+      toast.error(err instanceof Error ? err.message : '创建组失败');
     } finally {
       setCreating(false);
     }
   };
 
-  const openEdit = (g: GroupDTO) => {
-    setEditing(g);
+  const openEdit = (group: GroupDTO) => {
+    setEditing(group);
     setMemberToAdd(undefined);
-    editForm.setFieldsValue({ name: g.name, desc: g.desc, is_admin: g.is_admin });
+    editForm.reset({
+      name: group.name,
+      desc: group.desc,
+      is_admin: group.is_admin,
+    });
   };
 
   const submitEdit = async () => {
-    if (!editing) return;
-    const values = await editForm.validateFields();
+    const current = editing();
+    if (!current) return;
+    if (!editForm.validate(rules)) return;
     setEditSaving(true);
     try {
-      const updated = await updateGroup(editing.name, {
-        name: values.name.trim(),
-        desc: values.desc?.trim() || '',
-        is_admin: values.is_admin === true,
+      const updated = await updateGroup(current.name, {
+        name: String(editForm.values.name).trim(),
+        desc: String(editForm.values.desc).trim() || '',
+        is_admin: editForm.values.is_admin === true,
       });
-      message.success(`组 ${updated.name} 已更新`);
+      toast.success(`组 ${updated.name} 已更新`);
       setEditing(null);
       await load();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '更新组失败');
+      toast.error(err instanceof Error ? err.message : '更新组失败');
     } finally {
       setEditSaving(false);
     }
   };
 
   const addMember = async () => {
-    if (!editing || !memberToAdd) return;
+    const current = editing();
+    const username = memberToAdd();
+    if (!current || !username) return;
     setMemberBusy(true);
     try {
-      await addGroupMember(editing.name, memberToAdd);
-      message.success(`${memberToAdd} 已加入组`);
+      await addGroupMember(current.name, username);
+      toast.success(`${username} 已加入组`);
       setMemberToAdd(undefined);
       await load();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '添加成员失败');
+      toast.error(err instanceof Error ? err.message : '添加成员失败');
     } finally {
       setMemberBusy(false);
     }
   };
 
   const removeMember = async (username: string) => {
-    if (!editing) return;
+    const current = editing();
+    if (!current) return;
     setMemberBusy(true);
     try {
-      await removeGroupMember(editing.name, username);
-      message.success(`${username} 已移出组`);
+      await removeGroupMember(current.name, username);
+      toast.success(`${username} 已移出组`);
       await load();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '移除成员失败');
+      toast.error(err instanceof Error ? err.message : '移除成员失败');
     } finally {
       setMemberBusy(false);
     }
   };
 
-  const remove = async (g: GroupDTO) => {
+  const remove = async (group: GroupDTO) => {
     try {
-      await deleteGroup(g.name);
-      message.success(`组 ${g.name} 已删除`);
+      await deleteGroup(group.name);
+      toast.success(`组 ${group.name} 已删除`);
       await load();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '删除组失败');
+      toast.error(err instanceof Error ? err.message : '删除组失败');
     }
   };
 
   // 候选成员：不在当前组内的用户
-  const candidateUsers = useMemo(() => {
-    if (!editing) return [];
-    const inGroup = new Set(editing.members);
-    return users.filter((u) => !inGroup.has(u.username));
-  }, [editing, users]);
+  const candidateUsers = createMemo(() => {
+    const current = editing();
+    if (!current) return [];
+    const inGroup = new Set(current.members);
+    return users().filter((user) => !inGroup.has(user.username));
+  });
 
   const columns: TableColumnsType<GroupDTO> = [
     {
@@ -167,233 +193,299 @@ export function GroupsTab() {
       dataIndex: 'name',
       key: 'name',
       width: 260,
-      render: (name: string, g) => (
-        <Space size={8}>
-          <TeamOutlined style={{ color: '#7cb3ff' }} />
-          <code className="mono strong">{name}</code>
-          {g.is_admin ? <Tag color="gold">平台管理员</Tag> : null}
-        </Space>
+      render: (value, group) => (
+        <span class="inline-flex items-center gap-2">
+          <TeamOutlined class="h-4 w-4 text-primary" />
+          <code class="mono strong">{String(value)}</code>
+          <Show when={group.is_admin}>
+            <Tag level="gold">平台管理员</Tag>
+          </Show>
+        </span>
       ),
     },
     {
       title: '描述',
       dataIndex: 'desc',
       ellipsis: true,
-      render: (desc: string) => desc || <Typography.Text type="secondary">—</Typography.Text>,
+      render: (value) => String(value ?? '') || <span class="muted">—</span>,
     },
     {
       title: '来源',
       dataIndex: 'source',
       width: 100,
-      render: (source: string) => (
-        <Tag color={source === 'ldap' ? 'geekblue' : source === 'local' ? 'default' : 'purple'}>
-          {source === 'ldap' ? 'LDAP' : source === 'local' ? '手动' : 'SSO'}
-        </Tag>
-      ),
+      render: (value) => {
+        const source = String(value);
+        return (
+          <Tag level={source === 'ldap' ? 'info' : source === 'local' ? 'neutral' : 'primary'}>
+            {source === 'ldap' ? 'LDAP' : source === 'local' ? '手动' : 'SSO'}
+          </Tag>
+        );
+      },
     },
     {
       title: '成员',
       key: 'members',
-      render: (_, g) =>
-        g.members.length ? (
-          <Space size={[4, 4]} wrap>
-            {g.members.map((m) => (
-              <Tag key={m} icon={<UserOutlined />}>{m}</Tag>
-            ))}
-          </Space>
+      render: (_value, group) =>
+        group.members.length ? (
+          <span class="flex flex-wrap gap-1">
+            <For each={group.members}>
+              {(member) => (
+                <Tag icon={<UserOutlined class="h-3 w-3" />}>{member}</Tag>
+              )}
+            </For>
+          </span>
         ) : (
-          <Typography.Text type="secondary">无成员</Typography.Text>
+          <span class="muted">无成员</span>
         ),
     },
     {
       title: '操作',
       key: 'actions',
       width: 170,
-      render: (_, g) => (
-        <Space size={0}>
-          <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(g)}>
+      render: (_value, group) => (
+        <div class="table-actions">
+          <Button
+            type="link"
+            size="small"
+            icon={<EditOutlined class="h-3.5 w-3.5" />}
+            onClick={() => openEdit(group)}
+          >
             编辑
           </Button>
           <Popconfirm
-            title={`删除组「${g.name}」？`}
+            title={`删除组「${group.name}」？`}
             description="用户归属关系不受影响；引用该组的策略需另行清理。"
             okText="删除"
             cancelText="取消"
             okButtonProps={{ danger: true }}
-            onConfirm={() => void remove(g)}
+            onConfirm={() => remove(group)}
           >
-            <Button type="link" size="small" danger icon={<DeleteOutlined />}>删除</Button>
+            <Button
+              type="link"
+              size="small"
+              danger
+              icon={<DeleteOutlined class="h-3.5 w-3.5" />}
+            >
+              删除
+            </Button>
           </Popconfirm>
-        </Space>
+        </div>
       ),
     },
   ];
 
   return (
     <div>
-      {error ? <Typography.Paragraph type="danger">{error}</Typography.Paragraph> : null}
-      <Space style={{ marginBottom: 12 }}>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+      <Show when={error()}>
+        <p class="mb-3 text-sm text-error">{error()}</p>
+      </Show>
+      <div class="mb-3">
+        <Button
+          type="primary"
+          icon={<PlusOutlined class="h-4 w-4" />}
+          onClick={() => {
+            createGroupForm.reset();
+            setCreateOpen(true);
+          }}
+        >
           创建组
         </Button>
-      </Space>
-      <Card className="soft-card" styles={{ body: { padding: 0 } }}>
+      </div>
+      <Card class="soft-card" contentClass="p-0">
         <Table<GroupDTO>
           rowKey="name"
           columns={columns}
-          dataSource={groups}
-          loading={loading}
-          size="middle"
-          pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 个组` }}
-          locale={{ emptyText: <Empty description="暂无组；SSO/LDAP 登录的组会自动同步" /> }}
+          dataSource={groups()}
+          loading={loading()}
+          pagination={{ pageSize: 10, showTotal: (total) => `共 ${total} 个组` }}
+          locale={{
+            emptyText: <Empty description="暂无组；SSO/LDAP 登录的组会自动同步" class="border-0" />,
+          }}
         />
       </Card>
 
       <Modal
+        open={createOpen()}
         title="创建组"
-        open={createOpen}
-        onCancel={() => setCreateOpen(false)}
-        onOk={() => void submitCreate()}
-        okText="创建"
-        cancelText="取消"
-        confirmLoading={creating}
-        destroyOnHidden
+        onClose={() => setCreateOpen(false)}
+        footer={
+          <>
+            <Button type="ghost" size="small" onClick={() => setCreateOpen(false)}>
+              取消
+            </Button>
+            <Button
+              type="primary"
+              size="small"
+              loading={creating()}
+              onClick={() => void submitCreate()}
+            >
+              创建
+            </Button>
+          </>
+        }
       >
-        <Form form={form} layout="vertical" style={{ marginTop: 12 }} preserve={false}>
-          <Form.Item
-            name="name"
-            label="组名"
-            rules={[
-              { required: true, message: '请输入组名' },
-              { max: 128, message: '组名最长 128 字符' },
-            ]}
-          >
-            <Input placeholder="dev-team" autoComplete="off" />
-          </Form.Item>
-          <Form.Item name="desc" label="描述">
-            <Input.TextArea placeholder="可选" rows={3} maxLength={500} />
-          </Form.Item>
-          <Form.Item name="is_admin" label="平台管理员" valuePropName="checked" extra="成员下次登录后生效">
-            <Switch />
-          </Form.Item>
-        </Form>
+        <div class="form-stack mt-3">
+          <Field label="组名" required error={createGroupForm.errors.name}>
+            <Input
+              value={String(createGroupForm.values.name)}
+              onValueChange={(value) => createGroupForm.setValue('name', value)}
+              placeholder="dev-team"
+              autocomplete="off"
+              status={createGroupForm.errors.name ? 'error' : undefined}
+            />
+          </Field>
+          <Field label="描述">
+            <TextArea
+              value={String(createGroupForm.values.desc)}
+              onValueChange={(value) => createGroupForm.setValue('desc', value)}
+              placeholder="可选"
+              rows={3}
+              maxLength={500}
+            />
+          </Field>
+          <Field label="平台管理员" extra="成员下次登录后生效">
+            <Switch
+              checked={createGroupForm.values.is_admin === true}
+              onChange={(checked) => createGroupForm.setValue('is_admin', checked)}
+            />
+          </Field>
+        </div>
       </Modal>
 
       <Modal
-        title={editing ? `编辑组 · ${editing.name}` : '编辑组'}
-        open={editing !== null}
-        onCancel={() => setEditing(null)}
-        onOk={() => void submitEdit()}
-        okText="保存"
-        cancelText="取消"
-        confirmLoading={editSaving}
-        destroyOnHidden
+        open={editing() !== null}
+        title={editing() ? `编辑组 · ${editing()!.name}` : '编辑组'}
+        onClose={() => setEditing(null)}
         width={640}
-      >
-        {editing ? (
+        footer={
           <>
-            <Form form={editForm} layout="vertical" style={{ marginTop: 12 }}>
-              <Form.Item
-                name="name"
-                label="组名"
-                rules={[
-                  { required: true, message: '请输入组名' },
-                  { max: 128, message: '组名最长 128 字符' },
-                ]}
-                extra={
-                  editing.source === 'local'
-                    ? '重命名会同步用户组字段和 org:<旧名> 策略。'
-                    : '外部组由 IdP 管理，组名不可修改。'
+            <Button type="ghost" size="small" onClick={() => setEditing(null)}>
+              取消
+            </Button>
+            <Button
+              type="primary"
+              size="small"
+              loading={editSaving()}
+              onClick={() => void submitEdit()}
+            >
+              保存
+            </Button>
+          </>
+        }
+      >
+        <Show when={editing()}>
+          {(group) => (
+            <>
+              <div class="form-stack mt-3">
+                <Field
+                  label="组名"
+                  required
+                  error={editForm.errors.name}
+                  extra={
+                    group().source === 'local'
+                      ? '重命名会同步用户组字段和 org:<旧名> 策略。'
+                      : '外部组由 IdP 管理，组名不可修改。'
+                  }
+                >
+                  <Input
+                    value={String(editForm.values.name)}
+                    onValueChange={(value) => editForm.setValue('name', value)}
+                    class="mono"
+                    autocomplete="off"
+                    disabled={group().source !== 'local'}
+                    status={editForm.errors.name ? 'error' : undefined}
+                  />
+                </Field>
+                <Field label="描述">
+                  <TextArea
+                    value={String(editForm.values.desc)}
+                    onValueChange={(value) => editForm.setValue('desc', value)}
+                    rows={2}
+                    maxLength={500}
+                  />
+                </Field>
+                <Field label="平台管理员" extra="成员下次登录后生效">
+                  <Switch
+                    checked={editForm.values.is_admin === true}
+                    onChange={(checked) => editForm.setValue('is_admin', checked)}
+                  />
+                </Field>
+              </div>
+
+              <div class="mt-4 font-bold">成员（{group().members.length}）</div>
+              <div class="my-2 grid gap-1.5">
+                <Show
+                  when={group().members.length > 0}
+                  fallback={<span class="text-[13px] text-layer-content/50">暂无成员</span>}
+                >
+                  <For each={group().members}>
+                    {(member) => {
+                      const user = () =>
+                        users().find((item) => item.username === member);
+                      return (
+                        <div class="flex items-center gap-2 rounded-lg border border-layer-content/10 px-2 py-1">
+                          <Avatar size={24} src={user()?.avatar_url || undefined}>
+                            {(user()?.nickname || member).slice(0, 1).toUpperCase()}
+                          </Avatar>
+                          <span class="font-bold">{user()?.nickname || member}</span>
+                          <code class="mono text-[12px] text-layer-content/50">{member}</code>
+                          <span class="flex-1" />
+                          <Show when={group().source === 'local'}>
+                            <Button
+                              type="link"
+                              size="small"
+                              danger
+                              loading={memberBusy()}
+                              onClick={() => void removeMember(member)}
+                            >
+                              移出
+                            </Button>
+                          </Show>
+                        </div>
+                      );
+                    }}
+                  </For>
+                </Show>
+              </div>
+
+              <Show
+                when={group().source === 'local'}
+                fallback={
+                  <span class="text-[13px] text-layer-content/50">
+                    该组来自 {group().source === 'ldap' ? 'LDAP' : 'SSO'}，成员由登录同步，平台侧只读。
+                  </span>
                 }
               >
-                <Input className="mono" autoComplete="off" disabled={editing.source !== 'local'} />
-              </Form.Item>
-              <Form.Item name="desc" label="描述">
-                <Input.TextArea rows={2} maxLength={500} />
-              </Form.Item>
-              <Form.Item name="is_admin" label="平台管理员" valuePropName="checked" extra="成员下次登录后生效">
-                <Switch />
-              </Form.Item>
-            </Form>
-
-            <Typography.Text strong>成员（{editing.members.length}）</Typography.Text>
-            <div style={{ margin: '8px 0 12px', display: 'grid', gap: 6 }}>
-              {editing.members.length === 0 ? (
-                <Typography.Text type="secondary">暂无成员</Typography.Text>
-              ) : (
-                editing.members.map((m) => {
-                  const user = users.find((u) => u.username === m);
-                  return (
-                    <div
-                      key={m}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        padding: '4px 8px',
-                        border: '1px solid var(--kamc-border-soft)',
-                        borderRadius: 8,
-                      }}
-                    >
-                      {user?.avatar_url ? (
-                        <Avatar size={24} src={user.avatar_url} />
-                      ) : (
-                        <Avatar size={24} className="user-avatar">
-                          {(user?.nickname || m).slice(0, 1).toUpperCase()}
-                        </Avatar>
-                      )}
-                      <span className="strong">{user?.nickname || m}</span>
-                      <code className="mono" style={{ fontSize: 12, color: 'var(--kamc-muted)' }}>{m}</code>
-                      <span style={{ flex: 1 }} />
-                      {editing.source === 'local' ? (
-                        <Button
-                          type="link"
-                          size="small"
-                          danger
-                          loading={memberBusy}
-                          onClick={() => void removeMember(m)}
-                        >
-                          移出
-                        </Button>
-                      ) : null}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            {editing.source === 'local' ? (
-              <Space.Compact style={{ width: '100%' }}>
-                <Select
-                  style={{ flex: 1 }}
-                  showSearch
-                  allowClear
-                  placeholder="选择要添加的用户"
-                  value={memberToAdd}
-                  onChange={setMemberToAdd}
-                  optionFilterProp="label"
-                  options={candidateUsers.map((u) => ({
-                    value: u.username,
-                    label: `${u.nickname || u.username}（${u.username}）`,
-                  }))}
-                />
-                <Button
-                  type="primary"
-                  icon={<UserAddOutlined />}
-                  loading={memberBusy}
-                  disabled={!memberToAdd}
-                  onClick={() => void addMember()}
-                >
-                  添加用户
-                </Button>
-              </Space.Compact>
-            ) : (
-              <Typography.Text type="secondary">
-                该组来自 {editing.source === 'ldap' ? 'LDAP' : 'SSO'}，成员由登录同步，平台侧只读。
-              </Typography.Text>
-            )}
-          </>
-        ) : null}
+                <div class="flex items-center gap-2">
+                  <Select
+                    class="flex-1"
+                    showSearch
+                    allowClear
+                    placeholder="选择要添加的用户"
+                    value={memberToAdd()}
+                    onChange={(value) =>
+                      setMemberToAdd(value === undefined ? undefined : String(value))
+                    }
+                    optionFilterProp="label"
+                    options={candidateUsers().map((user) => ({
+                      value: user.username,
+                      label: `${user.nickname || user.username}（${user.username}）`,
+                    }))}
+                  />
+                  <Button
+                    type="primary"
+                    icon={<UserAddOutlined class="h-4 w-4" />}
+                    loading={memberBusy()}
+                    disabled={!memberToAdd()}
+                    onClick={() => void addMember()}
+                  >
+                    添加用户
+                  </Button>
+                </div>
+              </Show>
+            </>
+          )}
+        </Show>
       </Modal>
     </div>
   );

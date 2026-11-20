@@ -1,29 +1,36 @@
-import { useEffect, useState } from 'react';
-import { Alert, App, Button, Card, Drawer, Empty, Skeleton, Tag } from 'antd';
+import { For, Show, createSignal, onMount } from 'solid-js';
+import { downloadKubeconfig, listMyClusters } from '@/api/clusters';
+import type { Cluster } from '@/api/types';
+import { auth } from '@/stores/auth';
+import { toast } from '@/lib/storage/toast';
+import {
+  Alert,
+  Button,
+  Card,
+  Drawer,
+  Empty,
+  Skeleton,
+  Tag,
+} from '@/lib/widgets';
+import { PageHeader } from '@/components/PageHeader';
+import { ClusterStatusTag } from '@/components/StatusTag';
 import {
   ArrowRightOutlined,
   CloudDownloadOutlined,
   KeyOutlined,
   KubernetesOutlined,
   ThunderboltOutlined,
-} from '@ant-design/icons';
-import { useAuthStore } from '@/stores/auth';
-import { downloadKubeconfig, listMyClusters } from '@/api/clusters';
-import type { Cluster } from '@/api/types';
-import { PageHeader } from '@/components/PageHeader';
-import { ClusterStatusTag } from '@/components/StatusTag';
+} from '@/lib/icons';
 
-export function Kubeconfig() {
-  const { message } = App.useApp();
-  const isAdmin = useAuthStore((s) => s.isAdmin);
-  const [clusters, setClusters] = useState<Cluster[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Cluster | null>(null);
-  const [mode, setMode] = useState<'exec' | 'static'>('exec');
-  const [downloading, setDownloading] = useState(false);
+export default function Kubeconfig() {
+  const [clusters, setClusters] = createSignal<Cluster[]>([]);
+  const [loading, setLoading] = createSignal(true);
+  const [error, setError] = createSignal<string | null>(null);
+  const [selected, setSelected] = createSignal<Cluster | null>(null);
+  const [mode, setMode] = createSignal<'exec' | 'static'>('exec');
+  const [downloading, setDownloading] = createSignal(false);
 
-  useEffect(() => {
+  onMount(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -40,7 +47,7 @@ export function Kubeconfig() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  });
 
   const openCluster = (cluster: Cluster) => {
     setSelected(cluster);
@@ -48,13 +55,14 @@ export function Kubeconfig() {
   };
 
   const download = async () => {
-    if (!selected) return;
+    const cluster = selected();
+    if (!cluster) return;
     setDownloading(true);
     try {
-      await downloadKubeconfig(selected.id, mode);
-      message.success(`集群 ${selected.id} 的 kubeconfig 已下载`);
+      await downloadKubeconfig(cluster.id, mode());
+      toast.success(`集群 ${cluster.id} 的 kubeconfig 已下载`);
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '下载 kubeconfig 失败');
+      toast.error(err instanceof Error ? err.message : '下载 kubeconfig 失败');
     } finally {
       setDownloading(false);
     }
@@ -65,130 +73,149 @@ export function Kubeconfig() {
       <PageHeader
         title="Kubeconfig"
         subtitle="下载访问凭证"
-        tags={isAdmin ? <Tag color="blue">管理员</Tag> : <Tag>普通用户</Tag>}
+        tags={
+          auth.isAdmin() ? (
+            <Tag level="primary">管理员</Tag>
+          ) : (
+            <Tag>普通用户</Tag>
+          )
+        }
       />
 
-      {error ? (
+      <Show when={error()}>
         <Alert
           type="error"
-          showIcon
           message="集群列表加载失败"
-          description={error}
-          style={{ marginBottom: 16 }}
+          description={error() ?? undefined}
+          class="mb-4"
           action={
             <Button size="small" onClick={() => window.location.reload()}>
               重试
             </Button>
           }
         />
-      ) : null}
+      </Show>
 
-      {loading ? (
-        <div className="kubeconfig-grid">
-          {[0, 1, 2].map((index) => (
-            <Card key={index} className="kubeconfig-cluster-card">
-              <Skeleton active avatar paragraph={{ rows: 2 }} />
+      <Show
+        when={!loading()}
+        fallback={
+          <div class="kubeconfig-grid">
+            <For each={[0, 1, 2]}>
+              {() => (
+                <Card class="kubeconfig-cluster-card">
+                  <Skeleton avatar paragraph={{ rows: 2 }} />
+                </Card>
+              )}
+            </For>
+          </div>
+        }
+      >
+        <Show
+          when={clusters().length > 0}
+          fallback={
+            <Card class="soft-card">
+              <Empty
+                description={
+                  auth.isAdmin()
+                    ? '暂无集群；请先在「集群」页添加集群并分配访问策略。'
+                    : '暂无可访问的集群，请联系管理员分配访问策略。'
+                }
+                class="border-0"
+              />
             </Card>
-          ))}
-        </div>
-      ) : clusters.length === 0 ? (
-        <Card className="soft-card">
-          <Empty
-            description={
-              isAdmin
-                ? '暂无集群；请先在「集群」页添加集群并分配访问策略。'
-                : '暂无可访问的集群，请联系管理员分配访问策略。'
-            }
-            style={{ padding: '40px 0' }}
-          />
-        </Card>
-      ) : (
-        <div className="kubeconfig-grid">
-          {clusters.map((cluster) => (
-            <button
-              key={cluster.id}
-              type="button"
-              className="kubeconfig-cluster-card"
-              onClick={() => openCluster(cluster)}
-            >
-              <div className="kubeconfig-cluster-head">
-                <span className="kubeconfig-cluster-icon">
-                  <KubernetesOutlined />
-                </span>
-                <ClusterStatusTag status={cluster.status} />
-              </div>
-              <div className="kubeconfig-cluster-name">{cluster.name || cluster.id}</div>
-              <code className="mono kubeconfig-cluster-id">{cluster.id}</code>
-              <div className="kubeconfig-cluster-desc">{cluster.desc || '暂无描述'}</div>
-              <span className="kubeconfig-cluster-action">
-                下载凭证 <ArrowRightOutlined />
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
+          }
+        >
+          <div class="kubeconfig-grid">
+            <For each={clusters()}>
+              {(cluster) => (
+                <button
+                  type="button"
+                  class="kubeconfig-cluster-card"
+                  onClick={() => openCluster(cluster)}
+                >
+                  <div class="kubeconfig-cluster-head">
+                    <span class="kubeconfig-cluster-icon">
+                      <KubernetesOutlined class="h-[23px] w-[23px]" />
+                    </span>
+                    <ClusterStatusTag status={cluster.status} />
+                  </div>
+                  <div class="kubeconfig-cluster-name">{cluster.name || cluster.id}</div>
+                  <code class="mono kubeconfig-cluster-id">{cluster.id}</code>
+                  <div class="kubeconfig-cluster-desc">{cluster.desc || '暂无描述'}</div>
+                  <span class="kubeconfig-cluster-action">
+                    下载凭证 <ArrowRightOutlined class="h-4 w-4" />
+                  </span>
+                </button>
+              )}
+            </For>
+          </div>
+        </Show>
+      </Show>
 
       <Drawer
-        title={selected ? `下载凭证 · ${selected.name || selected.id}` : '下载凭证'}
-        open={selected !== null}
+        open={selected() !== null}
+        title={selected() ? `下载凭证 · ${selected()!.name || selected()!.id}` : '下载凭证'}
         onClose={() => setSelected(null)}
         width={460}
-        destroyOnHidden
       >
-        {selected ? (
-          <>
-            <div className="kubeconfig-drawer-head">
-              <span className="kubeconfig-cluster-icon">
-                <KubernetesOutlined />
-              </span>
-              <div className="kubeconfig-drawer-title">
-                <div className="kubeconfig-drawer-name-row">
-                  <span className="kubeconfig-cluster-name">{selected.name || selected.id}</span>
-                  <code className="mono kubeconfig-drawer-id">{selected.id}</code>
+        <Show when={selected()}>
+          {(cluster) => (
+            <>
+              <div class="kubeconfig-drawer-head">
+                <span class="kubeconfig-cluster-icon">
+                  <KubernetesOutlined class="h-[23px] w-[23px]" />
+                </span>
+                <div class="kubeconfig-drawer-title">
+                  <div class="kubeconfig-drawer-name-row">
+                    <span class="kubeconfig-cluster-name">
+                      {cluster().name || cluster().id}
+                    </span>
+                    <code class="mono kubeconfig-drawer-id">{cluster().id}</code>
+                  </div>
+                  <div class="kubeconfig-drawer-desc">{cluster().desc || '暂无描述'}</div>
                 </div>
-                <div className="kubeconfig-drawer-desc">{selected.desc || '暂无描述'}</div>
+                <ClusterStatusTag status={cluster().status} />
               </div>
-              <ClusterStatusTag status={selected.status} />
-            </div>
 
-            <div className="mini-heading">凭证模式</div>
-            <div className="mode-cards">
-              <button
-                type="button"
-                className={`mode-card${mode === 'exec' ? ' selected' : ''}`}
-                onClick={() => setMode('exec')}
-              >
-                <div className="mode-card-title">
-                  <ThunderboltOutlined /> exec
-                  <span className="mode-badge">推荐</span>
-                </div>
-                <div className="mode-card-desc">调用 kamc 自动续期，适合日常使用。</div>
-              </button>
-              <button
-                type="button"
-                className={`mode-card${mode === 'static' ? ' selected' : ''}`}
-                onClick={() => setMode('static')}
-              >
-                <div className="mode-card-title">
-                  <KeyOutlined /> static
-                </div>
-                <div className="mode-card-desc">嵌入当前 JWT，1 小时后过期，需要重新下载。</div>
-              </button>
-            </div>
+              <div class="mini-heading">凭证模式</div>
+              <div class="mode-cards">
+                <button
+                  type="button"
+                  class={`mode-card${mode() === 'exec' ? ' selected' : ''}`}
+                  onClick={() => setMode('exec')}
+                >
+                  <div class="mode-card-title">
+                    <ThunderboltOutlined class="h-4 w-4" /> exec
+                    <span class="mode-badge">推荐</span>
+                  </div>
+                  <div class="mode-card-desc">调用 kamc 自动续期，适合日常使用。</div>
+                </button>
+                <button
+                  type="button"
+                  class={`mode-card${mode() === 'static' ? ' selected' : ''}`}
+                  onClick={() => setMode('static')}
+                >
+                  <div class="mode-card-title">
+                    <KeyOutlined class="h-4 w-4" /> static
+                  </div>
+                  <div class="mode-card-desc">嵌入当前 JWT，1 小时后过期，需要重新下载。</div>
+                </button>
+              </div>
 
-            <Button
-              type="primary"
-              size="large"
-              block
-              icon={<CloudDownloadOutlined />}
-              loading={downloading}
-              onClick={() => void download()}
-              className="kubeconfig-submit"
-            >
-              下载 kubeconfig
-            </Button>
-          </>
-        ) : null}
+              <Button
+                type="primary"
+                size="large"
+                block
+                icon={<CloudDownloadOutlined class="h-4 w-4" />}
+                loading={downloading()}
+                onClick={() => void download()}
+                class="kubeconfig-submit"
+              >
+                下载 kubeconfig
+              </Button>
+            </>
+          )}
+        </Show>
       </Drawer>
     </div>
   );

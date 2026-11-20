@@ -33,8 +33,14 @@ const clusters: Cluster[] = [
   { id: 'dev-local', name: '本地开发集群', desc: 'kind 本地测试', status: 'offline', created_at: daysAgo(8), updated_at: daysAgo(2) },
 ];
 
+// Mock 本地密码（内存态；真实平台为 bcrypt 哈希，见 /api/v1/profile/password）
+const mockPasswords = new Map<string, string>([
+  ['sysadmin', 'sysadmin123'],
+  ['alice', 'mock'],
+]);
+
 const users: PlatformUserDTO[] = [
-  { uid: 'u-sysadmin', username: 'sysadmin', nickname: '系统管理员', avatar_url: '/icon-mark.png', groups: ['am:admin'], source: 'local', email: 'sysadmin@example.com', metadata: {}, last_login: nowIso(), created_at: daysAgo(120) },
+  { uid: 'u-sysadmin', username: 'sysadmin', nickname: '系统管理员', avatar_url: '', groups: ['am:admin'], source: 'local', email: 'sysadmin@example.com', metadata: {}, last_login: nowIso(), created_at: daysAgo(120) },
   { uid: 'u-alice', username: 'alice', nickname: '爱丽丝', avatar_url: '', groups: ['dev-team'], source: 'sso', email: 'alice@example.com', metadata: { dept: '平台研发' }, last_login: daysAgo(0.5), created_at: daysAgo(60) },
   { uid: 'u-bob', username: 'bob', nickname: 'Bob', avatar_url: '', groups: ['qa-team'], source: 'ldap', email: 'bob@example.com', metadata: {}, last_login: daysAgo(2), created_at: daysAgo(45) },
 ];
@@ -387,7 +393,12 @@ export async function mockApi<T>(method: string, rawPath: string, body?: unknown
   if (path === '/auth/password-login' && m === 'POST') {
     if (!payload.username || !payload.password) throw new ApiError('用户名或密码不能为空', 400, 10001);
     const found = users.find((item) => item.username === String(payload.username));
-    setMockUser(found ? found.username : 'sysadmin');
+    const target = found ? found.username : 'sysadmin';
+    const stored = mockPasswords.get(target) ?? 'sysadmin123';
+    if (String(payload.password) !== stored) {
+      throw new ApiError('用户名或密码错误。', 401, 40100);
+    }
+    setMockUser(target);
     return data({ token: 'mock-token', expires_at: new Date(Date.now() + 3600e3).toISOString(), token_type: 'Bearer' });
   }
   if (path === '/auth/me') return data(mockClaimsFor(currentUsername));
@@ -398,7 +409,28 @@ export async function mockApi<T>(method: string, rawPath: string, body?: unknown
   if (path === '/version') return data({ version: 'dev', commit: 'mock', component: 'platform' });
 
   // 自服务资料（头像等展示字段）
-  if (path === '/api/v1/profile') return data(findUser(currentUsername));
+  if (path === '/api/v1/profile') {
+    const u = findUser(currentUsername);
+    return data({ ...u, password_set: u.source === 'local' && mockPasswords.has(u.username) });
+  }
+
+  // 自服务修改密码（与后端语义一致：错旧密码 40012 / 未设置 40014 / 长度 10001）
+  if (path === '/api/v1/profile/password' && m === 'POST') {
+    const username = currentUsername;
+    const oldPass = String(payload.old_password ?? '');
+    const newPass = String(payload.new_password ?? '');
+    const target = users.some((u) => u.username === username) ? username : 'sysadmin';
+    const stored = mockPasswords.get(target);
+    if (stored === undefined) {
+      if (target !== 'sysadmin') throw new ApiError('当前账号未设置密码', 400, 40014);
+      if (oldPass !== 'sysadmin123') throw new ApiError('当前密码不正确', 400, 40012);
+    } else if (oldPass !== stored) {
+      throw new ApiError('当前密码不正确', 400, 40012);
+    }
+    if (newPass.length < 8 || newPass.length > 72) throw new ApiError('新密码长度需为 8-72 个字符', 400, 10001);
+    mockPasswords.set(target, newPass);
+    return data({ changed: true });
+  }
 
   // 概览 / 平台
   if (path === '/api/v1/system') return data(systemInfo);
