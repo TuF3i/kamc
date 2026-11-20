@@ -23,7 +23,7 @@ func TestRedactAuditURI(t *testing.T) {
 }
 
 // TestRedactAuditURIFailClosed 畸形 query 不得原样返回：整段 query 丢弃，
-// 防止攻击者用非法编码把 access_token 写进审计库/syslog。
+// 防止攻击者用非法编码把 access_token 写进审计库/日志平台。
 func TestRedactAuditURIFailClosed(t *testing.T) {
 	got := redactAuditURI("/proxy/c/api/v1/pods?x=%zz&access_token=secret")
 	if got != "/proxy/c/api/v1/pods?<redacted>" {

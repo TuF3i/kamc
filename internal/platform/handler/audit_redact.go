@@ -41,7 +41,7 @@ func isSensitiveQueryKey(key string) bool {
 }
 
 // redactAuditURI 对 URI 的 query 做密钥脱敏，保留路径与其余参数。
-// 用于审计 path 与请求报文起始行，避免 access_token 等凭证进入 DB/syslog。
+// 用于审计 path 与请求报文起始行，避免 access_token 等凭证进入 DB/日志平台。
 // 解析失败时 fail-closed：丢弃整个 query（畸形编码不能成为绕过脱敏的通道）。
 func redactAuditURI(raw string) string {
 	if raw == "" {

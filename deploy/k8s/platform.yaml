@@ -117,6 +117,10 @@ spec:
         # - {name: AM_AVATAR_MINIO_SECRET_KEY, valueFrom: {secretKeyRef: {name: platform-avatar, key: minio-secret-key}}}
         - {name: AM_RATE_LIMIT, value: "600"}                   # 每用户每分钟，0=不限
         - {name: AM_AUDIT_SPILL_FILE, value: "/var/lib/kamc/audit-spill.jsonl"}
+        # 集群审计 JSONL：Promtail sidecar/DaemonSet 采集后写入 Loki
+        - {name: AM_AUDIT_LOG_FILE, value: "/var/log/kamc/cluster-audit.jsonl"}
+        - {name: AM_AUDIT_LOG_MAX_MB, value: "100"}
+        - {name: AM_AUDIT_LOG_BACKUPS, value: "5"}
         - {name: AM_KUBECONFIG_CA_FILE, value: "/etc/k8s-am/ca/tls.crt"}   # 可选：平台 CA
         ports:
         - {name: http, containerPort: 8080}
@@ -135,6 +139,7 @@ spec:
         volumeMounts:
         - {name: jwt-keyring, mountPath: /etc/k8s-am/jwt, readOnly: true}
         - {name: audit-spill, mountPath: /var/lib/kamc}
+        - {name: cluster-log, mountPath: /var/log/kamc}
         - {name: platform-ca, mountPath: /etc/k8s-am/ca, readOnly: true}
         resources:
           requests: {cpu: 200m, memory: 256Mi}
@@ -144,6 +149,8 @@ spec:
         secret: {secretName: jwt-keyring}
       - name: audit-spill
         emptyDir: {}
+      - name: cluster-log
+        emptyDir: {}                            # 多副本共享/采集请改用 RWX 或 Promtail sidecar
       - name: platform-ca
         secret: {secretName: platform-ca}       # 可选：对外 TLS 证书的 CA（kubeconfig 嵌入）
 ---

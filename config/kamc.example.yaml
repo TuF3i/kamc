@@ -68,11 +68,10 @@ tunnel:
 audit:
   spill_file: /var/lib/kamc/audit-spill.jsonl
   retention: 720h                 # 0 = 关闭保留期清理
-  syslog:
-    addr: ""                      # udp://host:514 / tcp:// / tls://
-    tag: kamc-cluster-audit
-    ca_file: ""
-    insecure: false
+  cluster_log:
+    file: /var/log/kamc/cluster-audit.jsonl   # 空 = 不写文件；Promtail 采集此文件
+    max_mb: 100                   # 单文件上限，超过按时间戳轮转
+    backups: 5                    # 保留的轮转文件数
 
 geoip:
   db: ""                          # MaxMind .mmdb 路径（空=不解析地理信息）

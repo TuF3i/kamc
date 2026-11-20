@@ -10,12 +10,12 @@ package authz
 import (
 	"context"
 	"fmt"
-	"log"
 	"runtime/debug"
 	"sync"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
 // DefaultSyncChannel 策略同步频道
@@ -60,7 +60,7 @@ func (w *redisWatcher) Notify() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := w.cli.Publish(ctx, w.channel, "update").Err(); err != nil {
-		log.Printf("[authz] watcher publish: %v", err)
+		zap.S().Infof("[authz] watcher publish: %v", err)
 	}
 }
 
@@ -81,7 +81,7 @@ func (w *redisWatcher) loop() {
 			func() {
 				defer func() {
 					if r := recover(); r != nil {
-						log.Printf("[authz] watcher callback panic: %v\n%s", r, debug.Stack())
+						zap.S().Infof("[authz] watcher callback panic: %v\n%s", r, debug.Stack())
 					}
 				}()
 				fn(msg.Payload)

@@ -30,9 +30,11 @@ just compose-logs
 | `redisdata` | Redis AOF |
 | `avatardata` | 本地头像文件（`AM_AVATAR_DIR`） |
 | `auditdata` | 审计 spill（PG 故障暂存） |
+| `clusterlog` | 集群审计 JSONL（Promtail 采集） |
 | `miniodata` | MinIO 对象数据（启用 profile 时） |
+| `prometheusdata` / `lokidata` / `grafanadata` | 观测栈数据（启用 profile 时） |
 
-`platform-init` 一次性容器把头像/审计卷的属主改为平台运行用户（uid 10001）；
+`platform-init` 一次性容器把头像/审计/集群日志卷的属主改为平台运行用户（uid 10001）；
 `minio-init` 同理处理 MinIO 数据卷（uid 65532）。
 
 完全重置（会删除全部数据）：
@@ -82,5 +84,7 @@ uid 65532 运行）；可用 `MINIO_IMAGE` / `ALPINE_IMAGE` 覆盖镜像地址�
 - `AM_ENV=development` 允许内置账号密码登录；生产必须改为 `production` 并配置
   `AM_AVATAR_SECRET`、关闭密码登录或更换默认密码。
 - 平台镜像由仓库根 `Dockerfile` 构建，已包含 `data/web` 前端产物。
-- 时区、审计 syslog、GeoIP、LDAP 等配置可通过 `.env` 追加同名环境变量并加入
+- 集群审计文件随 `clusterlog` 卷持久化，默认 100MB × 5 轮转；Promtail 通过
+  `observability` profile 采集（见 [../observability/README.md](../observability/README.md)）。
+- 时区、GeoIP、LDAP 等配置可通过 `.env` 追加同名环境变量并加入
   `compose.yaml` 的 `environment` 段。

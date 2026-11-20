@@ -17,7 +17,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
 	"math/big"
 	"net/http"
 	"net/http/httputil"
@@ -32,6 +31,7 @@ import (
 	"github.com/hashicorp/yamux"
 
 	"github.com/TuF3i/kamc/internal/wsconn"
+	"go.uber.org/zap"
 )
 
 // ErrTokenUnavailable Token 文件缺失或内容为空（Agent 收到 401 后的
@@ -145,12 +145,12 @@ func defaultDial(ctx context.Context, cfg Config, token string) (*websocket.Conn
 // Token 尚不可用不阻塞启动：Secret 可能稍后挂载，连接循环按退避持续重试。
 func (s *Service) Start() error {
 	if _, err := s.readToken(); err != nil {
-		log.Printf("[agent] token 不可用，将按退避重试: %v", err)
+		zap.S().Infof("[agent] token 不可用，将按退避重试: %v", err)
 	}
 	if s.upstreamURL != nil && s.upstreamTransport != nil {
 		s.proxy = newUpstreamProxy(s.upstreamURL, s.upstreamTransport)
 	} else {
-		log.Printf("[agent] 上游 kube-apiserver 未配置，数据面未启用（隧道仅保活）")
+		zap.S().Infof("[agent] 上游 kube-apiserver 未配置，数据面未启用（隧道仅保活）")
 	}
 
 	s.startMu.Lock()
@@ -162,7 +162,7 @@ func (s *Service) Start() error {
 	s.wg.Add(2)
 	go s.connectLoop()
 	go s.tokenWatch()
-	log.Printf("[agent] started (cluster=%s agent=%s platform=%s)",
+	zap.S().Infof("[agent] started (cluster=%s agent=%s platform=%s)",
 		s.cfg.ClusterID, s.cfg.AgentID, s.cfg.PlatformURL)
 	return nil
 }
@@ -180,7 +180,7 @@ func (s *Service) connectLoop() {
 
 		token, err := s.readToken()
 		if err != nil {
-			log.Printf("[agent] read token: %v", err)
+			zap.S().Infof("[agent] read token: %v", err)
 			if !s.sleepBackoff(&backoff) {
 				return
 			}
@@ -193,14 +193,14 @@ func (s *Service) connectLoop() {
 			// 401：Token 被平台彻底拒绝（过期/吊销）——按 §6.5 停止重试，
 			// 等管理员重新签发；Token 文件变更后自动恢复
 			if resp != nil && resp.StatusCode == http.StatusUnauthorized {
-				log.Printf("[agent] 平台拒绝 Token（401），停止重试；更新 Token 文件后自动恢复")
+				zap.S().Infof("[agent] 平台拒绝 Token（401），停止重试；更新 Token 文件后自动恢复")
 				if !s.waitTokenChange() {
 					return
 				}
-				log.Printf("[agent] 检测到新 Token，恢复连接")
+				zap.S().Infof("[agent] 检测到新 Token，恢复连接")
 				continue
 			}
-			log.Printf("[agent] 连接平台失败，退避 %s: %v", backoff, err)
+			zap.S().Infof("[agent] 连接平台失败，退避 %s: %v", backoff, err)
 			if !s.sleepBackoff(&backoff) {
 				return
 			}
@@ -210,7 +210,7 @@ func (s *Service) connectLoop() {
 
 		sessionDone, err := s.setupSession(conn)
 		if err != nil {
-			log.Printf("[agent] 建立隧道会话失败: %v", err)
+			zap.S().Infof("[agent] 建立隧道会话失败: %v", err)
 			_ = conn.Close()
 			if !s.sleepBackoff(&backoff) {
 				return
@@ -223,7 +223,7 @@ func (s *Service) connectLoop() {
 			s.closeSession()
 			return
 		case <-sessionDone:
-			log.Printf("[agent] 隧道断开，准备重连")
+			zap.S().Infof("[agent] 隧道断开，准备重连")
 		}
 	}
 }
@@ -278,7 +278,7 @@ func (s *Service) serveLoop(session *yamux.Session, doneCh chan<- struct{}) {
 
 	srv := &http.Server{Handler: s.proxy, ReadHeaderTimeout: 10 * time.Second}
 	if err := srv.Serve(&yamuxListener{session: session}); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.Printf("[agent] 隧道 HTTP 服务退出: %v", err)
+		zap.S().Infof("[agent] 隧道 HTTP 服务退出: %v", err)
 	}
 }
 
@@ -296,12 +296,12 @@ func (s *Service) pingLoop(raw *websocket.Conn, ws *wsconn.Conn) {
 		case <-ticker.C:
 		}
 		if last := time.Unix(0, s.lastPong.Load()); time.Since(last) > s.watchdogTimeout() {
-			log.Printf("[agent] WS pong 超时（> %s），判定连接死亡", s.watchdogTimeout())
+			zap.S().Infof("[agent] WS pong 超时（> %s），判定连接死亡", s.watchdogTimeout())
 			_ = raw.Close()
 			return
 		}
 		if err := ws.Ping(); err != nil {
-			log.Printf("[agent] WS ping 失败: %v", err)
+			zap.S().Infof("[agent] WS ping 失败: %v", err)
 			_ = raw.Close()
 			return
 		}
@@ -339,7 +339,7 @@ func (s *Service) tokenWatch() {
 			s.lastTokenHash = hash // 记录本轮哈希（首次仅基线，不触发重连）
 			s.mu.Unlock()
 			if changed {
-				log.Printf("[agent] 检测到 Token 变更，断开重连")
+				zap.S().Infof("[agent] 检测到 Token 变更，断开重连")
 				s.closeSession() // 仅断会话，connectLoop 循环存活
 				select {
 				case s.tokenChanged <- struct{}{}: // 唤醒 401 驻留态（§6.5）
@@ -437,7 +437,7 @@ func (s *Service) Release() {
 	select {
 	case <-ch:
 	case <-time.After(5 * time.Second):
-		log.Printf("[agent] release timed out waiting for loops")
+		zap.S().Infof("[agent] release timed out waiting for loops")
 	}
-	log.Printf("[agent] released")
+	zap.S().Infof("[agent] released")
 }

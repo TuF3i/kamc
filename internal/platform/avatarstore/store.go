@@ -18,6 +18,8 @@ var ErrInvalidUID = errors.New("avatar: invalid uid")
 
 // Store 头像对象存储（实现：Local、MinIO）。
 type Store interface {
+	// Kind 后端类型（local/minio），用于指标与日志。
+	Kind() string
 	// Put 覆盖写入 uid 对应的头像对象。
 	Put(ctx context.Context, uid, contentType string, data []byte) error
 	// Get 读取头像；不存在返回 ErrNotFound。

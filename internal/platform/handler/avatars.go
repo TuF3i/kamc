@@ -24,6 +24,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/TuF3i/kamc/internal/metrics"
 	"github.com/TuF3i/kamc/internal/platform/avatarstore"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
 	"github.com/TuF3i/kamc/internal/platform/middleware"
@@ -103,6 +104,7 @@ func (h *Handler) uploadAvatar(w http.ResponseWriter, r *http.Request, username,
 		return
 	}
 	if err := h.avatarStore.Put(r.Context(), user.UID, ct, body); err != nil {
+		metrics.AvatarOperationsTotal.WithLabelValues(h.avatarStore.Kind(), "upload", "error").Inc()
 		errcode.GenFinalResponse(w, nil, errcode.ServerInternal(fmt.Errorf("write avatar: %w", err)))
 		return
 	}
@@ -111,9 +113,11 @@ func (h *Handler) uploadAvatar(w http.ResponseWriter, r *http.Request, username,
 	if rsp := h.svc.SetAvatarURL(r.Context(), username, url); rsp != nil {
 		// 元数据写失败时清理刚写入的对象，避免产生无法引用的孤儿文件。
 		_ = h.avatarStore.Delete(r.Context(), user.UID)
+		metrics.AvatarOperationsTotal.WithLabelValues(h.avatarStore.Kind(), "upload", "error").Inc()
 		errcode.GenFinalResponse(w, nil, rsp)
 		return
 	}
+	metrics.AvatarOperationsTotal.WithLabelValues(h.avatarStore.Kind(), "upload", "ok").Inc()
 	h.auditPlatform(r, "avatar-upload", username, "", auditPath, true, ct)
 	errcode.GenFinalResponse(w, map[string]string{"avatar_url": url}, nil)
 }
@@ -127,13 +131,16 @@ func (h *Handler) ServeAvatar(w http.ResponseWriter, r *http.Request) {
 	}
 	data, contentType, err := h.avatarStore.Get(r.Context(), uid)
 	if errors.Is(err, avatarstore.ErrNotFound) {
+		metrics.AvatarOperationsTotal.WithLabelValues(h.avatarStore.Kind(), "get", "not_found").Inc()
 		http.NotFound(w, r)
 		return
 	}
 	if err != nil {
+		metrics.AvatarOperationsTotal.WithLabelValues(h.avatarStore.Kind(), "get", "error").Inc()
 		http.Error(w, "avatar storage error", http.StatusInternalServerError)
 		return
 	}
+	metrics.AvatarOperationsTotal.WithLabelValues(h.avatarStore.Kind(), "get", "ok").Inc()
 	if contentType == "" {
 		contentType = http.DetectContentType(data)
 	}

@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"log"
 	"net/http"
 	"strings"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/TuF3i/kamc/internal/platform/middleware"
 	"github.com/TuF3i/kamc/internal/platform/modules"
 	"github.com/TuF3i/kamc/internal/platform/service"
+	"go.uber.org/zap"
 )
 
 // ListMyClusters GET /api/v1/my/clusters —— 当前用户可下载 kubeconfig 的集群。
@@ -44,7 +44,7 @@ func (h *Handler) GetKubeconfig(w http.ResponseWriter, r *http.Request) {
 	// 只允许下载自己有数据面权限的集群（管理员例外）；避免靠猜集群 ID 探测。
 	allowed, err := h.svc.HasClusterAccess(claims.Subject, claims.Groups, clusterID, isAdmin)
 	if err != nil {
-		log.Printf("[platform] kubeconfig access check %s@%s: %v", claims.Subject, clusterID, err)
+		zap.S().Infof("[platform] kubeconfig access check %s@%s: %v", claims.Subject, clusterID, err)
 		h.auditPlatform(r, "kubeconfig-download", claims.Subject, clusterID, "/api/v1/clusters/"+clusterID+"/kubeconfig", false, "access-check-error")
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return

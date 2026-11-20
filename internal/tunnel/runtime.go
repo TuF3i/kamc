@@ -16,7 +16,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -28,6 +27,7 @@ import (
 	"github.com/TuF3i/kamc/infrastructure/redis"
 	"github.com/TuF3i/kamc/internal/tunnel/registry"
 	"github.com/TuF3i/kamc/internal/tunnel/service"
+	"go.uber.org/zap"
 )
 
 // Service 服务类型别名: 供其他模块 (platform 等) 经本包引用,
@@ -187,14 +187,14 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 			rt.peerAddr = ln.Addr()
 			go func() {
 				if err := rt.peerSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-					log.Printf("[tunnel] peer server: %v", err)
+					zap.S().Infof("[tunnel] peer server: %v", err)
 				}
 			}()
 		}
 	}
 
 	defaultRuntime = rt
-	log.Printf("[tunnel] runtime created (pod=%s own_redis=%v peers=%v)",
+	zap.S().Infof("[tunnel] runtime created (pod=%s own_redis=%v peers=%v)",
 		o.podID, ownCLI, o.peersSet)
 	return rt, nil
 }
@@ -219,7 +219,7 @@ func (r *Runtime) ReleaseRuntime() error {
 	if defaultRuntime == r {
 		defaultRuntime = nil
 	}
-	log.Printf("[tunnel] runtime released")
+	zap.S().Infof("[tunnel] runtime released")
 	return nil
 }
 

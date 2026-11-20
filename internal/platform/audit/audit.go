@@ -12,11 +12,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"go.uber.org/zap"
 
 	"github.com/TuF3i/kamc/internal/metrics"
 	"github.com/TuF3i/kamc/internal/platform/modules"
@@ -35,16 +36,16 @@ const (
 
 // Writer 审计事件异步写出器。
 // 出口按事件类别分流：平台事件（kind=platform）输出到 stdio；集群事件
-// （kind=cluster）不落 stdio，可经 Syslog 导出到远程日志服务器。两类事件
-// 都写 PG 供管理面查询。
+// （kind=cluster）不落 stdio，写入本地 JSON Lines 文件供 Promtail 采集。
+// 两类事件都写 PG 供管理面查询。
 type Writer struct {
-	sink      Sink
-	spillPath string
-	syslog    *Syslog
-	buf       chan *modules.AuditEvent
-	done      chan struct{}
-	wg        sync.WaitGroup
-	dropped   atomic.Int64
+	sink       Sink
+	spillPath  string
+	clusterLog *ClusterLog
+	buf        chan *modules.AuditEvent
+	done       chan struct{}
+	wg         sync.WaitGroup
+	dropped    atomic.Int64
 }
 
 // NewWriter 构造（spillPath 为空则不落本地文件，sink 故障即丢弃并计数）
@@ -57,9 +58,9 @@ func NewWriter(sink Sink, spillPath string) *Writer {
 	}
 }
 
-// WithSyslog 设置集群事件的远程日志导出（nil = 不导出）
-func (w *Writer) WithSyslog(s *Syslog) *Writer {
-	w.syslog = s
+// WithClusterLog 设置集群事件的本地文件出口（nil = 不写文件）
+func (w *Writer) WithClusterLog(l *ClusterLog) *Writer {
+	w.clusterLog = l
 	return w
 }
 
@@ -84,9 +85,11 @@ func (w *Writer) Log(ev *modules.AuditEvent) {
 	}
 	select {
 	case w.buf <- ev:
+		metrics.AuditQueueDepth.Set(float64(len(w.buf)))
 	default:
 		w.dropped.Add(1)
 		metrics.AuditDroppedTotal.Inc() // 缓冲满：丢弃（§12.3 指标观测）
+		metrics.AuditEventsTotal.WithLabelValues(string(ev.Kind), "dropped").Inc()
 	}
 }
 
@@ -94,7 +97,7 @@ func (w *Writer) Log(ev *modules.AuditEvent) {
 func (w *Writer) Release() {
 	w.muOnceClose()
 	w.wg.Wait()
-	w.syslog.Close()
+	w.clusterLog.Close()
 }
 
 func (w *Writer) muOnceClose() {
@@ -147,18 +150,30 @@ func (w *Writer) loop() {
 	}
 }
 
-// writeBatch 写 PG；失败落 spill；随后按类别分发 stdout / syslog。
-// stdout：平台事件（管理面即时观测，不进集群日志面）；syslog：集群事件。
+// writeBatch 写 PG；失败落 spill；随后按类别分发 stdout / 集群日志文件。
+// stdout：平台事件（管理面即时观测）；文件：集群事件（Promtail → Loki）。
 func (w *Writer) writeBatch(events []*modules.AuditEvent) {
 	// 先回放历史 spill（PG 此前故障期间暂存的事件，按序优先）
 	w.replaySpill()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := w.sink.InsertBatch(ctx, events); err != nil {
-		fmt.Printf("[audit] insert batch(%d) failed, spilling: %v\n", len(events), err)
+	writeStart := time.Now()
+	insertErr := w.sink.InsertBatch(ctx, events)
+	metrics.AuditWriteDurationSeconds.Observe(time.Since(writeStart).Seconds())
+	result := "written"
+	if insertErr != nil {
+		zap.S().Warnf("[audit] insert batch(%d) failed, spilling: %v", len(events), insertErr)
+		result = "spill"
+		if w.spillPath == "" {
+			result = "dropped"
+		}
 		w.spill(events)
 	}
+	for _, ev := range events {
+		metrics.AuditEventsTotal.WithLabelValues(string(ev.Kind), result).Inc()
+	}
+	metrics.AuditQueueDepth.Set(float64(len(w.buf)))
 
 	var platform, cluster []*modules.AuditEvent
 	for _, ev := range events {
@@ -169,10 +184,12 @@ func (w *Writer) writeBatch(events []*modules.AuditEvent) {
 		}
 	}
 	w.emitStdout(platform)
-	w.syslog.Send(cluster)
+	if err := w.clusterLog.Send(cluster); err != nil {
+		zap.S().Errorf("[audit] write cluster log: %v", err)
+	}
 }
 
-// emitStdout 平台事件 JSON Lines 输出到 stdio（直接可见，不进 syslog）
+// emitStdout 平台事件 JSON Lines 输出到 stdio（直接可见，不进集群日志文件）
 func (w *Writer) emitStdout(events []*modules.AuditEvent) {
 	if len(events) == 0 {
 		return
@@ -182,6 +199,7 @@ func (w *Writer) emitStdout(events []*modules.AuditEvent) {
 	for _, ev := range events {
 		if err := enc.Encode(ev); err != nil {
 			w.dropped.Add(1)
+			metrics.AuditDroppedTotal.Inc()
 		}
 	}
 }
@@ -190,13 +208,14 @@ func (w *Writer) emitStdout(events []*modules.AuditEvent) {
 func (w *Writer) spill(events []*modules.AuditEvent) {
 	if w.spillPath == "" {
 		w.dropped.Add(int64(len(events)))
+		metrics.AuditDroppedTotal.Add(float64(len(events)))
 		return
 	}
 	f, err := os.OpenFile(w.spillPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		w.dropped.Add(int64(len(events)))
 		metrics.AuditDroppedTotal.Add(float64(len(events)))
-		fmt.Printf("[audit] spill open: %v\n", err)
+		zap.S().Warnf("[audit] spill open: %v", err)
 		return
 	}
 	defer f.Close()
@@ -204,6 +223,7 @@ func (w *Writer) spill(events []*modules.AuditEvent) {
 	for _, ev := range events {
 		if err := enc.Encode(ev); err != nil {
 			w.dropped.Add(1)
+			metrics.AuditDroppedTotal.Inc()
 		}
 	}
 }
@@ -240,7 +260,8 @@ func (w *Writer) replaySpill() {
 		return // 仍不可用：保留文件下轮再试
 	}
 	_ = os.Remove(w.spillPath)
-	fmt.Printf("[audit] replayed %d spilled events\n", len(recovered))
+	metrics.AuditEventsTotal.WithLabelValues("replay", "replayed").Add(float64(len(recovered)))
+	zap.S().Infof("[audit] replayed %d spilled events", len(recovered))
 }
 
 // ErrNoSink 占位错误（Writer 构造校验用）

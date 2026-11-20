@@ -7,13 +7,12 @@ package postgres
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"time"
 
+	"go.uber.org/zap"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 // DefaultDSN 未配置 DATABASE_URL 时的本地开发兜底值
@@ -57,7 +56,7 @@ func NewPostgresClient(opts ...Option) (*gorm.DB, error) {
 	}
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Warn),
+		Logger: newGormLogger(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("postgres -> open: %w", err)
@@ -71,6 +70,6 @@ func NewPostgresClient(opts ...Option) (*gorm.DB, error) {
 	sqlDB.SetMaxIdleConns(o.maxIdle)
 	sqlDB.SetConnMaxLifetime(o.maxLifetime)
 
-	log.Printf("[postgres] connected (max_open=%d max_idle=%d)", o.maxOpen, o.maxIdle)
+	zap.S().Infof("[postgres] connected (max_open=%d max_idle=%d)", o.maxOpen, o.maxIdle)
 	return db, nil
 }

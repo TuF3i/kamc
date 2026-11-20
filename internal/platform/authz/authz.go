@@ -13,7 +13,6 @@ package authz
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -26,6 +25,7 @@ import (
 
 	"github.com/TuF3i/kamc/internal/platform/dao"
 	"github.com/TuF3i/kamc/internal/platform/modules"
+	"go.uber.org/zap"
 )
 
 // modelText Casbin 模型（§5.2）：
@@ -94,7 +94,7 @@ func New(d *dao.Dao, opts ...Option) (*Enforcer, error) {
 		// 广播回调：全量重载（本副本自己的修改也会收到——幂等）
 		w.SetUpdateCallback(func(string) {
 			if err := e.LoadPolicy(); err != nil {
-				log.Printf("[authz] policy reload: %v", err)
+				zap.S().Infof("[authz] policy reload: %v", err)
 			}
 		})
 	}

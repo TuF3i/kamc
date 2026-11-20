@@ -46,6 +46,8 @@ config:
   # JWT issuer，默认取 externalURL；未设置时回退平台默认值。
   jwtIssuer: ""
   environment: production
+  logLevel: info
+  logFormat: json
   adminGroup: "am:admin"
   redisAddr: ""
   redisAddresses: ""
@@ -61,6 +63,31 @@ config:
   devIssueToken: false
   extraEnv: []
   extraEnvFrom: []
+
+# 集群审计日志文件（kubectl 数据面事件）：Promtail 采集后写入 Loki。
+audit:
+  clusterLog:
+    file: "/var/log/kamc/cluster-audit.jsonl"
+    maxMB: 100
+    backups: 5
+    # 默认 emptyDir（仅本 Pod）；Promtail sidecar / DaemonSet 场景可挂 RWX PVC。
+    persistence:
+      enabled: false
+      existingClaim: ""
+      accessModes:
+        - ReadWriteMany
+      size: 1Gi
+      storageClass: ""
+
+# 可选 Promtail sidecar：采集同 Pod 的集群审计文件并推送到 Loki。
+promtail:
+  enabled: false
+  image:
+    repository: grafana/promtail
+    tag: latest
+    pullPolicy: IfNotPresent
+  lokiURL: "http://loki.monitoring.svc:3100/loki/api/v1/push"
+  resources: {}
 
 # 内置密码登录（生产默认关闭；OIDC/LDAP 为推荐登录方式）。
 passwordLogin:

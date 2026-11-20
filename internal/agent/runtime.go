@@ -12,7 +12,6 @@ package agent
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,6 +19,7 @@ import (
 
 	"github.com/TuF3i/kamc/internal/agent/service"
 	"github.com/TuF3i/kamc/internal/config"
+	"go.uber.org/zap"
 )
 
 // Config Agent 运行配置
@@ -82,7 +82,7 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		u, tr, err := service.BuildUpstream(o.cfg)
 		switch {
 		case err != nil:
-			log.Printf("[agent] 上游解析失败，数据面未启用: %v", err)
+			zap.S().Infof("[agent] 上游解析失败，数据面未启用: %v", err)
 		case u != nil:
 			svc.SetUpstream(u, tr)
 		}

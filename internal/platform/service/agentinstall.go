@@ -90,6 +90,8 @@ spec:
         env:
         - {name: PLATFORM_URL, value: "{{.TunnelURL}}"}
         - {name: CLUSTER_ID, value: "{{.ClusterID}}"}
+        - {name: AM_LOG_LEVEL, value: "info"}
+        - {name: AM_LOG_FORMAT, value: "json"}
         - {name: AGENT_ID, valueFrom: {fieldRef: {fieldPath: metadata.name}}}  # 双副本须不同
         - {name: TOKEN_FILE, value: "/etc/k8s-am/token/token"}
         - {name: HEARTBEAT_PING_INTERVAL, value: "20s"}   # §6.3：Nginx /tunnel 读超时须 > 此值

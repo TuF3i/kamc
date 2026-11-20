@@ -57,6 +57,10 @@ func TestDeployLayout(t *testing.T) {
 		"docker/.env.example",
 		"extra/nginx/nginx.conf",
 		"extra/migrations/2026-11-02-policy-reset.sql",
+		"observability/prometheus/prometheus.yml",
+		"observability/loki/loki-config.yaml",
+		"observability/promtail/promtail-config.yaml",
+		"observability/grafana/dashboards/kamc-overview.json",
 	} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("deploy layout missing %s: %v", path, err)

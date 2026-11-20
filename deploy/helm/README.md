@@ -119,6 +119,22 @@ MINIO_ENDPOINT=minio.k8s-am-system:9000 MINIO_BUCKET=kamc-avatars \
 - `PEER_ADDRESSES` 留空时自动生成；若使用外部服务发现可显式覆盖。
 - PDB 默认 `minAvailable: 2`（`replicaCount=3`）。
 
+### 5) 审计日志与可观测性
+
+- 集群审计写 `audit.clusterLog.file`（默认 `/var/log/kamc/cluster-audit.jsonl`），
+  按 `maxMB`/`backups` 轮转；默认 `emptyDir`。
+- 开启 Promtail sidecar 采集同 Pod 的审计文件：
+
+  ```bash
+  --set promtail.enabled=true \
+  --set promtail.lokiURL=http://loki.monitoring.svc:3100/loki/api/v1/push
+  ```
+
+- 多副本且由集群级 Promtail DaemonSet 采集时，把
+  `audit.clusterLog.persistence.enabled=true` 配置为 RWX 卷。
+- 指标：平台 Service 的 `/metrics`（8080），Prometheus 抓取；Grafana 面板与
+  本地观测栈见 [deploy/observability/README.md](../observability/README.md)。
+
 ## 安装 Agent
 
 Agent Token 在平台「集群 → Agent 安装」签发（`am-clu-` 前缀）。

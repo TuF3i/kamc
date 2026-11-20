@@ -74,10 +74,11 @@ services:
   platform-init:
     image: ${ALPINE_IMAGE:-alpine:latest}
     user: "0"
-    command: ["sh", "-c", "mkdir -p /data/avatar /audit && chown -R 10001:10001 /data /audit"]
+    command: ["sh", "-c", "mkdir -p /data/avatar /audit /var/log/kamc && chown -R 10001:10001 /data /audit /var/log/kamc"]
     volumes:
       - avatardata:/data/avatar
       - auditdata:/audit
+      - clusterlog:/var/log/kamc
 
   platform:
     build:
@@ -97,6 +98,8 @@ services:
         required: false
     environment:
       AM_ENV: ${AM_ENV:-development}
+      AM_LOG_LEVEL: ${AM_LOG_LEVEL:-info}
+      AM_LOG_FORMAT: ${AM_LOG_FORMAT:-json}
       DATABASE_URL: postgres://${POSTGRES_USER:-kamc}:${POSTGRES_PASSWORD:-kamc}@postgres:5432/${POSTGRES_DB:-kamc}?sslmode=disable
       REDIS_ADDR: redis:6379
       AM_EXTERNAL_URL: ${AM_EXTERNAL_URL:-http://localhost:8080}
@@ -115,16 +118,77 @@ services:
       AM_AVATAR_MINIO_REGION: ${AM_AVATAR_MINIO_REGION:-}
       AM_AVATAR_MINIO_PREFIX: ${AM_AVATAR_MINIO_PREFIX:-avatars/}
       AM_AUDIT_SPILL_FILE: /audit/audit-spill.jsonl
+      AM_AUDIT_LOG_FILE: ${AM_AUDIT_LOG_FILE:-/var/log/kamc/cluster-audit.jsonl}
+      AM_AUDIT_LOG_MAX_MB: ${AM_AUDIT_LOG_MAX_MB:-100}
+      AM_AUDIT_LOG_BACKUPS: ${AM_AUDIT_LOG_BACKUPS:-5}
     ports:
       - "${KAMC_PORT:-8080}:8080"
     volumes:
       - avatardata:/data/avatar
       - auditdata:/audit
+      - clusterlog:/var/log/kamc
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/healthz"]
       interval: 10s
       timeout: 3s
       retries: 12
+
+  # 观测栈（可选）：--profile observability 启动
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:latest}
+    profiles: ["observability"]
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
+    volumes:
+      - ../observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheusdata:/prometheus
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+
+  loki:
+    image: ${LOKI_IMAGE:-grafana/loki:latest}
+    profiles: ["observability"]
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    volumes:
+      - ../observability/loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - lokidata:/loki
+    ports:
+      - "127.0.0.1:${LOKI_PORT:-3100}:3100"
+
+  promtail:
+    image: ${PROMTAIL_IMAGE:-grafana/promtail:latest}
+    profiles: ["observability"]
+    restart: unless-stopped
+    user: "0"
+    command: ["-config.file=/etc/promtail/config.yml"]
+    volumes:
+      - ../observability/promtail/promtail-config.yaml:/etc/promtail/config.yml:ro
+      - clusterlog:/var/log/kamc:ro
+      - promtailpositions:/positions
+    depends_on:
+      loki:
+        condition: service_started
+
+  grafana:
+    image: ${GRAFANA_IMAGE:-grafana/grafana:latest}
+    profiles: ["observability"]
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      prometheus:
+        condition: service_started
+      loki:
+        condition: service_started
 
 volumes:
   pgdata:
@@ -132,3 +196,8 @@ volumes:
   miniodata:
   avatardata:
   auditdata:
+  clusterlog:
+  prometheusdata:
+  lokidata:
+  grafanadata:
+  promtailpositions:

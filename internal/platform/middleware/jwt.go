@@ -4,11 +4,12 @@ package middleware
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"strings"
 
 	"github.com/TuF3i/kamc/internal/auth"
+	"github.com/TuF3i/kamc/internal/metrics"
+	"go.uber.org/zap"
 )
 
 type claimsKeyType int
@@ -28,13 +29,15 @@ func RequireJWT(as *auth.Service) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := bearerToken(r)
 			if token == "" || as == nil {
-				log.Printf("[platform] jwt missing (remote=%s path=%s)", r.RemoteAddr, r.URL.Path)
+				metrics.JWTAuthFailuresTotal.WithLabelValues("missing").Inc()
+				zap.S().Infof("[platform] jwt missing (remote=%s path=%s)", r.RemoteAddr, r.URL.Path)
 				unauthorized(w)
 				return
 			}
 			claims, err := as.Verify(r.Context(), token)
 			if err != nil {
-				log.Printf("[platform] jwt verify failed: %v", err)
+				metrics.JWTAuthFailuresTotal.WithLabelValues("invalid").Inc()
+				zap.S().Infof("[platform] jwt verify failed: %v", err)
 				unauthorized(w)
 				return
 			}

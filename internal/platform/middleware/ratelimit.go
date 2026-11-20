@@ -10,7 +10,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -21,6 +20,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/TuF3i/kamc/internal/metrics"
+	"go.uber.org/zap"
 )
 
 // RateLimiter 限流判定接口（滑动窗口；Redis / 内存双实现）
@@ -164,7 +164,7 @@ func RateLimit(limiter RateLimiter, limit int, window time.Duration) func(http.H
 			allowed, err := limiter.Allow(r.Context(), "user:"+claims.Subject)
 			if err != nil {
 				// fail-open：限流器故障不拦业务，仅记录（保护措施不能变成单点）
-				log.Printf("[platform] ratelimit check failed: %v", err)
+				zap.S().Infof("[platform] ratelimit check failed: %v", err)
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -191,7 +191,7 @@ func LoginRateLimit(limiter RateLimiter, limit int, window time.Duration) func(h
 			ip := clientIP(r)
 			allowed, err := limiter.Allow(r.Context(), "login:"+ip)
 			if err != nil {
-				log.Printf("[platform] login ratelimit check failed: %v", err)
+				zap.S().Infof("[platform] login ratelimit check failed: %v", err)
 				next.ServeHTTP(w, r)
 				return
 			}

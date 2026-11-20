@@ -7,12 +7,12 @@ package geoip
 
 import (
 	"fmt"
-	"log"
 	"net"
 	"os"
 	"strings"
 
 	"github.com/oschwald/maxminddb-golang"
+	"go.uber.org/zap"
 )
 
 // Location 一次查询结果（空字段 = 数据库无该维度数据）
@@ -36,7 +36,7 @@ func New(path string) (*Resolver, error) {
 	if err != nil {
 		return nil, fmt.Errorf("geoip -> open %s: %w", path, err)
 	}
-	log.Printf("[geoip] database loaded: %s", path)
+	zap.S().Infof("[geoip] database loaded: %s", path)
 	return &Resolver{db: db}, nil
 }
 
@@ -49,7 +49,7 @@ func FromEnv() *Resolver {
 	}
 	r, err := New(path)
 	if err != nil {
-		log.Printf("[geoip] WARNING: %v（审计将不含地理信息）", err)
+		zap.S().Infof("[geoip] WARNING: %v（审计将不含地理信息）", err)
 		return nil
 	}
 	return r

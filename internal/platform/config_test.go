@@ -45,9 +45,10 @@ tunnel:
 audit:
   spill_file: /tmp/spill.jsonl
   retention: 48h
-  syslog:
-    addr: tls://syslog.example.com:6514
-    insecure: true
+  cluster_log:
+    file: /tmp/cluster-audit.jsonl
+    max_mb: 50
+    backups: 3
 avatar:
   dir: /tmp/avatar
   secret: avatar-file-secret
@@ -90,8 +91,8 @@ web:
 	if !cfg.Tunnel.PeerEnabled || cfg.Tunnel.Peer.Token != "peer-token" {
 		t.Fatalf("peer: %+v", cfg.Tunnel)
 	}
-	if cfg.Syslog.Addr != "tls://syslog.example.com:6514" || !cfg.Syslog.Insecure {
-		t.Fatalf("syslog: %+v", cfg.Syslog)
+	if cfg.ClusterLog.File != "/tmp/cluster-audit.jsonl" || cfg.ClusterLog.MaxMB != 50 || cfg.ClusterLog.Backups != 3 {
+		t.Fatalf("cluster log: %+v", cfg.ClusterLog)
 	}
 	if cfg.ProxyRateLimit != 100 || cfg.LoginRateLimit != 5 {
 		t.Fatalf("rate limits: %d/%d", cfg.ProxyRateLimit, cfg.LoginRateLimit)

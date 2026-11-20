@@ -64,6 +64,18 @@ env:
 `platform-avatar` Secret 中同时保留 `secret`（签名密钥，生产必填）。启用 MinIO 后
 不再需要头像卷；对象由平台代理读取，浏览器仍访问 `/avatars/{uid}?token=...`。
 
+## 审计日志与 Promtail
+
+平台把集群审计写到 `/var/log/kamc/cluster-audit.jsonl`（`AM_AUDIT_LOG_FILE`），
+清单挂载 `cluster-log` emptyDir。采集方式：
+
+- **sidecar（推荐）**：在同一 Pod 增加 Promtail 容器，挂载 `cluster-log` 只读，
+  配置 `__path__: /var/log/kamc/*.jsonl*`，推送到 Loki；
+- **DaemonSet**：使用 RWX 卷或 hostPath 让 Promtail 读取同一路径；
+- 应用日志（Zap JSON）在容器 stdout，可用节点级 Promtail/K8s 日志采集。
+
+完整配置见 [deploy/observability/README.md](../observability/README.md)。
+
 ## 注意
 
 - 静态清单使用 Deployment + 手工枚举 `PEER_ADDRESSES`；Helm Chart 使用

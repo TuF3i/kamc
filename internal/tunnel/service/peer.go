@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -22,6 +21,7 @@ import (
 	"github.com/TuF3i/kamc/internal/metrics"
 	"github.com/TuF3i/kamc/internal/tunnel/registry"
 	"github.com/TuF3i/kamc/internal/wsconn"
+	"go.uber.org/zap"
 )
 
 // PeerRouter 副本间转发路由（§7.2.4）：请求落在本副本但隧道在别的副本时，
@@ -159,13 +159,13 @@ func (p *PeerRouter) handlePeer(w http.ResponseWriter, r *http.Request) {
 	}
 	conn, err := peerUpgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("[tunnel] peer upgrade: %v", err)
+		zap.S().Infof("[tunnel] peer upgrade: %v", err)
 		return
 	}
 	sess, err := yamux.Server(wsconn.New(conn), nil)
 	if err != nil {
 		_ = conn.Close()
-		log.Printf("[tunnel] peer yamux server: %v", err)
+		zap.S().Infof("[tunnel] peer yamux server: %v", err)
 		return
 	}
 	p.wg.Add(1)
@@ -255,7 +255,7 @@ func (p *PeerRouter) DialCluster(ctx context.Context, clusterID string) (net.Con
 			metrics.PeerRelayTotal.WithLabelValues(o.Pod).Inc()
 			return conn, nil
 		}
-		log.Printf("[tunnel] relay %s via %s: %v", clusterID, o.Pod, rerr)
+		zap.S().Infof("[tunnel] relay %s via %s: %v", clusterID, o.Pod, rerr)
 		// 归属大概率已过期：提前剔除（TTL 兜底仍在），尝试下一个 owner
 		rmCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		_ = p.registry.Deregister(rmCtx, clusterID, o.AgentID)

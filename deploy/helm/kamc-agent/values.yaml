@@ -25,6 +25,10 @@ platformURL: ""
 # 平台注册时的集群 ID（dom）
 clusterID: ""
 
+# Zap 日志
+logLevel: info
+logFormat: json
+
 # Agent Token：existingSecret 优先（键名 token）；否则用 token 明文创建 Secret。
 existingSecret: ""
 existingSecretKey: token

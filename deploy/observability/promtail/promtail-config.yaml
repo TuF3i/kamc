@@ -1,0 +1,37 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /positions/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # 平台写出的集群审计 JSON Lines（含轮转文件 *.jsonl.*）。
+  # K8s 场景可改为 sidecar 挂载同一 emptyDir，或 DaemonSet 读取 hostPath/RWX。
+  - job_name: kamc-cluster-audit
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: kamc-cluster-audit
+          service: kamc
+          __path__: /var/log/kamc/*.jsonl*
+    pipeline_stages:
+      - json:
+          expressions:
+            timestamp: timestamp
+            event: event
+            kind: kind
+            cluster: cluster
+            user: user
+            allowed: allowed
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
+      - labels:
+          event:
+          kind:
+          cluster:
+          allowed:

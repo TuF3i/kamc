@@ -12,7 +12,7 @@ const (
 
 // AuditEvent 审计事件（§12.2）：一行一次关键动作。
 // 平台事件（kind=platform）直接输出到 stdio；集群事件（kind=cluster）不落
-// stdio，经 DB 供管理面查询，并可按配置经 syslog 导出到远程日志服务器。
+// stdio，经 DB 供管理面查询；集群事件另写本地 JSONL 文件供 Promtail 采集。
 type AuditEvent struct {
 	ID        int64     `gorm:"primaryKey" json:"id"`
 	Kind      AuditKind `gorm:"size:16;not null;default:cluster;index" json:"kind"`

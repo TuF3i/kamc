@@ -16,7 +16,8 @@
 | `helm/` | 生产推荐：`kamc-platform`（StatefulSet）与 `kamc-agent` 两个 Chart |
 | `k8s/platform.yaml` | 平台 Deployment/Service/headless/PDB/NetworkPolicy/Secret 模板 |
 | `k8s/agent.yaml` | Agent SA/RBAC/Secret/Deployment（双副本） |
-| `docker/compose.yaml` | 本地一键环境（PostgreSQL、Redis、可选 MinIO profile） |
+| `docker/compose.yaml` | 本地一键环境（PostgreSQL、Redis、可选 MinIO/observability profile） |
+| `observability/` | Prometheus/Loki/Promtail/Grafana 配置、Grafana 面板 |
 | `extra/nginx/nginx.conf` | 接入层配置（TLS 终结、$connection_upgrade、三级超时路由） |
 | `extra/migrations/` | 一次性数据库迁移 SQL |
 
@@ -92,7 +93,8 @@ base64 -w0 jwt-1.pem                        # __JWT1_PEM_BASE64__
 - **Token 轮换**：重新签发即旧 Token 进 24h 宽限期；彻底失效后 Agent 自动停止
   重试并等待新 Token（更新 Secret 即恢复，§6.5）
 - **踢出用户**：`POST /api/v1/auth/revoke {"sub":"..."}`（5s 内同步到全部副本）
-- **审计保留**：`AM_AUDIT_RETENTION` 默认 720h；PG 故障时写本地 spill 并回放
+- **审计保留**：`AM_AUDIT_RETENTION` 默认 720h；PG 故障时写本地 spill 并回放；
+  集群审计同时写 `AM_AUDIT_LOG_FILE`（JSONL 轮转），由 Promtail 采集到 Loki
 
 ## 上线前人工验收清单（真实环境，本仓库自动化不覆盖）
 
@@ -108,6 +110,6 @@ base64 -w0 jwt-1.pem                        # __JWT1_PEM_BASE64__
 - [ ] exec / port-forward 双协议验证（kubectl 1.31+ WebSocket 与降级 SPDY）
 - [ ] 限流阈值验证（429 + Retry-After；数据面 `AM_RATE_LIMIT`、登录 `AM_LOGIN_RATE_LIMIT`）
 - [ ] 确认 `AM_PASSWORD_LOGIN=0` 或已配置非默认密码（生产清单默认关闭）
-- [ ] 审计保留期 `AM_AUDIT_RETENTION` 与 syslog TLS 目标已确认
+- [ ] 审计保留期、Loki 保留与 Promtail 采集已确认
 - [ ] 踢出用户后全部副本 5s 内生效
 - [ ] 头像多副本可见（MinIO 或 RWX 卷）

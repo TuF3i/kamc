@@ -191,7 +191,7 @@ func (h *Handler) clusterEvent(r *http.Request, allowed bool, reason string) *mo
 }
 
 // auditDataPlane 数据面审计（Proxy 允许/拒绝统一出口）：组装集群事件 +
-// 完整 HTTP 报文（请求/响应），kind=cluster 落库（不落 stdio）+ 可选 syslog。
+// 完整 HTTP 报文（请求/响应），kind=cluster 落库（不落 stdio）+ 集群审计文件。
 func (h *Handler) auditDataPlane(r *http.Request, clusterID, obj, verb string, allowed bool, reason string, start time.Time, reqDump, respDump string, status int) {
 	ev := h.clusterEvent(r, allowed, reason)
 	ev.Cluster = clusterID

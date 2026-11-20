@@ -13,7 +13,7 @@ package proxy
 import (
 	"context"
 	"fmt"
-	"log"
+	"go.uber.org/zap"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -116,7 +116,7 @@ func (p *Pool) item(clusterID string) (*poolItem, error) {
 		Transport: transport,
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			// 隧道不可达是最常见错误（集群离线/Agent 重连中），单独可读提示
-			log.Printf("[platform] proxy %s %s via %s: %v", r.Method, r.URL.Path, clusterID, err)
+			zap.S().Infof("[platform] proxy %s %s via %s: %v", r.Method, r.URL.Path, clusterID, err)
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_, _ = w.Write([]byte("cluster unreachable"))
 		},

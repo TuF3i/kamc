@@ -6,14 +6,15 @@ package handler
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/TuF3i/kamc/internal/metrics"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
 	"github.com/TuF3i/kamc/internal/platform/middleware"
 	"github.com/TuF3i/kamc/internal/platform/service"
+	"go.uber.org/zap"
 )
 
 // revokeUserTokens 权限相关变更后吊销用户已签发 JWT（旧 claims 立即失效）。
@@ -117,7 +118,10 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	rsp = h.svc.DeleteUser(r.Context(), username)
 	if errcode.IsSuccess(rsp) && user != nil && h.avatarStore != nil {
 		if err := h.avatarStore.Delete(r.Context(), user.UID); err != nil {
-			log.Printf("[platform] delete avatar %s: %v", user.UID, err)
+			metrics.AvatarOperationsTotal.WithLabelValues(h.avatarStore.Kind(), "delete", "error").Inc()
+			zap.S().Infof("[platform] delete avatar %s: %v", user.UID, err)
+		} else {
+			metrics.AvatarOperationsTotal.WithLabelValues(h.avatarStore.Kind(), "delete", "ok").Inc()
 		}
 	}
 	h.auditPlatform(r, "user-delete", username, "", "/api/v1/users/"+username, errcode.IsSuccess(rsp), "delete+revoke")
@@ -164,7 +168,7 @@ func (h *Handler) UpdateGroup(w http.ResponseWriter, r *http.Request) {
 	if errcode.IsSuccess(rsp) && needsRevoke {
 		for _, username := range members {
 			if err := h.revokeUserTokens(r, username); err != nil {
-				log.Printf("[platform] revoke after group update %s/%s: %v", name, username, err)
+				zap.S().Infof("[platform] revoke after group update %s/%s: %v", name, username, err)
 			}
 		}
 	}
@@ -190,7 +194,7 @@ func (h *Handler) AddGroupMember(w http.ResponseWriter, r *http.Request) {
 	// 加组后吊销：新组声明（尤其 is_admin）下次登录立即生效。
 	if errcode.IsSuccess(rsp) {
 		if err := h.revokeUserTokens(r, req.Username); err != nil {
-			log.Printf("[platform] revoke after group add %s/%s: %v", name, req.Username, err)
+			zap.S().Infof("[platform] revoke after group add %s/%s: %v", name, req.Username, err)
 		}
 	}
 	h.auditPlatform(r, "group-member-add", req.Username, "", "/api/v1/groups/"+name+"/members", errcode.IsSuccess(rsp), req.Username)

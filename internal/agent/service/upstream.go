@@ -4,7 +4,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -15,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/yamux"
+	"go.uber.org/zap"
 )
 
 // yamuxListener 把 yamux 会话适配为 net.Listener：每条流即一条 HTTP 连接，
@@ -51,7 +51,7 @@ func newUpstreamProxy(upstream *url.URL, tr http.RoundTripper) *httputil.Reverse
 		},
 		Transport: tr,
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			log.Printf("[agent] 上游转发失败 %s %s: %v", r.Method, r.URL.Path, err)
+			zap.S().Infof("[agent] 上游转发失败 %s %s: %v", r.Method, r.URL.Path, err)
 			http.Error(w, "upstream unavailable", http.StatusBadGateway)
 		},
 	}

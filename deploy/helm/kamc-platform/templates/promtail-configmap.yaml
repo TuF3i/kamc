@@ -1,0 +1,42 @@
+{{- if .Values.promtail.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kamc-platform.fullname" . }}-promtail
+  labels:
+    {{- include "kamc-platform.labels" . | nindent 4 }}
+data:
+  config.yml: |
+    server:
+      http_listen_port: 9080
+      grpc_listen_port: 0
+    positions:
+      filename: /tmp/positions.yaml
+    clients:
+      - url: {{ .Values.promtail.lokiURL | quote }}
+    scrape_configs:
+      - job_name: kamc-cluster-audit
+        static_configs:
+          - targets: [localhost]
+            labels:
+              job: kamc-cluster-audit
+              service: kamc
+              __path__: {{ printf "%s*" .Values.audit.clusterLog.file | quote }}
+        pipeline_stages:
+          - json:
+              expressions:
+                timestamp: timestamp
+                event: event
+                kind: kind
+                cluster: cluster
+                user: user
+                allowed: allowed
+          - timestamp:
+              source: timestamp
+              format: RFC3339Nano
+          - labels:
+              event:
+              kind:
+              cluster:
+              allowed:
+{{- end }}

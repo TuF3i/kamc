@@ -1,0 +1,17 @@
+{{- if and .Values.audit.clusterLog.persistence.enabled (not .Values.audit.clusterLog.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "kamc-platform.clusterLogClaimName" . }}
+  labels:
+    {{- include "kamc-platform.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.audit.clusterLog.persistence.accessModes | nindent 4 }}
+  {{- with .Values.audit.clusterLog.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.audit.clusterLog.persistence.size | quote }}
+{{- end }}

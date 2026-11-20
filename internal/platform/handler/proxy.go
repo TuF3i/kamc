@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -17,6 +16,7 @@ import (
 	"github.com/TuF3i/kamc/internal/metrics"
 	"github.com/TuF3i/kamc/internal/platform/authz"
 	"github.com/TuF3i/kamc/internal/platform/middleware"
+	"go.uber.org/zap"
 )
 
 // Proxy /proxy/{clusterID}/* —— API 代理（数据面，设计文档 §8.1 完整顺序）：
@@ -69,10 +69,13 @@ func (h *Handler) Proxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request path", http.StatusBadRequest)
 		return
 	}
+	enforceStart := time.Now()
 	allowed, err := h.svc.Enforce(claims.Subject, claims.Groups, clusterID, obj, act)
+	metrics.CasbinDecisionDurationSeconds.WithLabelValues(clusterID).Observe(time.Since(enforceStart).Seconds())
 	if err != nil {
 		// fail-closed：鉴权组件故障一律拒绝（§8 双重校验的第一层不能失效开放）
-		log.Printf("[platform] casbin enforce error %s@%s %s %s: %v",
+		metrics.CasbinDecisionsTotal.WithLabelValues(clusterID, "error").Inc()
+		zap.S().Infof("[platform] casbin enforce error %s@%s %s %s: %v",
 			claims.Subject, clusterID, obj, act, err)
 		metrics.CasbinDenialsTotal.WithLabelValues(clusterID).Inc()
 		h.auditDataPlane(r, clusterID, obj, act, false, "denied-casbin-error", start, reqDump, "", http.StatusForbidden)
@@ -80,12 +83,15 @@ func (h *Handler) Proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !allowed {
-		log.Printf("[platform] casbin denied %s@%s %s %s", claims.Subject, clusterID, obj, act)
+		metrics.CasbinDecisionsTotal.WithLabelValues(clusterID, "deny").Inc()
+		zap.S().Infof("[platform] casbin denied %s@%s %s %s", claims.Subject, clusterID, obj, act)
 		metrics.CasbinDenialsTotal.WithLabelValues(clusterID).Inc()
 		h.auditDataPlane(r, clusterID, obj, act, false, "denied-casbin", start, reqDump, "", http.StatusForbidden)
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
+
+	metrics.CasbinDecisionsTotal.WithLabelValues(clusterID, "allow").Inc()
 
 	// 4. 流式分流（§9）：WebSocket 升级请求交官方 handler；其余走 ReverseProxy
 	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
@@ -176,7 +182,7 @@ func queryFlag(q url.Values, name string) bool {
 type errorResponder struct{}
 
 func (errorResponder) Error(w http.ResponseWriter, _ *http.Request, err error) {
-	log.Printf("[platform] stream upgrade failed: %v", err)
+	zap.S().Infof("[platform] stream upgrade failed: %v", err)
 	http.Error(w, "upstream unavailable", http.StatusBadGateway)
 }
 

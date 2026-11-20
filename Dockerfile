@@ -30,10 +30,11 @@ RUN apk add --no-cache ca-certificates tzdata \
 WORKDIR /app
 COPY --from=build /out/kamc-platform /out/kamc /app/
 COPY --from=web /src/data/web /app/web
-RUN mkdir -p /data/avatar && chown -R kamc:kamc /app /data
+RUN mkdir -p /data/avatar /var/log/kamc && chown -R kamc:kamc /app /data /var/log/kamc
 USER kamc
 ENV AM_WEB_DIR=/app/web \
     AM_AVATAR_DIR=/data/avatar \
-    AM_AUDIT_SPILL_FILE=/data/audit-spill.jsonl
+    AM_AUDIT_SPILL_FILE=/data/audit-spill.jsonl \
+    AM_AUDIT_LOG_FILE=/var/log/kamc/cluster-audit.jsonl
 EXPOSE 8080
 ENTRYPOINT ["/app/kamc-platform"]

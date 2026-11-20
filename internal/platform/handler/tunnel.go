@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"log"
 	"net/http"
 	"strings"
 
@@ -10,6 +9,7 @@ import (
 	"github.com/TuF3i/kamc/internal/platform/errcode"
 	"github.com/TuF3i/kamc/internal/platform/modules"
 	"github.com/TuF3i/kamc/internal/wsconn"
+	"go.uber.org/zap"
 )
 
 // tunnelUpgrader Agent 不是浏览器，Origin 校验无意义，直接放行；
@@ -51,22 +51,22 @@ func (h *Handler) TunnelWS(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := tunnelUpgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("[platform] tunnel upgrade %s/%s: %v", clusterID, agentID, err)
+		zap.S().Infof("[platform] tunnel upgrade %s/%s: %v", clusterID, agentID, err)
 		return
 	}
 
 	if err := h.tunnels.Attach(clusterID, agentID, wsconn.New(conn)); err != nil {
-		log.Printf("[platform] tunnel attach %s/%s: %v", clusterID, agentID, err)
+		zap.S().Infof("[platform] tunnel attach %s/%s: %v", clusterID, agentID, err)
 		_ = conn.Close()
 		return
 	}
 
 	// 接入成功：集群转 online（设计文档 §11.4 验证点）
 	if _, rsp := h.svc.SetClusterStatus(r.Context(), clusterID, modules.ClusterStatusOnline); !errcode.IsSuccess(rsp) {
-		log.Printf("[platform] mark cluster %s online: %s", clusterID, rsp)
+		zap.S().Infof("[platform] mark cluster %s online: %s", clusterID, rsp)
 	}
 	h.auditPlatform(r, "tunnel-attached", "", clusterID, "/tunnel", true, "attached")
-	log.Printf("[platform] tunnel attached: cluster=%s agent=%s", clusterID, agentID)
+	zap.S().Infof("[platform] tunnel attached: cluster=%s agent=%s", clusterID, agentID)
 }
 
 // bearerToken 提取 Authorization: Bearer <token>

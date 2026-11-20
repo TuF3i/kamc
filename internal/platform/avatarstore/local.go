@@ -14,6 +14,9 @@ type Local struct {
 	dir string
 }
 
+// Kind 返回后端类型。
+func (s *Local) Kind() string { return "local" }
+
 // NewLocal 创建本地头像存储（目录不存在时创建）。
 func NewLocal(dir string) (*Local, error) {
 	if dir == "" {

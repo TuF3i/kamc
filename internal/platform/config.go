@@ -33,7 +33,7 @@ type Config struct {
 	LDAP                  *ldapclient.Config
 	AuditSpillFile        string
 	AuditRetention        time.Duration
-	Syslog                audit.SyslogConfig
+	ClusterLog            audit.ClusterLogConfig
 	GeoIPDB               string
 	AvatarBackend         string // auto | local | minio（auto：配置了 MinIO endpoint 即用对象存储）
 	AvatarDir             string
@@ -88,7 +88,9 @@ func LoadConfig(paths ...string) (Config, error) {
 	l.SetDefault("tunnel.interval", 5*time.Second)
 	l.SetDefault("audit.spill_file", "/tmp/kamc-audit-spill.jsonl")
 	l.SetDefault("audit.retention", 720*time.Hour)
-	l.SetDefault("audit.syslog.tag", "kamc-cluster-audit")
+	l.SetDefault("audit.cluster_log.file", "data/cluster-audit.jsonl")
+	l.SetDefault("audit.cluster_log.max_mb", 100)
+	l.SetDefault("audit.cluster_log.backups", 5)
 	l.SetDefault("avatar.backend", "auto")
 	l.SetDefault("avatar.dir", "data/avatar")
 	l.SetDefault("avatar.minio.bucket", "kamc-avatars")
@@ -140,10 +142,9 @@ func LoadConfig(paths ...string) (Config, error) {
 	l.Bind("tunnel.interval", "AM_TUNNEL_INTERVAL")
 	l.Bind("audit.spill_file", "AM_AUDIT_SPILL_FILE")
 	l.Bind("audit.retention", "AM_AUDIT_RETENTION")
-	l.Bind("audit.syslog.addr", "AM_SYSLOG_ADDR")
-	l.Bind("audit.syslog.tag", "AM_SYSLOG_TAG")
-	l.Bind("audit.syslog.ca_file", "AM_SYSLOG_CA_FILE")
-	l.Bind("audit.syslog.insecure", "AM_SYSLOG_INSECURE")
+	l.Bind("audit.cluster_log.file", "AM_AUDIT_LOG_FILE")
+	l.Bind("audit.cluster_log.max_mb", "AM_AUDIT_LOG_MAX_MB")
+	l.Bind("audit.cluster_log.backups", "AM_AUDIT_LOG_BACKUPS")
 	l.Bind("geoip.db", "AM_GEOIP_DB")
 	l.Bind("avatar.backend", "AM_AVATAR_BACKEND")
 	l.Bind("avatar.dir", "AM_AVATAR_DIR")
@@ -197,11 +198,10 @@ func LoadConfig(paths ...string) (Config, error) {
 		OIDCRedirectURL:       l.String("oidc.redirect_url"),
 		AuditSpillFile:        l.String("audit.spill_file"),
 		AuditRetention:        l.Duration("audit.retention", 720*time.Hour),
-		Syslog: audit.SyslogConfig{
-			Addr:     l.String("audit.syslog.addr"),
-			Tag:      l.String("audit.syslog.tag"),
-			CAFile:   l.String("audit.syslog.ca_file"),
-			Insecure: l.Bool("audit.syslog.insecure", false),
+		ClusterLog: audit.ClusterLogConfig{
+			File:    l.String("audit.cluster_log.file"),
+			MaxMB:   l.Int("audit.cluster_log.max_mb", 100),
+			Backups: l.Int("audit.cluster_log.backups", 5),
 		},
 		GeoIPDB:       l.String("geoip.db"),
 		AvatarBackend: l.String("avatar.backend"),

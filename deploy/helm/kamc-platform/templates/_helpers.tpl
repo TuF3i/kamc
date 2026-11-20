@@ -67,6 +67,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- default (printf "%s-avatar" (include "kamc-platform.fullname" .)) .Values.avatar.persistence.existingClaim }}
 {{- end }}
 
+{{- define "kamc-platform.clusterLogClaimName" -}}
+{{- default (printf "%s-cluster-log" (include "kamc-platform.fullname" .)) .Values.audit.clusterLog.persistence.existingClaim }}
+{{- end }}
+
 {{/* 头像存储后端：auto 时配置了 MinIO endpoint 即 minio，否则 local */}}
 {{- define "kamc-platform.avatarBackend" -}}
 {{- $backend := default "auto" .Values.avatar.backend -}}

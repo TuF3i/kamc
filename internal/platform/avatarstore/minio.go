@@ -74,6 +74,9 @@ func NewMinIO(ctx context.Context, cfg MinIOConfig) (*MinIO, error) {
 	return &MinIO{client: client, bucket: bucket, prefix: prefix}, nil
 }
 
+// Kind 返回后端类型。
+func (s *MinIO) Kind() string { return "minio" }
+
 func (s *MinIO) key(uid string) (string, error) {
 	if !validUID(uid) {
 		return "", ErrInvalidUID

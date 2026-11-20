@@ -8,13 +8,13 @@ package redis
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
 // DefaultAddr 未配置任何 Redis 地址时的本地开发兜底值
@@ -77,7 +77,7 @@ func NewRedisClient(opts ...Option) (goredis.UniversalClient, error) {
 		return nil, fmt.Errorf("redis -> ping %v: %w", addrs, err)
 	}
 
-	log.Printf("[redis] connected (addrs=%v db=%d)", addrs, o.db)
+	zap.S().Infof("[redis] connected (addrs=%v db=%d)", addrs, o.db)
 	return cli, nil
 }
 

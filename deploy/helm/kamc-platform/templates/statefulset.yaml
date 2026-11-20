@@ -77,6 +77,10 @@ spec:
               value: {{ include "kamc-platform.externalURL" . | quote }}
             - name: AM_ENV
               value: {{ .Values.config.environment | quote }}
+            - name: AM_LOG_LEVEL
+              value: {{ .Values.config.logLevel | quote }}
+            - name: AM_LOG_FORMAT
+              value: {{ .Values.config.logFormat | quote }}
             - name: AM_ADMIN_GROUP
               value: {{ .Values.config.adminGroup | quote }}
             - name: AM_PEER_ADDR
@@ -87,6 +91,12 @@ spec:
               value: {{ .Values.config.loginRateLimit | quote }}
             - name: AM_AUDIT_SPILL_FILE
               value: {{ .Values.config.auditSpillFile | quote }}
+            - name: AM_AUDIT_LOG_FILE
+              value: {{ .Values.audit.clusterLog.file | quote }}
+            - name: AM_AUDIT_LOG_MAX_MB
+              value: {{ .Values.audit.clusterLog.maxMB | quote }}
+            - name: AM_AUDIT_LOG_BACKUPS
+              value: {{ .Values.audit.clusterLog.backups | quote }}
             - name: AM_AGENT_IMAGE_REPO
               value: {{ .Values.config.agentImageRepo | quote }}
             - name: AM_AVATAR_SECRET
@@ -240,6 +250,8 @@ spec:
               readOnly: true
             - name: audit-spill
               mountPath: /var/lib/kamc
+            - name: cluster-log
+              mountPath: /var/log/kamc
             {{- if eq (include "kamc-platform.avatarBackend" .) "local" }}
             - name: avatar
               mountPath: /data/avatar
@@ -251,12 +263,39 @@ spec:
             {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+        {{- if .Values.promtail.enabled }}
+        - name: promtail
+          image: "{{ .Values.promtail.image.repository }}:{{ .Values.promtail.image.tag }}"
+          imagePullPolicy: {{ .Values.promtail.image.pullPolicy }}
+          args: ["-config.file=/etc/promtail/config.yml"]
+          volumeMounts:
+            - name: cluster-log
+              mountPath: /var/log/kamc
+              readOnly: true
+            - name: promtail-config
+              mountPath: /etc/promtail
+              readOnly: true
+          resources:
+            {{- toYaml .Values.promtail.resources | nindent 12 }}
+        {{- end }}
       volumes:
         - name: jwt-keyring
           secret:
             secretName: {{ include "kamc-platform.jwtSecretName" . }}
         - name: audit-spill
           emptyDir: {}
+        - name: cluster-log
+          {{- if .Values.audit.clusterLog.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "kamc-platform.clusterLogClaimName" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if .Values.promtail.enabled }}
+        - name: promtail-config
+          configMap:
+            name: {{ include "kamc-platform.fullname" . }}-promtail
+        {{- end }}
         {{- if eq (include "kamc-platform.avatarBackend" .) "local" }}
         - name: avatar
           {{- if .Values.avatar.persistence.enabled }}

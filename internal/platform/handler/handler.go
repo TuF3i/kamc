@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/TuF3i/kamc/internal/metrics"
 	"github.com/TuF3i/kamc/internal/platform/audit"
 	"github.com/TuF3i/kamc/internal/platform/avatarstore"
 	mw "github.com/TuF3i/kamc/internal/platform/middleware"
@@ -94,6 +95,7 @@ type Handler struct {
 
 // NewHandler 构造 Handler
 func NewHandler(svc *service.Service, deps Deps) *Handler {
+	metrics.BuildInfo.WithLabelValues(version.Version, version.Commit).Set(1)
 	return &Handler{
 		svc: svc, auth: deps.Auth, oidc: deps.OIDC, tunnels: deps.Tunnels, proxies: deps.Proxies,
 		caData: deps.CAData, oidcIssuer: deps.OIDCIssuer, oidcClientID: deps.OIDCClientID,
@@ -206,9 +208,11 @@ func (h *Handler) Healthz(w http.ResponseWriter, _ *http.Request) {
 // Readyz 就绪探针：数据库不可达返回 503（LB/编排据此摘流，§7.5 优雅下线第一步）
 func (h *Handler) Readyz(w http.ResponseWriter, r *http.Request) {
 	if err := h.svc.Ping(r.Context()); err != nil {
+		metrics.Ready.Set(0)
 		http.Error(w, "not ready", http.StatusServiceUnavailable)
 		return
 	}
+	metrics.Ready.Set(1)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ready"))

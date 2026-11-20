@@ -66,6 +66,10 @@ spec:
               value: {{ required "platformURL 必填（wss://<平台域名>/tunnel）" .Values.platformURL | quote }}
             - name: CLUSTER_ID
               value: {{ required "clusterID 必填（平台注册的集群 ID）" .Values.clusterID | quote }}
+            - name: AM_LOG_LEVEL
+              value: {{ .Values.logLevel | quote }}
+            - name: AM_LOG_FORMAT
+              value: {{ .Values.logFormat | quote }}
             - name: AGENT_ID
               valueFrom:
                 fieldRef:

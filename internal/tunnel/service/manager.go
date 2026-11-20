@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -21,6 +20,7 @@ import (
 
 	"github.com/TuF3i/kamc/internal/metrics"
 	"github.com/TuF3i/kamc/internal/tunnel/registry"
+	"go.uber.org/zap"
 )
 
 // ErrClusterNotConnected 目标集群当前在本副本上没有任何在线隧道。
@@ -191,7 +191,7 @@ func (m *Manager) reapIdleTunnels() {
 	}
 	m.mu.RUnlock()
 	for _, t := range idle {
-		log.Printf("[tunnel] 看门狗：隧道 %s/%s 超过 %s 无入站帧，判定死亡",
+		zap.S().Infof("[tunnel] 看门狗：隧道 %s/%s 超过 %s 无入站帧，判定死亡",
 			t.ClusterID, t.AgentID, m.watchdogTimeout)
 		m.closeTunnel(t)
 	}
@@ -237,7 +237,7 @@ func (m *Manager) reportAll() {
 	defer cancel()
 	for _, p := range snapshot {
 		if err := m.registry.Report(ctx, p.clusterID, p.agentID, m.podID); err != nil {
-			log.Printf("[tunnel] report %s/%s: %v", p.clusterID, p.agentID, err)
+			zap.S().Infof("[tunnel] report %s/%s: %v", p.clusterID, p.agentID, err)
 		}
 	}
 }
@@ -267,6 +267,7 @@ func (m *Manager) register(clusterID, agentID string, sess *yamux.Session, t *Tu
 			m.mu.Unlock()
 			metrics.TunnelAttachedAgents.Set(float64(agents))
 			metrics.TunnelConnectedClusters.Set(float64(clusters))
+			metrics.TunnelAttachTotal.WithLabelValues(clusterID).Inc()
 			m.reportOne(clusterID, agentID)
 			return
 		}
@@ -277,6 +278,7 @@ func (m *Manager) register(clusterID, agentID string, sess *yamux.Session, t *Tu
 
 	metrics.TunnelAttachedAgents.Set(float64(agents))
 	metrics.TunnelConnectedClusters.Set(float64(clusters))
+	metrics.TunnelAttachTotal.WithLabelValues(clusterID).Inc()
 	m.reportOne(clusterID, agentID)
 }
 
@@ -305,12 +307,14 @@ func (m *Manager) Get(clusterID string) (*Tunnel, error) {
 func (m *Manager) Remove(clusterID, agentID string) {
 	m.mu.Lock()
 	list := m.clusters[clusterID]
+	removed := false
 	for i, t := range list {
 		if t.AgentID != agentID {
 			continue
 		}
 		_ = t.Session.Close()
 		list = append(list[:i], list[i+1:]...)
+		removed = true
 		break
 	}
 	if len(list) == 0 {
@@ -321,11 +325,14 @@ func (m *Manager) Remove(clusterID, agentID string) {
 	metrics.TunnelAttachedAgents.Set(float64(m.countTunnels()))
 	metrics.TunnelConnectedClusters.Set(float64(len(m.clusters)))
 	m.mu.Unlock()
+	if removed {
+		metrics.TunnelDetachTotal.WithLabelValues(clusterID).Inc()
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := m.registry.Deregister(ctx, clusterID, agentID); err != nil {
-		log.Printf("[tunnel] deregister %s/%s: %v", clusterID, agentID, err)
+		zap.S().Infof("[tunnel] deregister %s/%s: %v", clusterID, agentID, err)
 	}
 	m.notifyDetach(clusterID, agentID)
 }
@@ -365,7 +372,7 @@ func (m *Manager) monitorSession(clusterID, agentID string, session *yamux.Sessi
 			if m.isReplaced(clusterID, agentID, session) {
 				return
 			}
-			log.Printf("[tunnel] 会话关闭 %s/%s: %v", clusterID, agentID, err)
+			zap.S().Infof("[tunnel] 会话关闭 %s/%s: %v", clusterID, agentID, err)
 			m.Remove(clusterID, agentID)
 			return
 		}
@@ -418,7 +425,7 @@ func (m *Manager) reportOne(clusterID, agentID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := m.registry.Report(ctx, clusterID, agentID, m.podID); err != nil {
-		log.Printf("[tunnel] report %s/%s: %v", clusterID, agentID, err)
+		zap.S().Infof("[tunnel] report %s/%s: %v", clusterID, agentID, err)
 	}
 }
 
@@ -454,7 +461,7 @@ func (m *Manager) Release() {
 		for _, t := range list {
 			m.closeTunnel(t)
 			if err := m.registry.Deregister(ctx, cid, t.AgentID); err != nil {
-				log.Printf("[tunnel] release deregister %s/%s: %v", cid, t.AgentID, err)
+				zap.S().Infof("[tunnel] release deregister %s/%s: %v", cid, t.AgentID, err)
 			}
 		}
 		delete(m.clusters, cid)

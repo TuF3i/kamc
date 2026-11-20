@@ -128,6 +128,10 @@ compose-up:
 compose-up-minio:
     docker compose -f deploy/docker/compose.yaml --profile minio up -d --build
 
+# Docker Compose：启动本地平台 + 观测栈（Prometheus/Loki/Promtail/Grafana）
+compose-up-observability:
+    docker compose -f deploy/docker/compose.yaml --profile observability up -d --build
+
 # Docker Compose：停止并移除容器
 compose-down:
     docker compose -f deploy/docker/compose.yaml down

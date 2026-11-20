@@ -16,7 +16,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -33,6 +32,7 @@ import (
 	"github.com/TuF3i/kamc/infrastructure/postgres"
 	"github.com/TuF3i/kamc/infrastructure/redis"
 	"github.com/TuF3i/kamc/internal/auth"
+	"github.com/TuF3i/kamc/internal/metrics"
 	"github.com/TuF3i/kamc/internal/platform/audit"
 	"github.com/TuF3i/kamc/internal/platform/authz"
 	"github.com/TuF3i/kamc/internal/platform/avatarstore"
@@ -49,6 +49,7 @@ import (
 	"github.com/TuF3i/kamc/internal/platform/service"
 	"github.com/TuF3i/kamc/internal/platform/webstatic"
 	"github.com/TuF3i/kamc/internal/tunnel"
+	"go.uber.org/zap"
 )
 
 // Service 服务类型别名: 供其他模块经本包引用
@@ -256,13 +257,13 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		}
 		sum := sha256.Sum256([]byte("kamc-avatar|" + cfg.JWTIssuer + "|" + dbURL))
 		avatarSecret = hex.EncodeToString(sum[:])
-		log.Printf("[platform] WARNING: AM_AVATAR_SECRET 未配置，使用派生签名密钥（仅限开发；生产拒绝启动）")
+		zap.S().Infof("[platform] WARNING: AM_AVATAR_SECRET 未配置，使用派生签名密钥（仅限开发；生产拒绝启动）")
 	}
 
 	// LDAP 登录（LDAP_URL 未配置 = /auth/ldap-login 503）
 	ldapCfg := cfg.LDAP
 	if ldapCfg != nil {
-		log.Printf("[platform] LDAP login enabled (%s)", ldapCfg.URL)
+		zap.S().Infof("[platform] LDAP login enabled (%s)", ldapCfg.URL)
 	}
 
 	// 登录期映射脚本引擎（gopher-lua 沙箱；fail-closed）
@@ -286,7 +287,7 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 			limiter = mw.NewRedisRateLimiter(sharedRedisCli, time.Minute, rateLimitN)
 		} else {
 			limiter = mw.NewMemoryRateLimiter(time.Minute, rateLimitN)
-			log.Printf("[platform] 未配置 Redis，限流窗口为进程内（多副本各算各的）")
+			zap.S().Infof("[platform] 未配置 Redis，限流窗口为进程内（多副本各算各的）")
 		}
 	}
 
@@ -302,17 +303,20 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	}
 
 	// 审计异步写出（§12.2）：缓冲投递 → 批量写 PG；PG 故障落本地文件回放。
-	// 出口分流：平台事件 → stdio；集群事件 → 可选的 syslog 远程日志服务器。
+	// 出口分流：平台事件 → stdio；集群事件 → 本地 JSONL（Promtail → Loki）。
+	clusterLog, cErr := audit.NewClusterLog(cfg.ClusterLog)
+	if cErr != nil {
+		return nil, fmt.Errorf("platform -> cluster audit log: %w", cErr)
+	}
 	auditWriter := audit.NewWriter(d, cfg.AuditSpillFile)
-	syslogSink := audit.NewSyslog(cfg.Syslog)
-	auditWriter.WithSyslog(syslogSink)
+	auditWriter.WithClusterLog(clusterLog)
 	auditWriter.Start()
-	log.Printf("[platform] audit syslog export: %s", syslogSink.Summary())
+	zap.S().Infof("[platform] cluster audit log: %s", clusterLog.Summary())
 
 	// GeoIP（可选）：AM_GEOIP_DB 指向 MaxMind .mmdb；未配置/加载失败则审计不含地理信息
 	geoResolver, geoErr := geoip.New(cfg.GeoIPDB)
 	if geoErr != nil {
-		log.Printf("[geoip] WARNING: %v（审计将不含地理信息）", geoErr)
+		zap.S().Infof("[geoip] WARNING: %v（审计将不含地理信息）", geoErr)
 		geoResolver = nil
 	}
 
@@ -358,6 +362,7 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		AvatarStore:      avatarStore,
 		AvatarSecret:     avatarSecret,
 	})
+	metrics.Ready.Set(1)
 	h.SetPolicy(cfg.AdminGroup, cfg.DevToken)
 	passwordUser := cfg.PasswordLoginUser
 	passwordPass := cfg.PasswordLoginPassword
@@ -370,7 +375,7 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	}
 	h.SetPasswordLogin(passwordUser, passwordPass, passwordEnabled)
 	if passwordEnabled && passwordUser == "sysadmin" && passwordPass == "sysadmin123" {
-		log.Printf("[platform] WARNING: default password login enabled (sysadmin/sysadmin123); set AM_PASSWORD_LOGIN_USER/AM_PASSWORD_LOGIN_PASSWORD")
+		zap.S().Infof("[platform] WARNING: default password login enabled (sysadmin/sysadmin123); set AM_PASSWORD_LOGIN_USER/AM_PASSWORD_LOGIN_PASSWORD")
 	}
 
 	// 隧道分离回调：该集群在本副本已无隧道时标记 offline。
@@ -381,7 +386,7 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 				defer cancel()
 				if _, rsp := svc.SetClusterStatus(ctx, clusterID, modules.ClusterStatusOffline); !errcode.IsSuccess(rsp) {
-					log.Printf("[platform] mark cluster %s offline: %s", clusterID, rsp)
+					zap.S().Infof("[platform] mark cluster %s offline: %s", clusterID, rsp)
 				}
 			}
 		})
@@ -420,11 +425,11 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 				defer cancel()
 				n, err := svc.DeleteAuditBefore(ctx, time.Now().Add(-auditRetention))
 				if err != nil {
-					log.Printf("[platform] audit retention cleanup: %v", err)
+					zap.S().Infof("[platform] audit retention cleanup: %v", err)
 					return
 				}
 				if n > 0 {
-					log.Printf("[platform] audit retention: removed %d events older than %s", n, auditRetention)
+					zap.S().Infof("[platform] audit retention: removed %d events older than %s", n, auditRetention)
 				}
 			}
 			cleanup()
@@ -439,20 +444,20 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 				}
 			}
 		}()
-		log.Printf("[platform] audit retention: %s", auditRetention)
+		zap.S().Infof("[platform] audit retention: %s", auditRetention)
 	} else {
-		log.Printf("[platform] audit retention: disabled")
+		zap.S().Infof("[platform] audit retention: disabled")
 	}
 
 	// ErrServerClosed 不算错误：ReleaseRuntime 主动 Shutdown 的正常路径
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("[platform] http server: %v", err)
+			zap.S().Infof("[platform] http server: %v", err)
 		}
 	}()
 
 	defaultRuntime = rt
-	log.Printf("[platform] runtime created (addr=%s own_db=%v tunnels=%v)",
+	zap.S().Infof("[platform] runtime created (addr=%s own_db=%v tunnels=%v)",
 		cfg.ListenAddr, ownDB, o.tunnels != nil)
 	return rt, nil
 }
@@ -462,15 +467,16 @@ func newEngine(h *handler.Handler, webDir string) *chi.Mux {
 	engine := chi.NewRouter()
 	engine.Use(chimw.RequestID)
 	engine.Use(mw.AccessLog)
+	engine.Use(mw.Metrics)
 	engine.Use(chimw.Recoverer)
 	h.RegisterRoutes(engine)
 	// 未匹配路由交给静态前端（AM_WEB_DIR，默认 web/dist）；
 	// 目录不存在（纯 API 部署/开发模式）时保持 404。
 	if spa := webstatic.Handler(webDir); spa != nil {
 		engine.NotFound(spa.ServeHTTP)
-		log.Printf("[platform] web UI served from %s", webDir)
+		zap.S().Infof("[platform] web UI served from %s", webDir)
 	} else {
-		log.Printf("[platform] web UI not found at %s (API only)", webDir)
+		zap.S().Infof("[platform] web UI not found at %s (API only)", webDir)
 	}
 	return engine
 }
@@ -490,7 +496,7 @@ func (r *Runtime) ReleaseRuntime() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := r.srv.Shutdown(ctx); err != nil {
-			log.Printf("[platform] http shutdown: %v", err)
+			zap.S().Infof("[platform] http shutdown: %v", err)
 		}
 	}
 
@@ -519,7 +525,7 @@ func (r *Runtime) ReleaseRuntime() error {
 	if defaultRuntime == r {
 		defaultRuntime = nil
 	}
-	log.Printf("[platform] runtime released")
+	zap.S().Infof("[platform] runtime released")
 	return nil
 }
 
@@ -550,7 +556,7 @@ func buildAvatarStore(ctx context.Context, cfg Config) (avatarstore.Store, error
 		if err != nil {
 			return nil, fmt.Errorf("platform -> avatar local store: %w", err)
 		}
-		log.Printf("[platform] avatar storage: local (%s)", cfg.AvatarDir)
+		zap.S().Infof("[platform] avatar storage: local (%s)", cfg.AvatarDir)
 		return store, nil
 	case "minio":
 		m := cfg.AvatarMinIO
@@ -566,7 +572,7 @@ func buildAvatarStore(ctx context.Context, cfg Config) (avatarstore.Store, error
 		if err != nil {
 			return nil, fmt.Errorf("platform -> avatar minio store: %w", err)
 		}
-		log.Printf("[platform] avatar storage: minio (%s/%s)", m.Endpoint, m.Bucket)
+		zap.S().Infof("[platform] avatar storage: minio (%s/%s)", m.Endpoint, m.Bucket)
 		return store, nil
 	default:
 		return nil, fmt.Errorf("platform -> unknown avatar backend %q (want auto|local|minio)", cfg.AvatarBackend)
@@ -650,7 +656,7 @@ func buildAuthService(revStore auth.RevocationStore, cfg Config) (*auth.Service,
 			return nil, fmt.Errorf("generate ephemeral key: %w", err)
 		}
 		opts = append(opts, auth.WithKey("dev-ephemeral", pem))
-		log.Printf("[platform] 未配置 JWT_KEYRING_DIR，使用临时签名密钥（重启后存量 Token 失效，仅开发用）")
+		zap.S().Infof("[platform] 未配置 JWT_KEYRING_DIR，使用临时签名密钥（重启后存量 Token 失效，仅开发用）")
 	}
 	if revStore != nil {
 		opts = append(opts, auth.WithRevocations(revStore))

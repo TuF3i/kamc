@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -17,6 +16,7 @@ import (
 	"github.com/TuF3i/kamc/internal/platform/middleware"
 	"github.com/TuF3i/kamc/internal/platform/modules"
 	"github.com/TuF3i/kamc/internal/platform/service"
+	"go.uber.org/zap"
 )
 
 // AuthLogin GET /auth/login —— 发起 OIDC 登录（302 到 Provider）
@@ -44,7 +44,8 @@ func (h *Handler) AuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := h.oidc.Exchange(r.Context(), r.URL.Query().Get("code"), r.URL.Query().Get("state"))
 	if err != nil {
-		log.Printf("[platform] oidc exchange: %v", err)
+		metrics.AuthAttemptsTotal.WithLabelValues("oidc", "failure").Inc()
+		zap.S().Infof("[platform] oidc exchange: %v", err)
 		h.auditPlatform(r, "login-failed", "", "", "/auth/callback", false, "oidc-exchange-failed")
 		http.Error(w, "login failed", http.StatusUnauthorized)
 		return
@@ -79,6 +80,7 @@ func (h *Handler) AuthDevToken(w http.ResponseWriter, r *http.Request) {
 		Groups []string `json:"groups"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Sub == "" {
+		metrics.AuthAttemptsTotal.WithLabelValues("dev-token", "failure").Inc()
 		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
 		return
 	}
@@ -105,6 +107,7 @@ func (h *Handler) AuthLdapLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := h.ldap.Authenticate(strings.TrimSpace(req.Username), req.Password)
 	if err != nil {
+		metrics.AuthAttemptsTotal.WithLabelValues("ldap", "failure").Inc()
 		h.auditPlatform(r, "login-failed", req.Username, "", "/auth/ldap-login", false, "ldap-auth-failed")
 		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
 		return
@@ -173,10 +176,11 @@ func (h *Handler) AuthPasswordLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !errors.Is(err, ldapclient.ErrAuth) {
-			log.Printf("[platform] ldap auth %s: %v", username, err)
+			zap.S().Infof("[platform] ldap auth %s: %v", username, err)
 		}
 	}
 
+	metrics.AuthAttemptsTotal.WithLabelValues("password", "failure").Inc()
 	h.auditPlatform(r, "login-failed", username, "", "/auth/password-login", false, "bad-credentials")
 	http.Error(w, "unauthorized", http.StatusUnauthorized)
 }
@@ -198,7 +202,8 @@ func (h *Handler) AuthTokenExchange(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := h.oidc.VerifyIDToken(r.Context(), req.IDToken)
 	if err != nil {
-		log.Printf("[platform] token-exchange verify: %v", err)
+		metrics.AuthAttemptsTotal.WithLabelValues("token-exchange", "failure").Inc()
+		zap.S().Infof("[platform] token-exchange verify: %v", err)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -318,6 +323,24 @@ func (h *Handler) JWKS(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write(b)
 }
 
+// authMethod 审计路径 → 指标登录方式标签。
+func authMethod(source string) string {
+	switch source {
+	case "/auth/callback":
+		return "oidc"
+	case "/auth/password-login":
+		return "password"
+	case "/auth/ldap-login":
+		return "ldap"
+	case "/auth/token-exchange":
+		return "token-exchange"
+	case "/auth/dev-token":
+		return "dev-token"
+	default:
+		return strings.TrimPrefix(source, "/auth/")
+	}
+}
+
 // wantsHTML 浏览器导航检测：顶层导航的 Accept 首选 text/html；
 // fetch/XHR 默认 Accept: */*，CLI 客户端一般不携带——均走 JSON 分支
 func wantsHTML(r *http.Request) bool {
@@ -327,6 +350,7 @@ func wantsHTML(r *http.Request) bool {
 // issueJWT 登录签发挂载点（不做用户同步——仅测试/特殊场景使用）；
 // browser=true 时以桥接 HTML 输出（仅 /auth/callback 浏览器导航使用）。
 func (h *Handler) issueJWT(w http.ResponseWriter, r *http.Request, sub, email string, groups []string, source string, browser bool) {
+	metrics.AuthAttemptsTotal.WithLabelValues(authMethod(source), "success").Inc()
 	h.auditPlatform(r, "login-success", sub, "", source, true, "ok", groups)
 	token, exp, err := h.auth.Sign(sub, email, groups)
 	if err != nil {
@@ -354,7 +378,7 @@ func (h *Handler) issueJWTWithSync(w http.ResponseWriter, r *http.Request, id *s
 	}
 	// 1) 平台用户目录同步（失败不阻断登录——目录是增强信息）
 	if rsp := h.svc.SyncUserOnLogin(r.Context(), id); rsp != nil {
-		log.Printf("[platform] user sync %s: %s", id.Username, rsp)
+		zap.S().Infof("[platform] user sync %s: %s", id.Username, rsp)
 	}
 	// 2) 映射脚本（fail-closed）
 	if h.luaAuth != nil {
@@ -366,7 +390,8 @@ func (h *Handler) issueJWTWithSync(w http.ResponseWriter, r *http.Request, id *s
 			Sub: id.Username, Email: id.Email, Groups: id.Groups,
 			Source: string(id.Source), Extra: extra,
 		}); err != nil {
-			log.Printf("[platform] lua script %s: %v", id.Username, err)
+			metrics.AuthAttemptsTotal.WithLabelValues(authMethod(source), "failure").Inc()
+			zap.S().Infof("[platform] lua script %s: %v", id.Username, err)
 			h.auditPlatform(r, "script-failed", id.Username, "", source, false, "mapping-script-rejected")
 			errcode.GenFinalResponse(w, map[string]any{
 				"status": 10003, "message": "login rejected by mapping script",

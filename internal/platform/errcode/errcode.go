@@ -13,7 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"go.uber.org/zap"
 	"net/http"
 )
 
@@ -86,7 +86,7 @@ var (
 // （DAO 错误含表名/SQL/驱动细节，不能回给客户端）。
 func ServerInternal(err error) *Response {
 	if err != nil {
-		log.Printf("[platform] internal error: %v", err)
+		zap.S().Infof("[platform] internal error: %v", err)
 	}
 	return &Response{Status: CodeServerInternal, Message: "internal error"}
 }
@@ -118,6 +118,6 @@ func GenFinalResponse(w http.ResponseWriter, data any, rsp *Response) {
 	w.WriteHeader(code)
 	if err := json.NewEncoder(w).Encode(body); err != nil {
 		// 头部已写出，只能记录；连接将中断由调用方超时兜底
-		fmt.Printf("[errcode] write response: %v\n", err)
+		zap.S().Infof("[errcode] write response: %v", err)
 	}
 }

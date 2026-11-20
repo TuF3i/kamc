@@ -7,13 +7,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
 	"time"
 
 	"gorm.io/gorm"
 
 	"github.com/TuF3i/kamc/internal/platform/errcode"
 	"github.com/TuF3i/kamc/internal/platform/modules"
+	"go.uber.org/zap"
 )
 
 // tokenGracePeriod 轮换后旧 Token 的宽限期（设计文档 §6.4，默认 24h）
@@ -108,7 +108,7 @@ func (s *Service) ExchangeRegisterToken(ctx context.Context, registerToken strin
 	// 一次性：删除注册 Token（删除失败不回滚签发——注册 Token 已宽限语义外，
 	// 下轮轮换/吊销收敛，此处仅记录）
 	if _, err := s.d.DeleteToken(ctx, clusterID, modules.TokenKindRegister); err != nil {
-		log.Printf("[platform] exchange: delete register token %s: %v", clusterID, err)
+		zap.S().Infof("[platform] exchange: delete register token %s: %v", clusterID, err)
 	}
 	return issued, nil
 }
