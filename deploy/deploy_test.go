@@ -46,6 +46,24 @@ func TestManifestsAreValidYAML(t *testing.T) {
 	}
 }
 
+// TestDeployLayout 固定目录结构：helm/k8s/docker/extra。
+func TestDeployLayout(t *testing.T) {
+	for _, path := range []string{
+		"helm/kamc-platform/Chart.yaml",
+		"helm/kamc-agent/Chart.yaml",
+		"k8s/platform.yaml",
+		"k8s/agent.yaml",
+		"docker/compose.yaml",
+		"docker/.env.example",
+		"extra/nginx/nginx.conf",
+		"extra/migrations/2026-11-02-policy-reset.sql",
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("deploy layout missing %s: %v", path, err)
+		}
+	}
+}
+
 // TestPlatformManifestEssentials 平台清单关键结构抽查（HA 语义不可回退）。
 func TestPlatformManifestEssentials(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("k8s", "platform.yaml"))

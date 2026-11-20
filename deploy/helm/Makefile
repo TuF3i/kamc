@@ -9,6 +9,8 @@
 # 敏感值通过环境变量传入（不要写进命令行历史）：
 #   export DATABASE_URL='postgres://kamc:***@postgres:5432/kamc?sslmode=require'
 #   export OIDC_CLIENT_ID=kamc OIDC_CLIENT_SECRET=*** PASSWORD_LOGIN_PASSWORD=***
+#   # 可选：启用 MinIO 头像存储时同时传入凭据
+#   export MINIO_ACCESS_KEY=*** MINIO_SECRET_KEY=***
 #
 # Docker 镜像需提前构建并推送到集群可访问的仓库：
 #   make -C ../.. image-platform VERSION=v1.0.0
@@ -36,6 +38,12 @@ AGENT_IMAGE    ?= kamc/k8s-am-agent
 PLATFORM_SECRET ?= kamc-secrets
 JWT_SECRET      ?= kamc-jwt
 AGENT_SECRET    ?= kamc-agent-token
+
+# 可选 MinIO 头像存储（设置 MINIO_ENDPOINT 即启用；凭据由 secrets 目标写入）
+MINIO_ENDPOINT        ?=
+MINIO_BUCKET          ?=
+MINIO_USE_SSL         ?=
+MINIO_EXISTING_SECRET ?=
 
 # 平台参数
 EXTERNAL_URL ?=
@@ -112,6 +120,10 @@ secrets: ## 创建 namespace/JWT/平台 Secret（需要 DATABASE_URL 环境变�
 	else \
 		peer=$${PEER_TOKEN:-$$(openssl rand -hex 32)}; \
 		avatar=$${AVATAR_SECRET:-$$(openssl rand -hex 32)}; \
+		minio_args=""; \
+		if [ -n "$$MINIO_ACCESS_KEY" ] && [ -n "$$MINIO_SECRET_KEY" ]; then \
+			minio_args="--from-literal=minio-access-key=$$MINIO_ACCESS_KEY --from-literal=minio-secret-key=$$MINIO_SECRET_KEY"; \
+		fi; \
 		$(KUBECTL) -n $(NAMESPACE) create secret generic $(PLATFORM_SECRET) \
 			--from-literal=database-url="$$DATABASE_URL" \
 			--from-literal=oidc-client-id="$${OIDC_CLIENT_ID:-}" \
@@ -119,6 +131,7 @@ secrets: ## 创建 namespace/JWT/平台 Secret（需要 DATABASE_URL 环境变�
 			--from-literal=peer-token="$$peer" \
 			--from-literal=avatar-secret="$$avatar" \
 			--from-literal=password-login-password="$${PASSWORD_LOGIN_PASSWORD:-}" \
+			$$minio_args \
 			--dry-run=client -o yaml | $(KUBECTL) apply -f -; \
 		echo "secret/$(PLATFORM_SECRET) applied"; \
 	fi
@@ -140,6 +153,10 @@ upgrade-platform: ## 安装/升级平台（需要 EXTERNAL_URL）
 		$(if $(OIDC_ISSUER),--set oidc.issuer=$(OIDC_ISSUER),) \
 		$(if $(PLATFORM_SECRET),--set secrets.existingSecret=$(PLATFORM_SECRET),) \
 		$(if $(JWT_SECRET),--set jwtKeyring.existingSecret=$(JWT_SECRET),) \
+		$(if $(MINIO_ENDPOINT),--set avatar.minio.endpoint=$(MINIO_ENDPOINT),) \
+		$(if $(MINIO_BUCKET),--set avatar.minio.bucket=$(MINIO_BUCKET),) \
+		$(if $(MINIO_USE_SSL),--set avatar.minio.useSSL=$(MINIO_USE_SSL),) \
+		$(if $(MINIO_EXISTING_SECRET),--set avatar.minio.existingSecret=$(MINIO_EXISTING_SECRET),) \
 		$(if $(INGRESS_HOST),--set ingress.enabled=true --set "ingress.hosts[0].host=$(INGRESS_HOST)",) \
 		$(PLATFORM_VALUES_FLAGS)
 

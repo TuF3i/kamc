@@ -8,8 +8,6 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
 
 	"github.com/go-chi/chi/v5"
 
@@ -117,8 +115,10 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	rsp = h.svc.DeleteUser(r.Context(), username)
-	if errcode.IsSuccess(rsp) && user != nil && h.avatarDir != "" {
-		_ = os.Remove(filepath.Join(h.avatarDir, user.UID))
+	if errcode.IsSuccess(rsp) && user != nil && h.avatarStore != nil {
+		if err := h.avatarStore.Delete(r.Context(), user.UID); err != nil {
+			log.Printf("[platform] delete avatar %s: %v", user.UID, err)
+		}
 	}
 	h.auditPlatform(r, "user-delete", username, "", "/api/v1/users/"+username, errcode.IsSuccess(rsp), "delete+revoke")
 	errcode.GenFinalResponse(w, nil, rsp)

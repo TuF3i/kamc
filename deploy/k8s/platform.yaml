@@ -108,6 +108,13 @@ spec:
         - {name: PEER_ADDRESSES, value: "__PEER_ADDRESSES__"}   # am-platform-0=...:9090,am-platform-1=...:9090,am-platform-2=...:9090
         - {name: PEER_TOKEN, valueFrom: {secretKeyRef: {name: peer-token, key: token}}}
         - {name: AM_AVATAR_SECRET, valueFrom: {secretKeyRef: {name: platform-avatar, key: secret}}}
+        # 可选：改用 MinIO 头像存储（多副本无需共享卷；bucket 不存在时自动创建）
+        # - {name: AM_AVATAR_BACKEND, value: "minio"}
+        # - {name: AM_AVATAR_MINIO_ENDPOINT, value: "minio.example.com:9000"}
+        # - {name: AM_AVATAR_MINIO_BUCKET, value: "kamc-avatars"}
+        # - {name: AM_AVATAR_MINIO_USE_SSL, value: "true"}
+        # - {name: AM_AVATAR_MINIO_ACCESS_KEY, valueFrom: {secretKeyRef: {name: platform-avatar, key: minio-access-key}}}
+        # - {name: AM_AVATAR_MINIO_SECRET_KEY, valueFrom: {secretKeyRef: {name: platform-avatar, key: minio-secret-key}}}
         - {name: AM_RATE_LIMIT, value: "600"}                   # 每用户每分钟，0=不限
         - {name: AM_AUDIT_SPILL_FILE, value: "/var/lib/kamc/audit-spill.jsonl"}
         - {name: AM_KUBECONFIG_CA_FILE, value: "/etc/k8s-am/ca/tls.crt"}   # 可选：平台 CA

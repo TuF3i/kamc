@@ -66,3 +66,18 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- define "kamc-platform.avatarClaimName" -}}
 {{- default (printf "%s-avatar" (include "kamc-platform.fullname" .)) .Values.avatar.persistence.existingClaim }}
 {{- end }}
+
+{{/* 头像存储后端：auto 时配置了 MinIO endpoint 即 minio，否则 local */}}
+{{- define "kamc-platform.avatarBackend" -}}
+{{- $backend := default "auto" .Values.avatar.backend -}}
+{{- if eq $backend "auto" -}}
+{{- if .Values.avatar.minio.endpoint -}}minio{{- else -}}local{{- end -}}
+{{- else -}}
+{{- $backend -}}
+{{- end -}}
+{{- end }}
+
+{{/* MinIO 凭据所在的 Secret（优先专用 existingSecret，否则平台 Secret） */}}
+{{- define "kamc-platform.avatarSecretName" -}}
+{{- default (include "kamc-platform.secretName" .) .Values.avatar.minio.existingSecret -}}
+{{- end }}

@@ -1,4 +1,4 @@
-{{- if and .Values.avatar.persistence.enabled (not .Values.avatar.persistence.existingClaim) }}
+{{- if and (eq (include "kamc-platform.avatarBackend" .) "local") .Values.avatar.persistence.enabled (not .Values.avatar.persistence.existingClaim) }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

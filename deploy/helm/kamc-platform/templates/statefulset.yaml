@@ -94,6 +94,37 @@ spec:
                 secretKeyRef:
                   name: {{ include "kamc-platform.secretName" . }}
                   key: avatar-secret
+            {{- if eq (include "kamc-platform.avatarBackend" .) "minio" }}
+            - name: AM_AVATAR_BACKEND
+              value: minio
+            - name: AM_AVATAR_MINIO_ENDPOINT
+              value: {{ required "avatar.minio.endpoint 必填（backend=minio）" .Values.avatar.minio.endpoint | quote }}
+            - name: AM_AVATAR_MINIO_BUCKET
+              value: {{ .Values.avatar.minio.bucket | quote }}
+            - name: AM_AVATAR_MINIO_USE_SSL
+              value: {{ .Values.avatar.minio.useSSL | quote }}
+            {{- if .Values.avatar.minio.region }}
+            - name: AM_AVATAR_MINIO_REGION
+              value: {{ .Values.avatar.minio.region | quote }}
+            {{- end }}
+            {{- if .Values.avatar.minio.prefix }}
+            - name: AM_AVATAR_MINIO_PREFIX
+              value: {{ .Values.avatar.minio.prefix | quote }}
+            {{- end }}
+            - name: AM_AVATAR_MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kamc-platform.avatarSecretName" . }}
+                  key: {{ .Values.avatar.minio.accessKeyKey }}
+            - name: AM_AVATAR_MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kamc-platform.avatarSecretName" . }}
+                  key: {{ .Values.avatar.minio.secretKeyKey }}
+            {{- else }}
+            - name: AM_AVATAR_BACKEND
+              value: local
+            {{- end }}
             - name: OIDC_REDIRECT_URL
               value: {{ include "kamc-platform.oidcRedirectURL" . | quote }}
             {{- if .Values.config.redisAddr }}
@@ -209,8 +240,10 @@ spec:
               readOnly: true
             - name: audit-spill
               mountPath: /var/lib/kamc
+            {{- if eq (include "kamc-platform.avatarBackend" .) "local" }}
             - name: avatar
               mountPath: /data/avatar
+            {{- end }}
             {{- if .Values.platformCA.existingSecret }}
             - name: platform-ca
               mountPath: /etc/k8s-am/ca
@@ -224,16 +257,15 @@ spec:
             secretName: {{ include "kamc-platform.jwtSecretName" . }}
         - name: audit-spill
           emptyDir: {}
+        {{- if eq (include "kamc-platform.avatarBackend" .) "local" }}
         - name: avatar
-          {{- if and .Values.avatar.persistence.enabled .Values.avatar.persistence.existingClaim }}
-          persistentVolumeClaim:
-            claimName: {{ include "kamc-platform.avatarClaimName" . }}
-          {{- else if .Values.avatar.persistence.enabled }}
+          {{- if .Values.avatar.persistence.enabled }}
           persistentVolumeClaim:
             claimName: {{ include "kamc-platform.avatarClaimName" . }}
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- end }}
         {{- if .Values.platformCA.existingSecret }}
         - name: platform-ca
           secret:

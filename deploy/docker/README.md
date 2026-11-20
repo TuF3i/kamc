@@ -32,6 +32,9 @@ just compose-logs
 | `auditdata` | 审计 spill（PG 故障暂存） |
 | `miniodata` | MinIO 对象数据（启用 profile 时） |
 
+`platform-init` 一次性容器把头像/审计卷的属主改为平台运行用户（uid 10001）；
+`minio-init` 同理处理 MinIO 数据卷（uid 65532）。
+
 完全重置（会删除全部数据）：
 
 ```bash
@@ -39,6 +42,10 @@ docker compose -f deploy/docker/compose.yaml down -v
 ```
 
 ## 启用 MinIO
+
+> MinIO 官方社区镜像已从 Docker Hub/Quay 下架（2026 年），compose 默认使用
+> Chainguard 构建的等价 MinIO 二进制（`cgr.dev/chainguard/minio`）。生产可换成
+> 自建镜像或任意 S3 兼容对象存储，只需配置 `AM_AVATAR_MINIO_*`。
 
 1. 在 `deploy/docker/.env` 中设置：
 
@@ -60,6 +67,9 @@ docker compose -f deploy/docker/compose.yaml down -v
 
 3. 控制台 http://localhost:9001（账号同上）；平台启动时自动创建
    `AM_AVATAR_MINIO_BUCKET`（默认 `kamc-avatars`）。
+
+`minio-init` 一次性容器负责把数据卷交给非 root 用户（Chainguard 镜像以
+uid 65532 运行）；可用 `MINIO_IMAGE` / `ALPINE_IMAGE` 覆盖镜像地址。
 
 `AM_AVATAR_BACKEND=auto` 时：配置了 `AM_AVATAR_MINIO_ENDPOINT` 即走 MinIO，
 否则使用本地卷。

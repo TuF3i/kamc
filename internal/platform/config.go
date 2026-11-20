@@ -35,8 +35,10 @@ type Config struct {
 	AuditRetention        time.Duration
 	Syslog                audit.SyslogConfig
 	GeoIPDB               string
+	AvatarBackend         string // auto | local | minio（auto：配置了 MinIO endpoint 即用对象存储）
 	AvatarDir             string
 	AvatarSecret          string
+	AvatarMinIO           AvatarMinIOConfig
 	ProxyRateLimit        int
 	LoginRateLimit        int
 	RobotTokenTTL         time.Duration
@@ -44,6 +46,17 @@ type Config struct {
 	AgentImageRepo        string
 	WebDir                string
 	Tunnel                tunnel.Config
+}
+
+// AvatarMinIOConfig 头像 MinIO / S3 兼容对象存储配置。
+type AvatarMinIOConfig struct {
+	Endpoint  string
+	AccessKey string
+	SecretKey string
+	Bucket    string
+	Region    string
+	Prefix    string
+	UseSSL    bool
 }
 
 // LoadConfig 装载平台配置。path 为空时读 AM_CONFIG_FILE，再按 kamc 搜索默认路径。
@@ -76,7 +89,11 @@ func LoadConfig(paths ...string) (Config, error) {
 	l.SetDefault("audit.spill_file", "/tmp/kamc-audit-spill.jsonl")
 	l.SetDefault("audit.retention", 720*time.Hour)
 	l.SetDefault("audit.syslog.tag", "kamc-cluster-audit")
+	l.SetDefault("avatar.backend", "auto")
 	l.SetDefault("avatar.dir", "data/avatar")
+	l.SetDefault("avatar.minio.bucket", "kamc-avatars")
+	l.SetDefault("avatar.minio.prefix", "avatars/")
+	l.SetDefault("avatar.minio.use_ssl", false)
 	l.SetDefault("rate_limit.proxy", 0)
 	l.SetDefault("rate_limit.login", 30)
 	l.SetDefault("robot.token_ttl", 8760*time.Hour)
@@ -128,8 +145,16 @@ func LoadConfig(paths ...string) (Config, error) {
 	l.Bind("audit.syslog.ca_file", "AM_SYSLOG_CA_FILE")
 	l.Bind("audit.syslog.insecure", "AM_SYSLOG_INSECURE")
 	l.Bind("geoip.db", "AM_GEOIP_DB")
+	l.Bind("avatar.backend", "AM_AVATAR_BACKEND")
 	l.Bind("avatar.dir", "AM_AVATAR_DIR")
 	l.Bind("avatar.secret", "AM_AVATAR_SECRET")
+	l.Bind("avatar.minio.endpoint", "AM_AVATAR_MINIO_ENDPOINT")
+	l.Bind("avatar.minio.access_key", "AM_AVATAR_MINIO_ACCESS_KEY")
+	l.Bind("avatar.minio.secret_key", "AM_AVATAR_MINIO_SECRET_KEY")
+	l.Bind("avatar.minio.bucket", "AM_AVATAR_MINIO_BUCKET")
+	l.Bind("avatar.minio.region", "AM_AVATAR_MINIO_REGION")
+	l.Bind("avatar.minio.prefix", "AM_AVATAR_MINIO_PREFIX")
+	l.Bind("avatar.minio.use_ssl", "AM_AVATAR_MINIO_USE_SSL")
 	l.Bind("rate_limit.proxy", "AM_RATE_LIMIT")
 	l.Bind("rate_limit.login", "AM_LOGIN_RATE_LIMIT")
 	l.Bind("robot.token_ttl", "AM_ROBOT_TOKEN_TTL")
@@ -178,9 +203,19 @@ func LoadConfig(paths ...string) (Config, error) {
 			CAFile:   l.String("audit.syslog.ca_file"),
 			Insecure: l.Bool("audit.syslog.insecure", false),
 		},
-		GeoIPDB:          l.String("geoip.db"),
-		AvatarDir:        l.String("avatar.dir"),
-		AvatarSecret:     l.String("avatar.secret"),
+		GeoIPDB:       l.String("geoip.db"),
+		AvatarBackend: l.String("avatar.backend"),
+		AvatarDir:     l.String("avatar.dir"),
+		AvatarSecret:  l.String("avatar.secret"),
+		AvatarMinIO: AvatarMinIOConfig{
+			Endpoint:  l.String("avatar.minio.endpoint"),
+			AccessKey: l.String("avatar.minio.access_key"),
+			SecretKey: l.String("avatar.minio.secret_key"),
+			Bucket:    l.String("avatar.minio.bucket"),
+			Region:    l.String("avatar.minio.region"),
+			Prefix:    l.String("avatar.minio.prefix"),
+			UseSSL:    l.Bool("avatar.minio.use_ssl", false),
+		},
 		ProxyRateLimit:   l.Int("rate_limit.proxy", 0),
 		LoginRateLimit:   l.Int("rate_limit.login", 30),
 		RobotTokenTTL:    l.Duration("robot.token_ttl", 8760*time.Hour),

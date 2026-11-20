@@ -35,6 +35,7 @@ import (
 	"github.com/TuF3i/kamc/internal/auth"
 	"github.com/TuF3i/kamc/internal/platform/audit"
 	"github.com/TuF3i/kamc/internal/platform/authz"
+	"github.com/TuF3i/kamc/internal/platform/avatarstore"
 	"github.com/TuF3i/kamc/internal/platform/catalog"
 	"github.com/TuF3i/kamc/internal/platform/dao"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
@@ -75,11 +76,12 @@ type Runtime struct {
 type Option func(*options)
 
 type options struct {
-	db      *gorm.DB
-	addr    string
-	tunnels *tunnel.Runtime
-	cfg     Config
-	cfgSet  bool
+	db          *gorm.DB
+	addr        string
+	tunnels     *tunnel.Runtime
+	cfg         Config
+	cfgSet      bool
+	avatarStore avatarstore.Store
 }
 
 // WithDB 注入已有数据库连接 (不注入则使用 infrastructure 默认连接并自持)
@@ -100,6 +102,11 @@ func WithConfig(cfg Config) Option {
 // WithTunnels 注入隧道模块运行时（可选；未注入时仅无隧道依赖的功能可用）
 func WithTunnels(rt *tunnel.Runtime) Option {
 	return func(o *options) { o.tunnels = rt }
+}
+
+// WithAvatarStore 注入头像存储（测试/嵌入式场景；不注入则按配置构造）。
+func WithAvatarStore(store avatarstore.Store) Option {
+	return func(o *options) { o.avatarStore = store }
 }
 
 // defaultRuntime 包级默认运行时 (CreateRuntime 记录, ReleaseRuntime 消费)
@@ -230,11 +237,16 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 	}
 	catalogSvc := catalog.New(svc, proxies)
 
-	// 头像存储：AM_AVATAR_DIR 目录 + URL 签名密钥（生产必须显式配置；
-	// 开发环境未配置时由部署配置派生，保证重启后已入库的头像 URL 仍然有效）
-	avatarDir := cfg.AvatarDir
-	if err := os.MkdirAll(avatarDir, 0o755); err != nil {
-		return nil, fmt.Errorf("platform -> create avatar dir: %w", err)
+	// 头像存储：本地目录（默认）或 MinIO（配置 endpoint 即启用）。
+	// URL 签名密钥生产必须显式配置；开发环境未配置时由部署配置派生，
+	// 保证重启后已入库的头像 URL 仍然有效。
+	avatarStore := o.avatarStore
+	if avatarStore == nil {
+		var err error
+		avatarStore, err = buildAvatarStore(context.Background(), cfg)
+		if err != nil {
+			return nil, err
+		}
 	}
 	avatarSecret := strings.TrimSpace(cfg.AvatarSecret)
 	if avatarSecret == "" {
@@ -343,7 +355,7 @@ func CreateRuntime(opts ...Option) (*Runtime, error) {
 		LDAP:             ldapCfg,
 		LuaAuth:          luaEngine,
 		Geo:              geoResolver,
-		AvatarDir:        avatarDir,
+		AvatarStore:      avatarStore,
 		AvatarSecret:     avatarSecret,
 	})
 	h.SetPolicy(cfg.AdminGroup, cfg.DevToken)
@@ -517,6 +529,48 @@ func ReleaseRuntime() error {
 		return nil
 	}
 	return defaultRuntime.ReleaseRuntime()
+}
+
+// buildAvatarStore 按配置构造头像存储：
+//   - backend=auto（默认）：配置了 MinIO endpoint 即用 MinIO，否则本地目录；
+//   - backend=local / minio：强制指定（未知值启动失败）。
+func buildAvatarStore(ctx context.Context, cfg Config) (avatarstore.Store, error) {
+	backend := strings.ToLower(strings.TrimSpace(cfg.AvatarBackend))
+	if backend == "" || backend == "auto" {
+		if strings.TrimSpace(cfg.AvatarMinIO.Endpoint) != "" {
+			backend = "minio"
+		} else {
+			backend = "local"
+		}
+	}
+
+	switch backend {
+	case "local":
+		store, err := avatarstore.NewLocal(cfg.AvatarDir)
+		if err != nil {
+			return nil, fmt.Errorf("platform -> avatar local store: %w", err)
+		}
+		log.Printf("[platform] avatar storage: local (%s)", cfg.AvatarDir)
+		return store, nil
+	case "minio":
+		m := cfg.AvatarMinIO
+		store, err := avatarstore.NewMinIO(ctx, avatarstore.MinIOConfig{
+			Endpoint:  m.Endpoint,
+			AccessKey: m.AccessKey,
+			SecretKey: m.SecretKey,
+			Bucket:    m.Bucket,
+			Region:    m.Region,
+			Prefix:    m.Prefix,
+			UseSSL:    m.UseSSL,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("platform -> avatar minio store: %w", err)
+		}
+		log.Printf("[platform] avatar storage: minio (%s/%s)", m.Endpoint, m.Bucket)
+		return store, nil
+	default:
+		return nil, fmt.Errorf("platform -> unknown avatar backend %q (want auto|local|minio)", cfg.AvatarBackend)
+	}
 }
 
 // validateProductionGuards 生产启动护栏：匿名 dev-token、缺省 DSN、

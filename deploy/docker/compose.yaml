@@ -42,10 +42,24 @@ services:
 
   # 可选对象存储：docker compose --profile minio up -d
   # 启用后把 .env 中 AM_AVATAR_BACKEND 设为 minio，并配置 endpoint/凭据。
+  # 说明：MinIO 官方社区镜像已下线，这里使用 Chainguard 构建的等价二进制；
+  # 生产环境可换成自建镜像或任意 S3 兼容服务。
+  minio-init:
+    image: ${ALPINE_IMAGE:-alpine:latest}
+    profiles: ["minio"]
+    user: "0"
+    command: ["sh", "-c", "mkdir -p /data && chown -R 65532:65532 /data"]
+    volumes:
+      - miniodata:/data
+
   minio:
-    image: minio/minio:latest
+    image: ${MINIO_IMAGE:-cgr.dev/chainguard/minio:latest}
     profiles: ["minio"]
     restart: unless-stopped
+    user: "65532:65532"
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-kamc}
@@ -56,6 +70,15 @@ services:
       - "127.0.0.1:${MINIO_PORT:-9000}:9000"
       - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
 
+  # 平台以 uid 10001 运行；命名卷首次挂载是 root 所有，需要初始化权限。
+  platform-init:
+    image: ${ALPINE_IMAGE:-alpine:latest}
+    user: "0"
+    command: ["sh", "-c", "mkdir -p /data/avatar /audit && chown -R 10001:10001 /data /audit"]
+    volumes:
+      - avatardata:/data/avatar
+      - auditdata:/audit
+
   platform:
     build:
       context: ../..
@@ -63,10 +86,15 @@ services:
     image: kamc-platform:${KAMC_VERSION:-dev}
     restart: unless-stopped
     depends_on:
+      platform-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      minio:
+        condition: service_started
+        required: false
     environment:
       AM_ENV: ${AM_ENV:-development}
       DATABASE_URL: postgres://${POSTGRES_USER:-kamc}:${POSTGRES_PASSWORD:-kamc}@postgres:5432/${POSTGRES_DB:-kamc}?sslmode=disable

@@ -11,6 +11,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/TuF3i/kamc/internal/platform/audit"
+	"github.com/TuF3i/kamc/internal/platform/avatarstore"
 	mw "github.com/TuF3i/kamc/internal/platform/middleware"
 
 	"github.com/TuF3i/kamc/internal/auth"
@@ -49,7 +50,7 @@ type Deps struct {
 	LDAP             *ldapclient.Config // LDAP 登录（nil = 未配置 → /auth/ldap-login 503）
 	LuaAuth          *luaauth.Engine    // 登录期映射脚本引擎（nil = 脚本功能关闭）
 	Geo              *geoip.Resolver    // GeoIP 数据库（nil = 不解析地理信息）
-	AvatarDir        string             // 头像存储目录（AM_AVATAR_DIR）
+	AvatarStore      avatarstore.Store  // 头像对象存储（nil = 头像功能关闭）
 	AvatarSecret     string             // 头像 URL 签名密钥（AM_AVATAR_SECRET/派生）
 }
 
@@ -83,7 +84,7 @@ type Handler struct {
 	ldap         *ldapclient.Config // LDAP 登录配置
 	luaAuth      *luaauth.Engine    // 登录期映射脚本引擎
 	geo          *geoip.Resolver    // GeoIP 数据库（nil = 不解析）
-	avatarDir    string             // 头像存储目录
+	avatarStore  avatarstore.Store  // 头像对象存储（nil = 功能关闭）
 	avatarSecret []byte             // 头像 URL 签名密钥
 
 	passwordLoginEnabled bool   // 内置账号密码登录开关（AM_PASSWORD_LOGIN）
@@ -102,7 +103,7 @@ func NewHandler(svc *service.Service, deps Deps) *Handler {
 		robotTokenTTL: deps.RobotTokenTTL, catalog: deps.Catalog,
 		agentImageRepo: deps.AgentImageRepo, settings: deps.Settings, startedAt: time.Now(),
 		ldap: deps.LDAP, luaAuth: deps.LuaAuth, geo: deps.Geo,
-		avatarDir: deps.AvatarDir, avatarSecret: []byte(deps.AvatarSecret),
+		avatarStore: deps.AvatarStore, avatarSecret: []byte(deps.AvatarSecret),
 	}
 }
 

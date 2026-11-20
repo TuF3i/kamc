@@ -22,6 +22,14 @@ kamc-platform 已部署。
        --set platformURL={{ include "kamc-platform.externalURL" . | replace "https://" "wss://" }}/tunnel \
        --set existingSecret=<Agent Token Secret>
 
-4) 注意
-   - 多副本头像需要 ReadWriteMany 共享卷（values.avatar.persistence），否则各 Pod 头像互不可见。
+4) 头像存储
+   - 当前后端：{{ include "kamc-platform.avatarBackend" . }}{{ if eq (include "kamc-platform.avatarBackend" .) "minio" }}（{{ .Values.avatar.minio.endpoint }}/{{ .Values.avatar.minio.bucket }}）{{ end }}
+{{- if eq (include "kamc-platform.avatarBackend" .) "local" }}
+   - 多副本需要 ReadWriteMany 共享卷（values.avatar.persistence），否则各 Pod 头像互不可见；
+     也可配置 avatar.minio.* 改用对象存储。
+{{- else }}
+   - MinIO 模式下无需头像 PVC；浏览器仍访问平台签名的 /avatars/{uid}。
+{{- end }}
+
+5) 注意
    - 生产请通过 jwtKeyring.existingSecret 提供稳定签名密钥；未配置时开发临时密钥会在重启后失效。

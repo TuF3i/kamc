@@ -6,24 +6,25 @@ package handler
 //   - GET  /avatars/{uid}?token=…           公开读取（token 为 HMAC 签名，
 //     供 <img src> 直接展示——img 无法携带 Authorization 头）
 //
-// 签名密钥来自 AM_AVATAR_SECRET；未配置时由部署配置派生（databasURL/JWT
-// issuer），保证重启后已入库的头像 URL 仍然有效。
+// 签名密钥来自 AM_AVATAR_SECRET；未配置时由部署配置派生（databaseURL/JWT
+// issuer），保证重启后已入库的头像 URL 仍然有效。对象字节存于 avatarstore
+// （本地目录或 MinIO），URL 与存储后端无关。
 
 import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/TuF3i/kamc/internal/platform/avatarstore"
 	"github.com/TuF3i/kamc/internal/platform/errcode"
 	"github.com/TuF3i/kamc/internal/platform/middleware"
 )
@@ -56,7 +57,7 @@ func (h *Handler) verifyAvatarToken(uid, token string) bool {
 }
 
 // UploadAvatar POST /api/v1/users/{username}/avatar —— 管理面上传指定用户头像
-// （raw 图片体），保存为 <avatarDir>/<uid> 并写入签名 URL 到 avatar_url。
+// （raw 图片体），写入头像存储并写入签名 URL 到 avatar_url。
 func (h *Handler) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 	username := chi.URLParam(r, "username")
 	h.uploadAvatar(w, r, username, "/api/v1/users/"+username+"/avatar")
@@ -73,7 +74,7 @@ func (h *Handler) UploadAvatarSelf(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) uploadAvatar(w http.ResponseWriter, r *http.Request, username, auditPath string) {
-	if h.avatarDir == "" || len(h.avatarSecret) == 0 {
+	if h.avatarStore == nil || len(h.avatarSecret) == 0 {
 		http.Error(w, "avatar storage disabled", http.StatusServiceUnavailable)
 		return
 	}
@@ -101,14 +102,15 @@ func (h *Handler) uploadAvatar(w http.ResponseWriter, r *http.Request, username,
 		errcode.GenFinalResponse(w, nil, errcode.ErrInvalidParam)
 		return
 	}
-	path := filepath.Join(h.avatarDir, user.UID)
-	if err := os.WriteFile(path, body, 0o600); err != nil {
+	if err := h.avatarStore.Put(r.Context(), user.UID, ct, body); err != nil {
 		errcode.GenFinalResponse(w, nil, errcode.ServerInternal(fmt.Errorf("write avatar: %w", err)))
 		return
 	}
 	// v=nanotime：同一 uid 重新上传后 URL 变化，浏览器立即拉新图（不被旧缓存挡住）
 	url := "/avatars/" + user.UID + "?token=" + h.signAvatar(user.UID) + "&v=" + strconv.FormatInt(time.Now().UnixNano(), 36)
 	if rsp := h.svc.SetAvatarURL(r.Context(), username, url); rsp != nil {
+		// 元数据写失败时清理刚写入的对象，避免产生无法引用的孤儿文件。
+		_ = h.avatarStore.Delete(r.Context(), user.UID)
 		errcode.GenFinalResponse(w, nil, rsp)
 		return
 	}
@@ -123,12 +125,19 @@ func (h *Handler) ServeAvatar(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	data, err := os.ReadFile(filepath.Join(h.avatarDir, uid))
-	if err != nil {
+	data, contentType, err := h.avatarStore.Get(r.Context(), uid)
+	if errors.Is(err, avatarstore.ErrNotFound) {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", http.DetectContentType(data))
+	if err != nil {
+		http.Error(w, "avatar storage error", http.StatusInternalServerError)
+		return
+	}
+	if contentType == "" {
+		contentType = http.DetectContentType(data)
+	}
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 	_, _ = w.Write(data)
 }

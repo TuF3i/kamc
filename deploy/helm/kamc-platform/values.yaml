@@ -82,8 +82,24 @@ service:
 peer:
   port: 9090
 
-# 头像存储：多副本必须使用 ReadWriteMany 共享卷，否则各 Pod 头像互不可见。
+# 头像存储：
+#   backend=auto（默认）：avatar.minio.endpoint 非空即使用 MinIO，否则本地卷；
+#   backend=local|minio：显式指定。MinIO 模式下多副本无需 ReadWriteMany 卷。
 avatar:
+  backend: auto
+  minio:
+    endpoint: ""            # 如 minio.k8s-am-system:9000
+    bucket: kamc-avatars    # 不存在时平台启动自动创建
+    useSSL: false
+    region: ""
+    prefix: avatars/
+    # 内联凭据（不推荐）；留空时从 Secret 读取（见 accessKeyKey/secretKeyKey）。
+    accessKey: ""
+    secretKey: ""
+    # 专用凭据 Secret；留空则使用平台 Secret（secrets.existingSecret 或 Chart 创建的）
+    existingSecret: ""
+    accessKeyKey: minio-access-key
+    secretKeyKey: minio-secret-key
   persistence:
     enabled: false
     existingClaim: ""

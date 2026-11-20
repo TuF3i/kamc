@@ -78,8 +78,18 @@ geoip:
   db: ""                          # MaxMind .mmdb 路径（空=不解析地理信息）
 
 avatar:
+  # auto：配置了 minio.endpoint 即使用 MinIO，否则本地目录；也可显式 local|minio
+  backend: auto
   dir: /data/avatar
   secret: ""                      # 生产必填（缺失拒绝启动）
+  minio:
+    endpoint: ""                  # 如 minio:9000（配置后 auto 自动启用 MinIO）
+    access_key: ""
+    secret_key: ""
+    bucket: kamc-avatars          # 不存在时启动自动创建
+    use_ssl: false
+    region: ""
+    prefix: avatars/              # 对象键：<prefix><uid>
 
 rate_limit:
   proxy: 600                      # 每用户每分钟数据面请求数，0=不限

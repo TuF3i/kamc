@@ -66,6 +66,7 @@ kubectl -n k8s-am-system create secret generic kamc-secrets \
 | `peer-token` | 副本间转发令牌（多副本必填） |
 | `avatar-secret` | 头像 URL 签名密钥（生产必填） |
 | `password-login-password` | 内置密码登录密码（`passwordLogin.enabled=true` 时使用） |
+| `minio-access-key` / `minio-secret-key` | MinIO/S3 凭据（`avatar.minio.endpoint` 非空或 `backend=minio` 时必填） |
 
 ### 2) 安装
 
@@ -84,6 +85,13 @@ helm upgrade --install kamc deploy/helm/kamc-platform \
 开发/POC 可省略 `secrets.existingSecret`，直接 `--set secrets.databaseURL=...`
 `--set secrets.avatarSecret=...` `--set jwtKeyring.jwtKeyPEM="$PEM"`，由 Chart 创建 Secret。
 
+启用 MinIO 时可直接传变量（凭据由 `secrets` 目标写入平台 Secret）：
+
+```bash
+MINIO_ENDPOINT=minio.k8s-am-system:9000 MINIO_BUCKET=kamc-avatars \
+  make -C deploy/helm install-platform EXTERNAL_URL=https://kamc.example.com
+```
+
 ### 3) 外部入口
 
 - 默认不创建 Ingress：按 `deploy/extra/nginx/nginx.conf` 在外部 Nginx 终结 TLS，
@@ -91,12 +99,23 @@ helm upgrade --install kamc deploy/helm/kamc-platform \
 - 或 `--set ingress.enabled=true --set ingress.hosts[0].host=kamc.example.com`，
   默认已带 WebSocket 所需的 `proxy-read-timeout/send-timeout=3600` 与关闭 buffering。
 
-### 4) 多副本注意事项
+### 4) 头像存储与多副本
 
-- 头像存储在卷上：默认 `emptyDir`，各 Pod 互不可见。
-  多副本请提供 **ReadWriteMany** 存储：
+- 默认 `avatar.backend=auto`：未配置 `avatar.minio.endpoint` 时使用本地卷
+  （默认 `emptyDir`，各 Pod 互不可见）。多副本可提供 **ReadWriteMany** 存储：
   `--set avatar.persistence.enabled=true --set avatar.persistence.storageClassName=<rwx-sc>`
   或 `--set avatar.persistence.existingClaim=<现有 RWX PVC>`。
+- 推荐多副本使用 MinIO：
+
+  ```bash
+  --set avatar.minio.endpoint=minio.k8s-am-system:9000 \
+  --set avatar.minio.bucket=kamc-avatars \
+  --set avatar.minio.accessKey=*** --set avatar.minio.secretKey=***
+  # 或用专用 Secret：
+  --set avatar.minio.existingSecret=kamc-minio
+  ```
+
+  MinIO 模式下不再渲染头像 PVC/卷；bucket 不存在时平台启动自动创建。
 - `PEER_ADDRESSES` 留空时自动生成；若使用外部服务发现可显式覆盖。
 - PDB 默认 `minAvailable: 2`（`replicaCount=3`）。
 
