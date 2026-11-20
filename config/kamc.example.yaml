@@ -1,7 +1,7 @@
 # kamc 平台配置示例（Viper）
 #
 # 使用方式（优先级：环境变量 > 本文件 > 默认值）：
-#   cp kamc.example.yaml kamc.yaml          # 放在工作目录，平台会自动加载
+#   cp config/kamc.example.yaml kamc.yaml   # 放在工作目录，平台会自动加载
 #   ./bin/kamc-platform -config=/etc/kamc/kamc.yaml
 #   AM_CONFIG_FILE=/etc/kamc/kamc.yaml ./bin/kamc-platform
 #

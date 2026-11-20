@@ -58,7 +58,7 @@ web/                 管理前端（React 18 + Ant Design 5 + Vite + TypeScript�
 - 配置文件：`-config=/path/to/kamc.yaml` 或 `AM_CONFIG_FILE`；未指定时在当前目录
   与 `/etc/kamc` 搜索 `kamc.yaml`（Agent 为 `kamc-agent.yaml`）。
 - 环境变量名与旧版本完全一致（见下表），现有部署清单/Helm 不需要改动。
-- 示例：仓库根目录 `kamc.example.yaml` 与 `kamc-agent.example.yaml`；时长使用
+- 示例：`config/kamc.example.yaml` 与 `config/kamc-agent.example.yaml`；时长使用
   Go duration 字符串（`30s`、`720h`、`0`）。
 - 测试与嵌入式场景可调用 `platform.LoadConfig(path)` / `agent.LoadConfig(path)`
   后经 `WithConfig` 注入，避免重复读环境。

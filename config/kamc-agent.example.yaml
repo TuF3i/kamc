@@ -1,7 +1,7 @@
 # kamc Agent 配置示例（Viper）
 #
 # 使用方式（优先级：环境变量 > 本文件 > 默认值）：
-#   cp kamc-agent.example.yaml kamc-agent.yaml
+#   cp config/kamc-agent.example.yaml kamc-agent.yaml
 #   ./bin/kamc-agent -config=/etc/kamc/kamc-agent.yaml
 #   AM_CONFIG_FILE=/etc/kamc/kamc-agent.yaml ./bin/kamc-agent
 #
