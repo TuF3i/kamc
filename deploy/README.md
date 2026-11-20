@@ -25,7 +25,7 @@
 ```bash
 make image-platform VERSION=v1.0.0
 make image-agent VERSION=v1.0.0
-# 或：just image-platform / just image-agent
+# 或：just image-platform / just image-agent（VERSION=... just image-platform）
 ```
 
 `kamc-platform` 镜像已包含 `data/web` 前端产物；Agent 镜像只含隧道客户端。

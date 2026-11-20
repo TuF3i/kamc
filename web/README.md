@@ -137,6 +137,13 @@ npm run dev -- --force
 npm run dev:mock -- --force
 ```
 
+## 头像上传
+
+个人中心与用户管理页直接以 `fetch` 上传 raw 图片体（png/jpeg/webp/gif，≤2MB），
+后端写入本地目录或 MinIO 后返回 `/avatars/{uid}?token=...` 签名 URL。
+存储后端对前端透明，`avatar_url` 始终是平台 URL。接口约定见
+[api/README.md](../api/README.md)。
+
 ## 认证与 API 约定
 
 - **统一信封**：业务响应为 `{status, message, data}`；`status !== 0` 即业务错误，
@@ -184,7 +191,7 @@ npm run build     # tsc --noEmit + vite build → data/web/
 
 生产必须同源部署：后端从 `AM_WEB_DIR` 托管 `data/web/` 并做 SPA 回退；
 若由 Nginx 托管静态文件，需显式反代 API/认证/数据面。现有
-`deploy/nginx/nginx.conf` 只反代平台、未托管静态文件，可参考以下片段整合：
+`deploy/extra/nginx/nginx.conf` 只反代平台、未托管静态文件，可参考以下片段整合：
 
 ```nginx
 root /usr/share/nginx/html/kamc;
@@ -214,7 +221,7 @@ location /proxy/ {
 
 ## 已知后端行为
 
-- 权限模型迁移需执行 `deploy/migrations/2026-11-02-policy-reset.sql`（清空旧策略、删除 roles/auth_scripts、移除 robots.role）。
+- 权限模型迁移需执行 `deploy/extra/migrations/2026-11-02-policy-reset.sql`（清空旧策略、删除 roles/auth_scripts、移除 robots.role）。
 - Robot 长期 Token 默认 365 天（`AM_ROBOT_TOKEN_TTL`）；删除机器人时吊销 jti 并清理其策略。
   未配置 Redis 时吊销只在当前进程生效，重启后黑名单丢失；生产应启用 Redis。
 - `/auth/callback` 浏览器分支固定跳 `/`，不支持子路径部署或回跳原页面。

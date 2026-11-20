@@ -3,6 +3,11 @@
 > 基于 Go + Casbin + Authentik SSO 的多集群 Kubernetes 访问管理平台
 >
 > **v2.0**：在 v1.0 基础上修复全部已识别缺陷，补全高可用（HA）架构。
+>
+> **历史文档说明**：本文保留为 v2.0 的设计决策与缺陷修复记录，部分内容已被
+> 后续实现超越（v3.x 权限模型、用户/组目录、机器人、映射脚本、头像与 MinIO、
+> 修改密码等）。当前运行行为以 [architecture.md](architecture.md)、
+> [configuration.md](configuration.md)、[operations.md](operations.md) 与代码为准。
 
 ---
 

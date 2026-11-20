@@ -6,13 +6,15 @@ kamc（Kubernetes Access Manager Center）是基于 Go 的多集群 Kubernetes �
 用户经 Authentik SSO 登录，下载平台生成的 kubeconfig，kubectl 请求经平台 Casbin 鉴权后，
 经平台 Casbin 授权后，通过 Agent 反向隧道（WebSocket + yamux）由 Agent 以 ServiceAccount 身份送达目标集群的 kube-apiserver（集群侧不做 Impersonation）。
 
-**动手前必读设计文档：[docs/design.md](docs/design.md)**（v2.0，含全部架构决策、
-v1.0 缺陷修复记录 BUG-1~8、高可用设计与故障模式分析）。
+**动手前必读：[docs/README.md](docs/README.md)**（当前架构见
+[architecture.md](docs/architecture.md)；[design.md](docs/design.md) 是 v2.0
+历史设计记录，含 BUG-1~8 修复与 HA 推导）。
 
 ## 技术栈
 
-Go 1.24+ / chi v5 / gorm(PostgreSQL) / go-redis v9 / gorilla/websocket / hashicorp/yamux
+Go 1.26+ / chi v5 / gorm(PostgreSQL) / go-redis v9 / gorilla/websocket / hashicorp/yamux
 golang-jwt v5 + go-oidc v3（认证） / casbin v2 + k8s.io/apiserver（RequestInfo 鉴权）
+minio-go v7（可选头像对象存储） / gopher-lua（登录映射脚本）
 前端：SolidJS 1.9 + Tailwind CSS 4 + TypeScript + Vite（web/，见 web/README.md）
 
 ## 目录结构
@@ -25,17 +27,30 @@ internal/
   version/           构建版本信息（-ldflags 注入，叶包）
   wsconn/            WebSocket → net.Conn 适配器（yamux 依赖它，平台/Agent 共用）
   tunnel/            平台侧隧道模块：隧道管理器 + Redis 注册表
-  platform/          平台 HTTP 模块：认证/鉴权/集群管理 API（当前为基础框架）
+  platform/          平台 HTTP 模块：认证/鉴权/集群管理 API
   agent/             Agent 模块：拨出连接循环、Token 轮询、流处理
 infrastructure/
   postgres/          gorm PostgreSQL 连接统一构建
   redis/             go-redis UniversalClient 统一构建（单机/哨兵/集群）
 docs/
-  design.md          设计文档 v2.0（架构权威来源）
+  README.md          文档索引
+  architecture.md    当前架构（组件/认证/鉴权/隧道/审计/HA）
+  deployment.md      三种部署方式与上线流程
+  configuration.md   全量配置项与环境变量（含 MinIO）
+  operations.md      运维、备份、轮换、故障排查
+  development.md     本地开发、测试、代码约定
+  security.md        信任边界、威胁模型、上线安全核对
+  design.md          v2.0 设计决策记录（历史，部分内容已演进）
 api/
-  openapi.yaml       平台 HTTP API 的 OpenAPI 3.0 规范（与代码包分离）
-deploy/              部署产物（nginx/manifests/README，见其内部说明）
+  README.md          API 使用规范与更新流程
+  openapi.yaml       平台 HTTP API 的 OpenAPI 3.0 规范
+deploy/
+  helm/              Helm Charts（平台 StatefulSet + Agent）
+  k8s/               原生 Kubernetes 清单
+  docker/            Docker Compose 本地环境
+  extra/             数据库迁移 SQL、Nginx 配置等
 web/                 管理前端（SolidJS + Tailwind CSS 4 + Vite + TypeScript；见 web/README.md）
+justfile             日常命令入口（Makefile 保留兼容）
 ```
 
 ## 架构约定（摘要）
@@ -105,22 +120,28 @@ web/                 管理前端（SolidJS + Tailwind CSS 4 + Vite + TypeScript
 | `AM_SYSLOG_INSECURE` | off | TLS 模式跳过证书校验（仅开发） |
 | `AM_AVATAR_DIR` | `data/avatar` | 用户头像文件存储目录 |
 | `AM_AVATAR_SECRET` | 派生 | 头像 URL 签名密钥；**生产必填**（缺失拒绝启动），开发环境由部署配置派生 |
+| `AM_AVATAR_BACKEND` | `auto` | 头像存储后端：`auto`/`local`/`minio`（auto：配置 MinIO endpoint 即用对象存储） |
+| `AM_AVATAR_MINIO_ENDPOINT` | — | MinIO/S3 endpoint，如 `minio:9000` |
+| `AM_AVATAR_MINIO_ACCESS_KEY` / `AM_AVATAR_MINIO_SECRET_KEY` | — | MinIO 凭据（启用时必填） |
+| `AM_AVATAR_MINIO_BUCKET` | `kamc-avatars` | bucket，不存在时启动自动创建 |
+| `AM_AVATAR_MINIO_USE_SSL` / `AM_AVATAR_MINIO_REGION` | false / — | TLS 与 region |
+| `AM_AVATAR_MINIO_PREFIX` | `avatars/` | 对象键前缀（`<prefix><uid>`） |
 | `AM_WEB_DIR` | `data/web` | 前端构建产物目录（后端同进程托管页面；不存在则纯 API） |
 | `AM_AGENT_IMAGE_REPO` | `tuf3i/k8s-am-agent` | Agent 镜像仓库完整地址（不含 tag；tag 随平台版本，一键安装清单用） |
 | `TEST_REDIS_ADDR` | — | Redis 集成测试门控（watcher/state store/限流，仅测试用） |
 | `TEST_PG_DSN` | — | 数据库集成测试门控（仅测试用） |
+| `TEST_MINIO_ENDPOINT` / `TEST_MINIO_ACCESS_KEY` / `TEST_MINIO_SECRET_KEY` / `TEST_MINIO_BUCKET` | — | MinIO 集成测试门控（仅测试用） |
 | `KAMC_API` | `http://127.0.0.1:8080` | 前端开发时 Vite 代理目标（仅 web 开发用） |
 
 ## 构建与测试
 
 ```bash
-make build   # bin/kamc-platform + bin/kamc-agent + bin/kamc（exec 插件）
-make test    # 全量测试
-make vet
-
-cd web && npm install
-npm run build   # tsc 严格类型检查 + vite build → data/web/
-KAMC_API=http://127.0.0.1:8080 npm run dev
+just build   # bin/kamc-platform + bin/kamc-agent + bin/kamc（exec 插件）
+just test    # 全量测试
+just vet
+just web     # 前端 tsc + vite build → data/web
+just dev-web # 前端开发（代理 127.0.0.1:8080）
+# Makefile 保留兼容：make build / make test / make release / make helm-*
 ```
 
 ## 路线图（对应设计文档章节）
